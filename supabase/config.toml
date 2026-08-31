@@ -233,12 +233,15 @@ otp_expiry = 86400
 
 [functions.qnotes-api]
 verify_jwt = false
+import_map = "./functions/deno.json"
 
 [functions.embedding-worker]
 verify_jwt = false
+import_map = "./functions/deno.json"
 
 [functions.attachment-worker]
 verify_jwt = false
+import_map = "./functions/deno.json"
 
 # Use a production-ready SMTP server
 # [auth.email.smtp]
