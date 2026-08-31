@@ -1,0 +1,11 @@
+{
+  "imports": {
+    "@qnotes/shared": "./_shared/generated/shared/index.ts",
+    "@qnotes/markdown": "./_shared/generated/markdown/index.ts",
+    "@supabase/supabase-js": "npm:@supabase/supabase-js@2.56.0",
+    "hono": "npm:hono@4.6.20",
+    "markdown-it": "npm:markdown-it@14.1.0",
+    "unpdf": "npm:unpdf@0.12.1",
+    "fflate": "npm:fflate@0.8.2"
+  }
+}

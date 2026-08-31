@@ -1,0 +1,15 @@
+{
+  "name": "@qnotes/markdown",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm build && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@qnotes/shared": "workspace:*",
+    "markdown-it": "14.1.0"
+  }
+}

@@ -1,0 +1,13 @@
+node_modules/
+apps/*/dist/
+packages/*/dist/
+apps/web/.env.local
+supabase/functions/.env.test
+.env
+!.env.example
+.DS_Store
+supabase/.temp/
+playwright-report/
+test-results/
+.tmp/
+tests/e2e/.auth/
