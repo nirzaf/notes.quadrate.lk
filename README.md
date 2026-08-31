@@ -4,7 +4,7 @@
 
 ## Local setup
 
-The repository is a greenfield pnpm workspace. It uses the local Supabase stack only; no remote deployment is part of this build.
+The repository is a greenfield pnpm workspace. Local development uses the Supabase CLI; production uses the hosted Supabase project `ciyoandzjezgqxjpcrin` and Cloudflare Pages at `notes.quadrate.lk`.
 
 ```bash
 pnpm install --frozen-lockfile=false
@@ -43,7 +43,25 @@ pnpm run db:types
 pnpm exec supabase test db
 ```
 
-`supabase db push`, `supabase functions deploy`, and other remote-targeting commands are intentionally outside this repository’s execution workflow.
+Remote schema and function deployment requires an authenticated Supabase CLI session. The hosted project retains its existing migration history; the `notesdb` migrations are applied and tracked there as the `20260831*` versions.
+
+Deploy the hosted functions with the repository’s shared Deno import map:
+
+```bash
+pnpm exec supabase functions deploy qnotes-api embedding-worker attachment-worker \
+  --project-ref ciyoandzjezgqxjpcrin --no-verify-jwt --use-api \
+  --import-map supabase/functions/deno.json
+```
+
+For Cloudflare Pages, build the web package with the hosted Supabase values and deploy `apps/web/dist`:
+
+```bash
+VITE_SUPABASE_URL=https://ciyoandzjezgqxjpcrin.supabase.co \
+VITE_SUPABASE_PUBLISHABLE_KEY=... \
+VITE_QNOTES_API_URL=https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-api \
+pnpm --filter @qnotes/web build
+npx wrangler pages deploy apps/web/dist --project-name notes-quadrate-lk
+```
 
 ## Security
 
