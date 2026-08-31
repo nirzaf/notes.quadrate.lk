@@ -1,9 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
-import type { Note, QNotesClient } from '@qnotes/shared';
-import { QNotesClient as Client } from '@qnotes/api-client';
-import type { NoteBlock } from '@qnotes/shared';
+import type { Note, NoteBlock } from '@qnotes/shared';
+import { QNotesClient as Client, type QNotesClient } from '@qnotes/api-client';
 import { formatBlockSummary, formatNote, formatSearchResults, withOneFinalNewline, writeBinaryFile } from './output.js';
 
 export class CliUsageError extends Error {

@@ -3,6 +3,14 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@qnotes/shared": ["packages/shared/src/index.ts"],
+      "@qnotes/markdown": ["packages/markdown/src/index.ts"],
+      "@qnotes/sync": ["packages/sync/src/index.ts"],
+      "@qnotes/api-client": ["packages/api-client/src/index.ts"],
+      "@qnotes/cli": ["packages/cli/src/index.ts"]
+    },
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
