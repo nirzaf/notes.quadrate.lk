@@ -4,7 +4,8 @@ import { authenticateRequest, type AuthContext } from '../_shared/auth.ts';
 import { applyCors } from '../_shared/cors.ts';
 import { errorBody } from '../_shared/errors.ts';
 import { ApiError } from '../_shared/errors.ts';
-import { listNotes, getNote, createNote, updateNote, deleteNote, restoreNote, listBlocks, getBlock } from './notes.ts';
+import { listNotes, getNote, createNote, updateNote, deleteNote, restoreNote } from './notes.ts';
+import { listBlocks, getBlock } from './blocks.ts';
 import { searchNotes } from './search.ts';
 import { syncNotes } from './sync.ts';
 import { listAttachments, requestUpload, finalizeAttachment, getDownloadUrl, deleteAttachment } from './attachments.ts';
@@ -78,4 +79,13 @@ app.get('/api/export/workspace', exportWorkspace);
 
 app.notFound((context) => context.json(errorBody(new ApiError(404, 'NOTE_NOT_FOUND', 'The requested resource was not found.'), context.get('requestId') ?? crypto.randomUUID()), 404));
 
-Deno.serve(app.fetch);
+function normalizeFunctionPath(request: Request): Request {
+  const url = new URL(request.url);
+  if (url.pathname === '/qnotes-api' || url.pathname.startsWith('/qnotes-api/')) {
+    url.pathname = url.pathname.slice('/qnotes-api'.length) || '/';
+    return new Request(url, request);
+  }
+  return request;
+}
+
+Deno.serve((request) => app.fetch(normalizeFunctionPath(request)));

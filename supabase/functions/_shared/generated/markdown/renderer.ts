@@ -2,7 +2,7 @@
 // @ts-ignore The workspace keeps its type-only dependency surface minimal.
 import MarkdownItImport from 'markdown-it';
 import type { ParsedBlock, RenderedMarkdown } from '@qnotes/shared';
-import { parseBlocks, plainTextFromMarkdown } from './parser.js';
+import { parseBlocks, plainTextFromMarkdown } from './parser.ts';
 
 interface MarkdownToken {
   info?: string;

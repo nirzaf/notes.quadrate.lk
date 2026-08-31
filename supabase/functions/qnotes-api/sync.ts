@@ -2,14 +2,14 @@ import type { Context } from 'hono';
 import { validateLimit } from '@qnotes/shared';
 import { authFromContext, requireScope } from '../_shared/auth.ts';
 import { ApiError } from '../_shared/errors.ts';
-import { decodeCursor, encodeCursor, serviceClient } from '../_shared/database.ts';
+import { appDbClient, decodeCursor, encodeCursor } from '../_shared/database.ts';
 
 export async function syncNotes(context: Context): Promise<Response> {
   const auth = authFromContext(context);
   requireScope(auth, 'notes:read');
   const params = context.req.query();
   const limit = validateLimit(params.limit, 500, 200);
-  let query = serviceClient.from('notes').select('id, slug, title, tags, version, updated_at, deleted_at').eq('owner_id', auth.userId);
+  let query = appDbClient.from('notes').select('id, slug, title, tags, version, updated_at, deleted_at').eq('owner_id', auth.userId);
   if (params.cursor) {
     const cursor = decodeCursor(params.cursor);
     query = query.or(`updated_at.gt.${cursor.updatedAt},and(updated_at.eq.${cursor.updatedAt},id.gt.${cursor.id})`);

@@ -6,8 +6,8 @@ import type {
   UpdateNoteInput,
   UUID,
   VersionedNoteMutationInput,
-} from './contracts.js';
-import { QNotesValidationError } from './errors.js';
+} from './contracts.ts';
+import { QNotesValidationError } from './errors.ts';
 
 export const MAX_MARKDOWN_CODE_UNITS = 2_000_000;
 export const MAX_NOTE_LIST_LIMIT = 100;

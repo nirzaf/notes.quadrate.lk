@@ -1,7 +1,7 @@
 import type { ParsedMarkdown } from '@qnotes/shared';
-import { chunkMarkdown } from './chunker.js';
-import { MarkdownParseError, parseBlocks, plainTextFromMarkdown, sourceTitleFromMarkdown } from './parser.js';
-import { renderMarkdown } from './renderer.js';
+import { chunkMarkdown } from './chunker.ts';
+import { MarkdownParseError, parseBlocks, plainTextFromMarkdown, sourceTitleFromMarkdown } from './parser.ts';
+import { renderMarkdown } from './renderer.ts';
 
 export async function parseMarkdown(markdown: string): Promise<ParsedMarkdown> {
   const normalizedMarkdown = markdown.replace(/\r\n?/g, '\n');
@@ -12,5 +12,5 @@ export async function parseMarkdown(markdown: string): Promise<ParsedMarkdown> {
 }
 
 export { MarkdownParseError, renderMarkdown };
-export { sha256Hex } from './hash.js';
-export { chunkMarkdown } from './chunker.js';
+export { sha256Hex } from './hash.ts';
+export { chunkMarkdown } from './chunker.ts';

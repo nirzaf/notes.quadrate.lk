@@ -1,4 +1,4 @@
-create table public.api_tokens (
+create table notesdb.api_tokens (
   id uuid primary key default gen_random_uuid(),
   owner_id uuid not null references auth.users(id) on delete cascade,
   name text not null,
@@ -12,8 +12,7 @@ create table public.api_tokens (
   constraint api_tokens_scope_check check (scopes <@ array['notes:read', 'notes:write', 'search:read', 'attachments:read', 'attachments:write']::text[]),
   constraint api_tokens_scope_count_check check (cardinality(scopes) >= 1)
 );
-create index api_tokens_owner_created_key on public.api_tokens (owner_id, created_at desc);
-alter table public.api_tokens enable row level security;
-revoke all on table public.api_tokens from anon, authenticated;
-create trigger api_tokens_set_updated_at before update on public.api_tokens
-for each row execute function public.qnotes_set_updated_at();
+create index api_tokens_owner_created_key on notesdb.api_tokens (owner_id, created_at desc);
+alter table notesdb.api_tokens enable row level security;
+revoke all on table notesdb.api_tokens from anon, authenticated;
+grant all on table notesdb.api_tokens to service_role;

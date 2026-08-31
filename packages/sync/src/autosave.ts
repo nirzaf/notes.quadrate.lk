@@ -56,11 +56,15 @@ export class AutosaveCoordinator<T> {
     }
   }
 
-  dispose(): void {
-    this.disposed = true;
+  cancelPending(): void {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.hasPending = false;
     this.pending = undefined;
+  }
+
+  dispose(): void {
+    this.disposed = true;
+    this.cancelPending();
   }
 }

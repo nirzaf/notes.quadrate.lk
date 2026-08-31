@@ -7,32 +7,7 @@ export type Json =
   | Json[]
 
 export type Database = {
-  graphql_public: {
-    Tables: {
-      [_ in never]: never
-    }
-    Views: {
-      [_ in never]: never
-    }
-    Functions: {
-      graphql: {
-        Args: {
-          extensions?: Json
-          operationName?: string
-          query?: string
-          variables?: Json
-        }
-        Returns: Json
-      }
-    }
-    Enums: {
-      [_ in never]: never
-    }
-    CompositeTypes: {
-      [_ in never]: never
-    }
-  }
-  public: {
+  notesdb: {
     Tables: {
       api_tokens: {
         Row: {
@@ -345,6 +320,23 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      [_ in never]: never
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
+  }
+  public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
       qnotes_archive_queue_message: {
         Args: { p_message_id: number; p_queue_name: string }
         Returns: boolean
@@ -446,7 +438,7 @@ export type Database = {
         }[]
       }
       qnotes_note_json: {
-        Args: { p_note: Database["public"]["Tables"]["notes"]["Row"] }
+        Args: { p_note: Database["notesdb"]["Tables"]["notes"]["Row"] }
         Returns: Json
       }
       qnotes_read_queue: {
@@ -659,7 +651,7 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
-  graphql_public: {
+  notesdb: {
     Enums: {},
   },
   public: {

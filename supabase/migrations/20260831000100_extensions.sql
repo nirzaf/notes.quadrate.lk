@@ -1,3 +1,4 @@
+create schema if not exists notesdb;
 create schema if not exists extensions;
 
 create extension if not exists pgcrypto;

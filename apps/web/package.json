@@ -10,6 +10,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@codemirror/state": "6.7.1",
     "@codemirror/lang-markdown": "6.3.3",
     "@qnotes/api-client": "workspace:*",
     "@qnotes/markdown": "workspace:*",

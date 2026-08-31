@@ -3,7 +3,7 @@ import { deriveSlug, isUUID, normalizeSlug, validateCreateNoteInput, validateLim
 import { MarkdownParseError, parseMarkdown } from '@qnotes/markdown';
 import { authFromContext, requireScope } from '../_shared/auth.ts';
 import { ApiError } from '../_shared/errors.ts';
-import { assertSupabase, blockFromRow, noteFromRow, requestHash, serviceClient, summaryFromRow } from '../_shared/database.ts';
+import { appDbClient, assertSupabase, noteFromRow, requestHash, serviceClient, summaryFromRow } from '../_shared/database.ts';
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -13,10 +13,27 @@ function dataBody(context: Context, data: unknown, status = 200): Response {
   return context.json({ data }, status as 200);
 }
 
+function noteFromRpc(value: unknown): ReturnType<typeof noteFromRow> {
+  const row = record(value);
+  const deletedAt = row.deletedAt ?? row.deleted_at;
+  return {
+    id: String(row.id),
+    slug: String(row.slug),
+    title: String(row.title),
+    contentMarkdown: String(row.contentMarkdown ?? row.content_markdown ?? ''),
+    contentPlain: String(row.contentPlain ?? row.content_plain ?? ''),
+    tags: Array.isArray(row.tags) ? row.tags.map(String) : [],
+    version: Number(row.version),
+    createdAt: String(row.createdAt ?? row.created_at),
+    updatedAt: String(row.updatedAt ?? row.updated_at),
+    deletedAt: deletedAt ? String(deletedAt) : null,
+  };
+}
+
 function mapMutationResult(data: unknown): NoteResult {
   const result = record(data);
   const status = result.status;
-  if (status === 'ok' || status === 'idempotent') return { note: noteFromRow(record(result.note)), blocks: Array.isArray(result.blocks) ? result.blocks : [] };
+  if (status === 'ok' || status === 'idempotent') return { note: noteFromRpc(result.note), blocks: Array.isArray(result.blocks) ? result.blocks : [] };
   if (status === 'not_found') throw new ApiError(404, 'NOTE_NOT_FOUND', 'The note was not found.');
   if (status === 'slug_conflict') throw new ApiError(409, 'NOTE_SLUG_CONFLICT', 'An active note already uses that slug.');
   if (status === 'mutation_reuse_conflict') throw new ApiError(409, 'MUTATION_REUSE_CONFLICT', 'The mutation ID was already used for a different request.');
@@ -53,7 +70,7 @@ async function parsedContent(markdown: string, title: string) {
 }
 
 export async function findOwnedNote(ownerId: string, noteRef: string, includeDeleted = false): Promise<ReturnType<typeof noteFromRow>> {
-  let query = serviceClient.from('notes').select('*').eq('owner_id', ownerId).limit(1);
+  let query = appDbClient.from('notes').select('*').eq('owner_id', ownerId).limit(1);
   query = isUUID(noteRef) ? query.eq('id', noteRef) : query.eq('slug', noteRef.trim().toLowerCase());
   if (!includeDeleted) query = query.is('deleted_at', null);
   const { data, error } = await query.maybeSingle();
@@ -67,7 +84,7 @@ export async function listNotes(context: Context): Promise<Response> {
   const query = context.req.query();
   const limit = validateLimit(query.limit, 100, 50);
   const includeDeleted = query.includeDeleted === 'true';
-  let builder = serviceClient.from('notes').select('*').eq('owner_id', auth.userId);
+  let builder = appDbClient.from('notes').select('*').eq('owner_id', auth.userId);
   if (!includeDeleted) builder = builder.is('deleted_at', null);
   if (query.tag) builder = builder.contains('tags', [query.tag.trim().toLowerCase()]);
   if (query.cursor) {
@@ -145,22 +162,4 @@ export async function deleteNote(context: Context): Promise<Response> {
 
 export async function restoreNote(context: Context): Promise<Response> {
   return versionedMutation(context, 'restored');
-}
-
-export async function listBlocks(context: Context): Promise<Response> {
-  const auth = authFromContext(context);
-  requireScope(auth, 'notes:read');
-  const note = await findOwnedNote(auth.userId, context.req.param('noteRef'));
-  const { data, error } = await serviceClient.from('note_blocks').select('*').eq('owner_id', auth.userId).eq('note_id', note.id).order('position', { ascending: true });
-  if (error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to list note blocks.');
-  return dataBody(context, (Array.isArray(data) ? data : []).map((row) => blockFromRow(record(row))));
-}
-
-export async function getBlock(context: Context): Promise<Response> {
-  const auth = authFromContext(context);
-  requireScope(auth, 'notes:read');
-  const note = await findOwnedNote(auth.userId, context.req.param('noteRef'));
-  const { data, error } = await serviceClient.from('note_blocks').select('*').eq('owner_id', auth.userId).eq('note_id', note.id).eq('block_key', context.req.param('blockKey')).maybeSingle();
-  if (error || !data) throw new ApiError(404, 'NOTE_NOT_FOUND', 'The block was not found.');
-  return dataBody(context, blockFromRow(record(data)));
 }

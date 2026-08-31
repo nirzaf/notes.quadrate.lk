@@ -1,7 +1,7 @@
 import type { Context } from 'hono';
 import { isUUID, validateLimit } from '@qnotes/shared';
 import { authFromContext, requireScope } from '../_shared/auth.ts';
-import { attachmentFromRow, serviceClient } from '../_shared/database.ts';
+import { appDbClient, attachmentFromRow, serviceClient } from '../_shared/database.ts';
 import { ApiError } from '../_shared/errors.ts';
 import { findOwnedNote } from './notes.ts';
 
@@ -28,7 +28,7 @@ export async function listAttachments(context: Context): Promise<Response> {
   const auth = authFromContext(context);
   requireScope(auth, 'attachments:read');
   const note = await findOwnedNote(auth.userId, context.req.param('noteRef'));
-  const { data, error } = await serviceClient.from('attachments').select('*').eq('owner_id', auth.userId).eq('note_id', note.id).is('deleted_at', null).order('created_at', { ascending: false }).limit(validateLimit(context.req.query().limit, 50, 20));
+  const { data, error } = await appDbClient.from('attachments').select('*').eq('owner_id', auth.userId).eq('note_id', note.id).is('deleted_at', null).order('created_at', { ascending: false }).limit(validateLimit(context.req.query().limit, 50, 20));
   if (error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to list attachments.');
   return statusResponse(context, (Array.isArray(data) ? data : []).map((row) => attachmentFromRow(objectRecord(row))));
 }
@@ -49,7 +49,7 @@ export async function requestUpload(context: Context): Promise<Response> {
   if (sizeBytes > maxBytes) throw new ApiError(413, 'ATTACHMENT_TOO_LARGE', 'The attachment exceeds the configured size limit.');
   const attachmentId = crypto.randomUUID();
   const path = `${auth.userId}/${note.id}/${attachmentId}/${fileName}`;
-  const inserted = await serviceClient.from('attachments').insert({ id: attachmentId, owner_id: auth.userId, note_id: note.id, bucket: 'note-attachments', object_path: path, original_file_name: fileName, mime_type: mimeType, size_bytes: sizeBytes, extraction_status: 'pending_upload' }).select('*').single();
+  const inserted = await appDbClient.from('attachments').insert({ id: attachmentId, owner_id: auth.userId, note_id: note.id, bucket: 'note-attachments', object_path: path, original_file_name: fileName, mime_type: mimeType, size_bytes: sizeBytes, extraction_status: 'pending_upload' }).select('*').single();
   if (inserted.error || !inserted.data) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to create attachment metadata.');
   const signed = await serviceClient.storage.from('note-attachments').createSignedUploadUrl(path);
   if (signed.error || !signed.data?.token) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to create an attachment upload URL.');
@@ -61,13 +61,13 @@ export async function finalizeAttachment(context: Context): Promise<Response> {
   requireScope(auth, 'attachments:write');
   const attachmentId = context.req.param('attachmentId');
   if (!isUUID(attachmentId)) throw new ApiError(422, 'VALIDATION_ERROR', 'attachmentId must be a valid UUID.');
-  const row = await serviceClient.from('attachments').select('*').eq('id', attachmentId).eq('owner_id', auth.userId).is('deleted_at', null).maybeSingle();
+  const row = await appDbClient.from('attachments').select('*').eq('id', attachmentId).eq('owner_id', auth.userId).is('deleted_at', null).maybeSingle();
   if (row.error || !row.data) throw new ApiError(404, 'ATTACHMENT_NOT_FOUND', 'The attachment was not found.');
   const object = await serviceClient.storage.from(row.data.bucket).download(row.data.object_path);
   if (object.error || !object.data) throw new ApiError(409, 'ATTACHMENT_NOT_UPLOADED', 'The attachment has not been uploaded.');
   const result = await serviceClient.rpc('qnotes_finalize_attachment', { p_owner_id: auth.userId, p_attachment_id: attachmentId });
   if (result.error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to finalize the attachment.');
-  const fresh = await serviceClient.from('attachments').select('*').eq('id', attachmentId).single();
+  const fresh = await appDbClient.from('attachments').select('*').eq('id', attachmentId).single();
   if (fresh.error || !fresh.data) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to read the finalized attachment.');
   return statusResponse(context, attachmentFromRow(objectRecord(fresh.data)));
 }
@@ -77,7 +77,7 @@ export async function getDownloadUrl(context: Context): Promise<Response> {
   requireScope(auth, 'attachments:read');
   const attachmentId = context.req.param('attachmentId');
   if (!isUUID(attachmentId)) throw new ApiError(422, 'VALIDATION_ERROR', 'attachmentId must be a valid UUID.');
-  const { data, error } = await serviceClient.from('attachments').select('*').eq('id', attachmentId).eq('owner_id', auth.userId).is('deleted_at', null).maybeSingle();
+  const { data, error } = await appDbClient.from('attachments').select('*').eq('id', attachmentId).eq('owner_id', auth.userId).is('deleted_at', null).maybeSingle();
   if (error || !data) throw new ApiError(404, 'ATTACHMENT_NOT_FOUND', 'The attachment was not found.');
   const signed = await serviceClient.storage.from(data.bucket).createSignedUrl(data.object_path, 60);
   if (signed.error || !signed.data?.signedUrl) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to create an attachment download URL.');
@@ -89,11 +89,11 @@ export async function deleteAttachment(context: Context): Promise<Response> {
   requireScope(auth, 'attachments:write');
   const attachmentId = context.req.param('attachmentId');
   if (!isUUID(attachmentId)) throw new ApiError(422, 'VALIDATION_ERROR', 'attachmentId must be a valid UUID.');
-  const { data, error } = await serviceClient.from('attachments').select('bucket, object_path').eq('id', attachmentId).eq('owner_id', auth.userId).is('deleted_at', null).maybeSingle();
+  const { data, error } = await appDbClient.from('attachments').select('bucket, object_path').eq('id', attachmentId).eq('owner_id', auth.userId).is('deleted_at', null).maybeSingle();
   if (error || !data) throw new ApiError(404, 'ATTACHMENT_NOT_FOUND', 'The attachment was not found.');
   const removed = await serviceClient.storage.from(data.bucket).remove([data.object_path]);
   if (removed.error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to remove the attachment object.');
-  const updated = await serviceClient.from('attachments').update({ extraction_status: 'deleted', deleted_at: new Date().toISOString() }).eq('id', attachmentId).eq('owner_id', auth.userId);
+  const updated = await appDbClient.from('attachments').update({ extraction_status: 'deleted', deleted_at: new Date().toISOString() }).eq('id', attachmentId).eq('owner_id', auth.userId);
   if (updated.error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to mark the attachment deleted.');
-  return statusResponse(context, null, 204);
+  return statusResponse(context, null);
 }

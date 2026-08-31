@@ -1,7 +1,7 @@
 import { strToU8, zipSync } from 'fflate';
 import type { Context } from 'hono';
 import { authFromContext, requireScope } from '../_shared/auth.ts';
-import { serviceClient } from '../_shared/database.ts';
+import { appDbClient, serviceClient } from '../_shared/database.ts';
 import { ApiError } from '../_shared/errors.ts';
 import { findOwnedNote } from './notes.ts';
 
@@ -23,11 +23,11 @@ export async function exportNote(context: Context): Promise<Response> {
 export async function exportWorkspace(context: Context): Promise<Response> {
   const auth = authFromContext(context);
   requireScope(auth, 'notes:read', 'attachments:read');
-  const notesResult = await serviceClient.from('notes').select('id, slug, title, tags, version, created_at, updated_at, content_markdown').eq('owner_id', auth.userId).is('deleted_at', null).order('updated_at', { ascending: true });
+  const notesResult = await appDbClient.from('notes').select('id, slug, title, tags, version, created_at, updated_at, content_markdown').eq('owner_id', auth.userId).is('deleted_at', null).order('updated_at', { ascending: true });
   if (notesResult.error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to export notes.');
   const notes = Array.isArray(notesResult.data) ? notesResult.data as Record<string, unknown>[] : [];
   const noteIds = notes.map((note) => String(note.id));
-  const attachmentsResult = noteIds.length ? await serviceClient.from('attachments').select('*').eq('owner_id', auth.userId).in('note_id', noteIds).is('deleted_at', null) : { data: [], error: null };
+  const attachmentsResult = noteIds.length ? await appDbClient.from('attachments').select('*').eq('owner_id', auth.userId).in('note_id', noteIds).is('deleted_at', null) : { data: [], error: null };
   if (attachmentsResult.error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to export attachment metadata.');
   const attachments = Array.isArray(attachmentsResult.data) ? attachmentsResult.data as Record<string, unknown>[] : [];
   const files: Record<string, Uint8Array> = {};

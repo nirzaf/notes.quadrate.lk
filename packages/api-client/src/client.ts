@@ -54,7 +54,7 @@ export class QNotesClient {
   constructor(options: QNotesClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '');
     this.getAccessToken = options.getAccessToken;
-    this.fetchImplementation = options.fetchImplementation ?? fetch;
+    this.fetchImplementation = options.fetchImplementation ?? globalThis.fetch.bind(globalThis);
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {

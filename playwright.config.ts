@@ -11,12 +11,20 @@ export default defineConfig({
     baseURL: 'http://127.0.0.1:5173',
     trace: 'on-first-retry',
   },
-  webServer: {
-    command: 'pnpm --filter @qnotes/web dev --host 127.0.0.1',
-    url: 'http://127.0.0.1:5173',
-    reuseExistingServer: true,
-  },
+  webServer: [
+    {
+      command: 'pnpm --filter @qnotes/web dev --host 127.0.0.1',
+      url: 'http://127.0.0.1:5173',
+      reuseExistingServer: true,
+    },
+    {
+      command: 'pnpm exec supabase functions serve qnotes-api embedding-worker attachment-worker --env-file supabase/functions/.env.test --no-verify-jwt',
+      url: 'http://127.0.0.1:54321/functions/v1/qnotes-api/api/health',
+      reuseExistingServer: true,
+      timeout: 120_000,
+    },
+  ],
   projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
+    { name: 'chromium', use: { ...devices['Desktop Chrome'], channel: 'chrome' } },
   ],
 });

@@ -1,6 +1,6 @@
 import { sha256Hex } from '@qnotes/markdown';
 import { archiveQueueMessage, deleteQueueMessage, readQueue } from '../_shared/queue.ts';
-import { serviceClient } from '../_shared/database.ts';
+import { appDbClient, serviceClient } from '../_shared/database.ts';
 import { extractAttachment, attachmentParagraphs } from './extract.ts';
 
 const queueName = 'attachment-processing';
@@ -26,14 +26,14 @@ async function processRequest(request: Request): Promise<Response> {
     }
     const job = message.message;
     try {
-      const { data: attachment, error } = await serviceClient.from('attachments').select('*').eq('id', job.attachmentId).eq('owner_id', job.ownerId).is('deleted_at', null).maybeSingle();
+      const { data: attachment, error } = await appDbClient.from('attachments').select('*').eq('id', job.attachmentId).eq('owner_id', job.ownerId).is('deleted_at', null).maybeSingle();
       if (error) throw error;
       if (!attachment) {
         await deleteQueueMessage(queueName, message.message_id);
         skipped += 1;
         continue;
       }
-      await serviceClient.from('attachments').update({ extraction_status: 'processing', extraction_error: null }).eq('id', job.attachmentId).eq('owner_id', job.ownerId);
+      await appDbClient.from('attachments').update({ extraction_status: 'processing', extraction_error: null }).eq('id', job.attachmentId).eq('owner_id', job.ownerId);
       const { data: file, error: storageError } = await serviceClient.storage.from(attachment.bucket).download(attachment.object_path);
       if (storageError || !file) throw storageError ?? new Error('Attachment object unavailable.');
       const extracted = await extractAttachment(new Uint8Array(await file.arrayBuffer()), attachment.mime_type);
@@ -51,7 +51,7 @@ async function processRequest(request: Request): Promise<Response> {
         documents.push({ sourceKey: `attachment:${job.attachmentId}:${index}`, sourceTitle: attachment.original_file_name, headingPath: null, content, contentHash: await sha256Hex(`attachment_chunk\0\0${content}`), position: index });
       }
       const bytes = new Uint8Array(await file.arrayBuffer());
-      const checksum = await sha256Hex(new TextDecoder().decode(bytes));
+      const checksum = await sha256Bytes(bytes);
       const { error: completeError } = await serviceClient.rpc('qnotes_complete_attachment_processing', { p_owner_id: job.ownerId, p_attachment_id: job.attachmentId, p_checksum_sha256: checksum, p_documents: documents });
       if (completeError) throw completeError;
       await deleteQueueMessage(queueName, message.message_id);
@@ -70,3 +70,8 @@ async function processRequest(request: Request): Promise<Response> {
 }
 
 Deno.serve(processRequest);
+
+async function sha256Bytes(value: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', value);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}

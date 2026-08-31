@@ -1,6 +1,6 @@
 import type { MarkdownChunk } from '@qnotes/shared';
-import { sha256Hex } from './hash.js';
-import { plainTextFromMarkdown } from './parser.js';
+import { sha256Hex } from './hash.ts';
+import { plainTextFromMarkdown } from './parser.ts';
 
 function splitWords(value: string, size: number): string[] {
   const words = value.trim().split(/\s+/).filter(Boolean);
@@ -32,7 +32,6 @@ export async function chunkMarkdown(markdown: string, sourceTitle: string): Prom
       headings.length = level - 1;
       headings[level - 1] = heading[2]?.trim() ?? '';
       current.headingPath = [...headings];
-      paragraph.push(heading[2]?.trim() ?? '');
     } else if (!line.trim()) {
       flushParagraph();
     } else {
@@ -43,23 +42,46 @@ export async function chunkMarkdown(markdown: string, sourceTitle: string): Prom
 
   const chunks: MarkdownChunk[] = [];
   for (const section of sections) {
-    const sectionText = await plainTextFromMarkdown(section.paragraphs.join('\n\n'));
-    if (!sectionText) continue;
-    const paragraphs = sectionText.split(/\n{2,}/).map((value) => value.trim()).filter(Boolean);
-    for (const paragraphText of paragraphs) {
-      for (const content of splitWords(paragraphText, 350)) {
-        if (!content) continue;
-        const contentHash = await sha256Hex(content);
-        chunks.push({
-          sourceKey: `section-${chunks.length}-${contentHash.slice(0, 12)}`,
-          sourceTitle,
-          headingPath: section.headingPath.length ? section.headingPath.join(' > ') : null,
-          content,
-          position: chunks.length,
-          contentHash,
-        });
-      }
+    const paragraphs = [] as string[];
+    for (const rawParagraph of section.paragraphs) {
+      const text = (await plainTextFromMarkdown(rawParagraph)).trim();
+      if (text) paragraphs.push(text);
     }
+    let pending: string[] = [];
+    let pendingWords = 0;
+    const emit = async (content: string) => {
+      const trimmed = content.trim();
+      if (!trimmed) return;
+      const contentHash = await sha256Hex(trimmed);
+      chunks.push({
+        sourceKey: `section-${chunks.length}-${contentHash.slice(0, 12)}`,
+        sourceTitle,
+        headingPath: section.headingPath.length ? section.headingPath.join(' > ') : null,
+        content: trimmed,
+        position: chunks.length,
+        contentHash,
+      });
+    };
+    for (const paragraphText of paragraphs) {
+      const words = paragraphText.split(/\s+/).filter(Boolean);
+      if (words.length > 350) {
+        if (pending.length) {
+          await emit(pending.join('\n\n'));
+          pending = [];
+          pendingWords = 0;
+        }
+        for (const part of splitWords(paragraphText, 350)) await emit(part);
+        continue;
+      }
+      if (pendingWords > 0 && pendingWords + words.length > 350) {
+        await emit(pending.join('\n\n'));
+        pending = [];
+        pendingWords = 0;
+      }
+      pending.push(paragraphText);
+      pendingWords += words.length;
+    }
+    if (pending.length) await emit(pending.join('\n\n'));
   }
   return chunks;
 }

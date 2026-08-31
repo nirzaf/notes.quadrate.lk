@@ -1,4 +1,4 @@
-export * from './contracts.js';
-export * from './errors.js';
-export * from './validation.js';
-export type { Database } from './database.types.js';
+export * from './contracts.ts';
+export * from './errors.ts';
+export * from './validation.ts';
+export type { Database } from './database.types.ts';

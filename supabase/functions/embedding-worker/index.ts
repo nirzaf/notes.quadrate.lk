@@ -1,5 +1,5 @@
 import { archiveQueueMessage, deleteQueueMessage, readQueue } from '../_shared/queue.ts';
-import { serviceClient } from '../_shared/database.ts';
+import { appDbClient, serviceClient } from '../_shared/database.ts';
 import { createEmbedding } from './embedding.ts';
 
 const queueName = 'note-embeddings';
@@ -26,7 +26,7 @@ async function processRequest(request: Request): Promise<Response> {
     }
     const job = message.message;
     try {
-      const { data: document, error } = await serviceClient.from('search_documents').select('id, owner_id, content, content_hash, embedding_status').eq('id', job.searchDocumentId).eq('owner_id', job.ownerId).maybeSingle();
+      const { data: document, error } = await appDbClient.from('search_documents').select('id, owner_id, content, content_hash, embedding_status').eq('id', job.searchDocumentId).eq('owner_id', job.ownerId).maybeSingle();
       if (error) throw error;
       if (!document || document.content_hash !== job.contentHash) {
         await deleteQueueMessage(queueName, message.message_id);
@@ -39,20 +39,20 @@ async function processRequest(request: Request): Promise<Response> {
         continue;
       }
       const vector = await createEmbedding(document.content);
-      const { data: current, error: currentError } = await serviceClient.from('search_documents').select('content_hash').eq('id', job.searchDocumentId).maybeSingle();
+      const { data: current, error: currentError } = await appDbClient.from('search_documents').select('content_hash').eq('id', job.searchDocumentId).maybeSingle();
       if (currentError) throw currentError;
       if (!current || current.content_hash !== job.contentHash) {
         await deleteQueueMessage(queueName, message.message_id);
         skipped += 1;
         continue;
       }
-      const { error: updateError } = await serviceClient.from('search_documents').update({ embedding: vector, embedding_status: 'ready', embedding_model: 'gte-small', embedding_error: null }).eq('id', job.searchDocumentId).eq('content_hash', job.contentHash);
+      const { error: updateError } = await appDbClient.from('search_documents').update({ embedding: vector, embedding_status: 'ready', embedding_model: 'gte-small', embedding_error: null }).eq('id', job.searchDocumentId).eq('content_hash', job.contentHash);
       if (updateError) throw updateError;
       await deleteQueueMessage(queueName, message.message_id);
       completed += 1;
     } catch {
       if (message.read_count >= 5) {
-        await serviceClient.from('search_documents').update({ embedding_status: 'failed', embedding_error: 'EMBEDDING_FAILED' }).eq('id', job.searchDocumentId).eq('content_hash', job.contentHash);
+        await appDbClient.from('search_documents').update({ embedding_status: 'failed', embedding_error: 'EMBEDDING_FAILED' }).eq('id', job.searchDocumentId).eq('content_hash', job.contentHash);
         await archiveQueueMessage(queueName, message.message_id);
         failed += 1;
       } else {

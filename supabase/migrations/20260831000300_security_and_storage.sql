@@ -1,22 +1,26 @@
-alter table public.notes enable row level security;
-alter table public.note_blocks enable row level security;
-alter table public.search_documents enable row level security;
-alter table public.attachments enable row level security;
-alter table public.note_mutations enable row level security;
+alter table notesdb.notes enable row level security;
+alter table notesdb.note_blocks enable row level security;
+alter table notesdb.search_documents enable row level security;
+alter table notesdb.attachments enable row level security;
+alter table notesdb.note_mutations enable row level security;
 
-revoke all on table public.notes, public.note_blocks, public.search_documents, public.attachments, public.note_mutations from anon, authenticated;
-grant select on table public.notes, public.note_blocks, public.search_documents, public.attachments to authenticated;
+revoke all on schema notesdb from public, anon, authenticated;
+grant usage on schema notesdb to authenticated, service_role;
 
-create policy notes_owner_select on public.notes
+revoke all on table notesdb.notes, notesdb.note_blocks, notesdb.search_documents, notesdb.attachments, notesdb.note_mutations from anon, authenticated;
+grant select on table notesdb.notes, notesdb.note_blocks, notesdb.search_documents, notesdb.attachments to authenticated;
+grant all on table notesdb.notes, notesdb.note_blocks, notesdb.search_documents, notesdb.attachments, notesdb.note_mutations to service_role;
+
+create policy notes_owner_select on notesdb.notes
 for select to authenticated
 using ((select auth.uid()) is not null and owner_id = (select auth.uid()));
-create policy note_blocks_owner_select on public.note_blocks
+create policy note_blocks_owner_select on notesdb.note_blocks
 for select to authenticated
 using ((select auth.uid()) is not null and owner_id = (select auth.uid()));
-create policy search_documents_owner_select on public.search_documents
+create policy search_documents_owner_select on notesdb.search_documents
 for select to authenticated
 using ((select auth.uid()) is not null and owner_id = (select auth.uid()));
-create policy attachments_owner_select on public.attachments
+create policy attachments_owner_select on notesdb.attachments
 for select to authenticated
 using ((select auth.uid()) is not null and owner_id = (select auth.uid()));
 

@@ -11,7 +11,7 @@
     "test:e2e": "playwright test",
     "local:env": "node scripts/write-local-env.mjs",
     "seed:test-users": "node scripts/seed-test-users.mjs",
-    "db:types": "pnpm exec supabase gen types typescript --local > packages/shared/src/database.types.ts",
+    "db:types": "pnpm exec supabase gen types typescript --local --schema notesdb,public > packages/shared/src/database.types.ts",
     "sync:edge": "node scripts/sync-edge-shared.mjs",
     "verify:edge-shared": "node scripts/verify-edge-shared.mjs"
   },

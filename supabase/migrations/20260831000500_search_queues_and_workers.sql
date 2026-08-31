@@ -25,17 +25,22 @@ as $$
     select d.*, n.slug, n.title as note_title,
       ts_rank_cd(d.search_vector, websearch_to_tsquery('simple', p_query))::double precision
       + case when lower(d.source_key) = lower(p_query) then 5 else 0 end
+      + case when position(lower(p_query) in lower(d.source_key)) > 0 then 3 else 0 end
       + case when lower(coalesce(b.block_key, '')) = lower(p_query) then 4 else 0 end
+      + case when position(lower(p_query) in lower(coalesce(b.block_key, ''))) > 0 then 2 else 0 end
       + case when lower(n.title) like '%' || lower(p_query) || '%' then 2 else 0 end
       + case when lower(d.content) like '%' || lower(p_query) || '%' then 1 else 0 end as rank_score,
       b.id as joined_block_id,
       b.block_key as joined_block_key,
       b.language as joined_language,
       case when d.source_type = 'attachment_chunk' then d.source_id else null end as joined_attachment_id
-    from public.search_documents d
-    join public.notes n on n.id = d.note_id and n.owner_id = p_owner_id and n.deleted_at is null
-    left join public.note_blocks b on b.note_id = d.note_id and b.owner_id = p_owner_id and d.source_type in ('copy_block', 'code_block') and b.block_key = d.source_key
-    where d.owner_id = p_owner_id and d.search_vector @@ websearch_to_tsquery('simple', p_query)
+    from notesdb.search_documents d
+    join notesdb.notes n on n.id = d.note_id and n.owner_id = p_owner_id and n.deleted_at is null
+    left join notesdb.note_blocks b on b.note_id = d.note_id and b.owner_id = p_owner_id and d.source_type in ('copy_block', 'code_block') and b.block_key = d.source_key
+    where d.owner_id = p_owner_id
+      and (d.search_vector @@ websearch_to_tsquery('simple', p_query)
+        or position(lower(p_query) in lower(d.source_key)) > 0
+        or position(lower(p_query) in lower(coalesce(b.block_key, ''))) > 0)
   ), numbered as (
     select ranked.*, row_number() over (order by ranked.rank_score desc, ranked.id)::integer as row_number from ranked
   )
@@ -77,9 +82,9 @@ as $$
       b.block_key as joined_block_key,
       b.language as joined_language,
       case when d.source_type = 'attachment_chunk' then d.source_id else null end as joined_attachment_id
-    from public.search_documents d
-    join public.notes n on n.id = d.note_id and n.owner_id = p_owner_id and n.deleted_at is null
-    left join public.note_blocks b on b.note_id = d.note_id and b.owner_id = p_owner_id and d.source_type in ('copy_block', 'code_block') and b.block_key = d.source_key
+    from notesdb.search_documents d
+    join notesdb.notes n on n.id = d.note_id and n.owner_id = p_owner_id and n.deleted_at is null
+    left join notesdb.note_blocks b on b.note_id = d.note_id and b.owner_id = p_owner_id and d.source_type in ('copy_block', 'code_block') and b.block_key = d.source_key
     where d.owner_id = p_owner_id and d.embedding_status = 'ready' and d.embedding is not null
   ), numbered as (
     select ranked.*, row_number() over (order by rank_score desc, id)::integer as row_number from ranked
@@ -196,7 +201,7 @@ select cron.schedule(
   'qnotes-process-attachments', '* * * * *',
   $$select net.http_post(
     url := (select decrypted_secret from vault.decrypted_secrets where name = 'qnotes_project_url') || '/functions/v1/attachment-worker',
-    headers := jsonb_build_object('Content-Type', 'application/json', 'x-qnotes_internal_worker_secret', (select decrypted_secret from vault.decrypted_secrets where name = 'qnotes_internal_worker_secret')),
+    headers := jsonb_build_object('Content-Type', 'application/json', 'x-qnotes-worker-secret', (select decrypted_secret from vault.decrypted_secrets where name = 'qnotes_internal_worker_secret')),
     body := '{}'::jsonb
   );$$
 );

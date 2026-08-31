@@ -1,0 +1,19 @@
+begin;
+select plan(10);
+
+select is((public.qnotes_create_note((select id from auth.users where email = 'owner@qnotes.local'), '44444444-4444-4444-8444-444444444444', 'search-owner-a', 'Search Owner A', '# Search Owner A\n\nQuadrate attachment search marker 8241', 'Search Owner A Quadrate attachment search marker 8241', '{}', '44444444-4444-4444-8444-444444444445', '44444444-4444-4444-8444-444444444446', 'search-hash-a', '[{"blockKey":"deploy-key","blockType":"command","title":"Deploy","language":"bash","content":"docker deploy marker 8241","position":0,"copyable":true,"contentHash":"search-block-hash"}]'::jsonb, '[{"sourceType":"note_chunk","sourceKey":"search-note","sourceTitle":"Search Owner A","headingPath":"Search Owner A","content":"Quadrate attachment search marker 8241","contentHash":"search-note-hash","position":0},{"sourceType":"copy_block","sourceKey":"deploy-key","sourceTitle":"Deploy","headingPath":null,"content":"docker deploy marker 8241","contentHash":"search-block-hash","position":1}]'::jsonb)->>'status'), 'ok', 'search fixture note is committed');
+select ok((select bool_and(embedding_status = 'pending') from notesdb.search_documents where note_id = '44444444-4444-4444-8444-444444444444'), 'search documents are pending embeddings after save');
+select ok((select count(*) > 0 from public.qnotes_keyword_search((select id from auth.users where email = 'owner@qnotes.local'), '8241', 20)), 'keyword search works before embeddings complete');
+select ok((select count(*) > 0 from public.qnotes_keyword_search((select id from auth.users where email = 'owner@qnotes.local'), 'deploy-key', 20) where source_type = 'copy_block' and source_key = 'deploy-key'), 'named blocks appear as independent search results');
+select is((public.qnotes_create_note((select id from auth.users where email = 'other@qnotes.local'), '44444444-4444-4444-8444-444444444447', 'search-owner-b', 'Search Owner B', 'Quadrate attachment search marker 8241', 'Quadrate attachment search marker 8241', '{}', '44444444-4444-4444-8444-444444444448', '44444444-4444-4444-8444-444444444449', 'search-hash-b', '[]'::jsonb, '[{"sourceType":"note_chunk","sourceKey":"search-note-b","sourceTitle":"Search Owner B","headingPath":null,"content":"Quadrate attachment search marker 8241","contentHash":"search-note-b-hash","position":0}]'::jsonb)->>'status'), 'ok', 'Owner B search fixture note is committed');
+select ok((select not exists (select 1 from public.qnotes_keyword_search((select id from auth.users where email = 'owner@qnotes.local'), '8241', 20) where note_id <> '44444444-4444-4444-8444-444444444444')), 'search never returns another owner record');
+
+update notesdb.search_documents set embedding = ('[' || repeat('0,', 383) || '0]')::extensions.vector, embedding_status = 'ready' where note_id = '44444444-4444-4444-8444-444444444444';
+select ok((select count(*) > 0 from public.qnotes_semantic_search((select id from auth.users where email = 'owner@qnotes.local'), ('[' || repeat('0,', 383) || '0]')::extensions.vector, 20)), 'semantic search returns deterministic fake embeddings');
+select ok((select count(*) > 0 from public.qnotes_hybrid_search((select id from auth.users where email = 'owner@qnotes.local'), '8241', ('[' || repeat('0,', 383) || '0]')::extensions.vector, 20, 60)), 'hybrid search combines keyword and semantic results');
+
+select is((public.qnotes_soft_delete_note((select id from auth.users where email = 'owner@qnotes.local'), '44444444-4444-4444-8444-444444444444', 1, '44444444-4444-4444-8444-444444444445', '44444444-4444-4444-8444-444444444450', 'search-delete-hash')->>'status'), 'ok', 'search fixture can be soft deleted');
+select is((select count(*)::integer from public.qnotes_keyword_search((select id from auth.users where email = 'owner@qnotes.local'), '8241', 20)), 0, 'soft-deleted notes do not appear in keyword search');
+
+select * from finish();
+rollback;

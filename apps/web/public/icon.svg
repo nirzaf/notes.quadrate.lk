@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title>Quadrate Notes</title>
+  <rect width="64" height="64" rx="16" fill="#0e7774"/>
+  <path d="M18 14h24a4 4 0 0 1 4 4v22a4 4 0 0 1-4 4H24l-8 7V18a4 4 0 0 1 2-4Z" fill="#f5f1e8"/>
+  <path d="M25 25h14M25 32h14M25 39h8" stroke="#e66a3c" stroke-width="4" stroke-linecap="round"/>
+</svg>

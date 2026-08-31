@@ -238,7 +238,7 @@ export interface ApiSuccess<T> {
 
 export interface ApiFailure {
   error: {
-    code: import('./errors.js').QNotesErrorCode;
+    code: import('./errors.ts').QNotesErrorCode;
     message: string;
     requestId: string;
     details?: unknown;

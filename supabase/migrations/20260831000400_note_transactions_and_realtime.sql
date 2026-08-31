@@ -1,4 +1,4 @@
-create or replace function public.qnotes_note_json(p_note public.notes)
+create or replace function public.qnotes_note_json(p_note notesdb.notes)
 returns jsonb
 language sql
 stable
@@ -36,7 +36,7 @@ as $$
     'copyable', b.copyable,
     'contentHash', b.content_hash
   ) order by b.position), '[]'::jsonb)
-  from public.note_blocks b
+  from notesdb.note_blocks b
   where b.note_id = p_note_id;
 $$;
 
@@ -63,12 +63,12 @@ set search_path = public, extensions
 as $$
 declare
   item jsonb;
-  existing public.search_documents%rowtype;
+  existing notesdb.search_documents%rowtype;
   found_document boolean;
   should_enqueue boolean;
   document_id uuid;
-  source_type text;
-  source_key text;
+  source_type_value text;
+  source_key_value text;
   source_title text;
   heading_path text;
   content text;
@@ -78,7 +78,7 @@ begin
   p_blocks := coalesce(p_blocks, '[]'::jsonb);
   p_documents := coalesce(p_documents, '[]'::jsonb);
 
-  delete from public.note_blocks b
+  delete from notesdb.note_blocks b
   where b.note_id = p_note_id
     and not exists (
       select 1 from jsonb_array_elements(p_blocks) x
@@ -87,7 +87,7 @@ begin
 
   for item in select value from jsonb_array_elements(p_blocks)
   loop
-    insert into public.note_blocks (owner_id, note_id, block_key, block_type, title, language, content, position, copyable, content_hash)
+    insert into notesdb.note_blocks (owner_id, note_id, block_key, block_type, title, language, content, position, copyable, content_hash)
     values (
       p_owner_id,
       p_note_id,
@@ -111,7 +111,7 @@ begin
       content_hash = excluded.content_hash;
   end loop;
 
-  delete from public.search_documents d
+  delete from notesdb.search_documents d
   where d.note_id = p_note_id
     and not exists (
       select 1 from jsonb_array_elements(p_documents) x
@@ -120,8 +120,8 @@ begin
 
   for item in select value from jsonb_array_elements(p_documents)
   loop
-    source_type := item->>'sourceType';
-    source_key := item->>'sourceKey';
+    source_type_value := item->>'sourceType';
+    source_key_value := item->>'sourceKey';
     source_title := coalesce(item->>'sourceTitle', '');
     heading_path := item->>'headingPath';
     content := coalesce(item->>'content', '');
@@ -129,14 +129,14 @@ begin
     position_value := (item->>'position')::integer;
     existing := null;
     select * into existing
-    from public.search_documents d
-    where d.note_id = p_note_id and d.source_type = source_type and d.source_key = source_key
+    from notesdb.search_documents d
+    where d.note_id = p_note_id and d.source_type = source_type_value and d.source_key = source_key_value
     for update;
     found_document := found;
     should_enqueue := not found_document or existing.content_hash is distinct from content_hash or existing.embedding_status = 'failed';
 
-    insert into public.search_documents (owner_id, note_id, source_type, source_id, source_key, source_title, heading_path, content, content_hash, position, embedding_status)
-    values (p_owner_id, p_note_id, source_type, nullif(item->>'sourceId', '')::uuid, source_key, source_title, heading_path, content, content_hash, position_value, 'pending')
+    insert into notesdb.search_documents (owner_id, note_id, source_type, source_id, source_key, source_title, heading_path, content, content_hash, position, embedding_status)
+    values (p_owner_id, p_note_id, source_type_value, nullif(item->>'sourceId', '')::uuid, source_key_value, source_title, heading_path, content, content_hash, position_value, 'pending')
     on conflict (note_id, source_type, source_key) do update set
       owner_id = excluded.owner_id,
       source_id = excluded.source_id,
@@ -145,10 +145,10 @@ begin
       content = excluded.content,
       content_hash = excluded.content_hash,
       position = excluded.position,
-      embedding = case when public.search_documents.content_hash = excluded.content_hash and public.search_documents.embedding_status = 'ready' then public.search_documents.embedding else null end,
-      embedding_status = case when public.search_documents.content_hash = excluded.content_hash and public.search_documents.embedding_status = 'ready' then 'ready' else 'pending' end,
-      embedding_error = case when public.search_documents.content_hash = excluded.content_hash and public.search_documents.embedding_status = 'ready' then public.search_documents.embedding_error else null end,
-      embedding_model = case when public.search_documents.content_hash = excluded.content_hash and public.search_documents.embedding_status = 'ready' then public.search_documents.embedding_model else null end
+      embedding = case when notesdb.search_documents.content_hash = excluded.content_hash and notesdb.search_documents.embedding_status = 'ready' then notesdb.search_documents.embedding else null end,
+      embedding_status = case when notesdb.search_documents.content_hash = excluded.content_hash and notesdb.search_documents.embedding_status = 'ready' then 'ready' else 'pending' end,
+      embedding_error = case when notesdb.search_documents.content_hash = excluded.content_hash and notesdb.search_documents.embedding_status = 'ready' then notesdb.search_documents.embedding_error else null end,
+      embedding_model = case when notesdb.search_documents.content_hash = excluded.content_hash and notesdb.search_documents.embedding_status = 'ready' then notesdb.search_documents.embedding_model else null end
     returning id into document_id;
 
     if should_enqueue then
@@ -177,30 +177,30 @@ security definer
 set search_path = public, extensions
 as $$
 declare
-  stored public.note_mutations%rowtype;
-  note_row public.notes%rowtype;
+  stored notesdb.note_mutations%rowtype;
+  note_row notesdb.notes%rowtype;
   response jsonb;
 begin
-  select * into stored from public.note_mutations where owner_id = p_owner_id and mutation_id = p_mutation_id for update;
+  select * into stored from notesdb.note_mutations where owner_id = p_owner_id and mutation_id = p_mutation_id for update;
   if found then
     if stored.request_hash = p_request_hash then
       return jsonb_build_object('status', 'idempotent', 'note', stored.response->'note', 'blocks', stored.response->'blocks');
     end if;
     return jsonb_build_object('status', 'mutation_reuse_conflict');
   end if;
-  if exists (select 1 from public.notes where owner_id = p_owner_id and deleted_at is null and lower(slug) = lower(p_slug)) then
+  if exists (select 1 from notesdb.notes where owner_id = p_owner_id and deleted_at is null and lower(slug) = lower(p_slug)) then
     return jsonb_build_object('status', 'slug_conflict');
   end if;
-  insert into public.notes (id, owner_id, slug, title, content_markdown, content_plain, tags, version, last_mutation_id, updated_by_device_id)
+  insert into notesdb.notes (id, owner_id, slug, title, content_markdown, content_plain, tags, version, last_mutation_id, updated_by_device_id)
   values (p_note_id, p_owner_id, p_slug, p_title, p_content_markdown, p_content_plain, coalesce(p_tags, '{}'), 1, p_mutation_id, p_device_id)
   returning * into note_row;
   perform public.qnotes_sync_note_content(p_note_id, p_owner_id, p_blocks, p_documents);
   response := jsonb_build_object('note', public.qnotes_note_json(note_row), 'blocks', public.qnotes_blocks_json(p_note_id));
-  insert into public.note_mutations (owner_id, mutation_id, operation, request_hash, note_id, resulting_version, response)
+  insert into notesdb.note_mutations (owner_id, mutation_id, operation, request_hash, note_id, resulting_version, response)
   values (p_owner_id, p_mutation_id, 'created', p_request_hash, p_note_id, 1, response);
   return jsonb_build_object('status', 'ok') || response;
 exception when unique_violation then
-  if exists (select 1 from public.notes where owner_id = p_owner_id and deleted_at is null and lower(slug) = lower(p_slug)) then
+  if exists (select 1 from notesdb.notes where owner_id = p_owner_id and deleted_at is null and lower(slug) = lower(p_slug)) then
     return jsonb_build_object('status', 'slug_conflict');
   end if;
   raise;
@@ -227,26 +227,26 @@ security definer
 set search_path = public, extensions
 as $$
 declare
-  stored public.note_mutations%rowtype;
-  note_row public.notes%rowtype;
+  stored notesdb.note_mutations%rowtype;
+  note_row notesdb.notes%rowtype;
   response jsonb;
 begin
-  select * into stored from public.note_mutations where owner_id = p_owner_id and mutation_id = p_mutation_id for update;
+  select * into stored from notesdb.note_mutations where owner_id = p_owner_id and mutation_id = p_mutation_id for update;
   if found then
     if stored.request_hash = p_request_hash then
       return jsonb_build_object('status', 'idempotent', 'note', stored.response->'note', 'blocks', stored.response->'blocks');
     end if;
     return jsonb_build_object('status', 'mutation_reuse_conflict');
   end if;
-  select * into note_row from public.notes where id = p_note_id and owner_id = p_owner_id for update;
+  select * into note_row from notesdb.notes where id = p_note_id and owner_id = p_owner_id for update;
   if not found then return jsonb_build_object('status', 'not_found'); end if;
   if note_row.version <> p_expected_version then
     return jsonb_build_object('status', 'version_conflict', 'currentVersion', note_row.version, 'currentNote', public.qnotes_note_json(note_row));
   end if;
-  if exists (select 1 from public.notes where owner_id = p_owner_id and id <> p_note_id and deleted_at is null and lower(slug) = lower(p_slug)) then
+  if exists (select 1 from notesdb.notes where owner_id = p_owner_id and id <> p_note_id and deleted_at is null and lower(slug) = lower(p_slug)) then
     return jsonb_build_object('status', 'slug_conflict');
   end if;
-  update public.notes
+  update notesdb.notes
   set slug = p_slug, title = p_title, content_markdown = p_content_markdown, content_plain = p_content_plain,
       tags = coalesce(p_tags, '{}'), version = version + 1, last_mutation_id = p_mutation_id,
       updated_by_device_id = p_device_id, updated_at = timezone('utc', now())
@@ -254,7 +254,7 @@ begin
   returning * into note_row;
   perform public.qnotes_sync_note_content(p_note_id, p_owner_id, p_blocks, p_documents);
   response := jsonb_build_object('note', public.qnotes_note_json(note_row), 'blocks', public.qnotes_blocks_json(p_note_id));
-  insert into public.note_mutations (owner_id, mutation_id, operation, request_hash, note_id, resulting_version, response)
+  insert into notesdb.note_mutations (owner_id, mutation_id, operation, request_hash, note_id, resulting_version, response)
   values (p_owner_id, p_mutation_id, 'updated', p_request_hash, p_note_id, note_row.version, response);
   return jsonb_build_object('status', 'ok') || response;
 end;
@@ -267,21 +267,21 @@ security definer
 set search_path = public, extensions
 as $$
 declare
-  stored public.note_mutations%rowtype;
-  note_row public.notes%rowtype;
+  stored notesdb.note_mutations%rowtype;
+  note_row notesdb.notes%rowtype;
   response jsonb;
 begin
-  select * into stored from public.note_mutations where owner_id = p_owner_id and mutation_id = p_mutation_id for update;
+  select * into stored from notesdb.note_mutations where owner_id = p_owner_id and mutation_id = p_mutation_id for update;
   if found then
     if stored.request_hash = p_request_hash then return jsonb_build_object('status', 'idempotent', 'note', stored.response->'note', 'blocks', stored.response->'blocks'); end if;
     return jsonb_build_object('status', 'mutation_reuse_conflict');
   end if;
-  select * into note_row from public.notes where id = p_note_id and owner_id = p_owner_id for update;
+  select * into note_row from notesdb.notes where id = p_note_id and owner_id = p_owner_id for update;
   if not found then return jsonb_build_object('status', 'not_found'); end if;
   if note_row.version <> p_expected_version then return jsonb_build_object('status', 'version_conflict', 'currentVersion', note_row.version, 'currentNote', public.qnotes_note_json(note_row)); end if;
-  update public.notes set deleted_at = timezone('utc', now()), version = version + 1, last_mutation_id = p_mutation_id, updated_by_device_id = p_device_id, updated_at = timezone('utc', now()) where id = p_note_id and owner_id = p_owner_id returning * into note_row;
+  update notesdb.notes set deleted_at = timezone('utc', now()), version = version + 1, last_mutation_id = p_mutation_id, updated_by_device_id = p_device_id, updated_at = timezone('utc', now()) where id = p_note_id and owner_id = p_owner_id returning * into note_row;
   response := jsonb_build_object('note', public.qnotes_note_json(note_row), 'blocks', public.qnotes_blocks_json(p_note_id));
-  insert into public.note_mutations (owner_id, mutation_id, operation, request_hash, note_id, resulting_version, response) values (p_owner_id, p_mutation_id, 'deleted', p_request_hash, p_note_id, note_row.version, response);
+  insert into notesdb.note_mutations (owner_id, mutation_id, operation, request_hash, note_id, resulting_version, response) values (p_owner_id, p_mutation_id, 'deleted', p_request_hash, p_note_id, note_row.version, response);
   return jsonb_build_object('status', 'ok') || response;
 end;
 $$;
@@ -293,22 +293,22 @@ security definer
 set search_path = public, extensions
 as $$
 declare
-  stored public.note_mutations%rowtype;
-  note_row public.notes%rowtype;
+  stored notesdb.note_mutations%rowtype;
+  note_row notesdb.notes%rowtype;
   response jsonb;
 begin
-  select * into stored from public.note_mutations where owner_id = p_owner_id and mutation_id = p_mutation_id for update;
+  select * into stored from notesdb.note_mutations where owner_id = p_owner_id and mutation_id = p_mutation_id for update;
   if found then
     if stored.request_hash = p_request_hash then return jsonb_build_object('status', 'idempotent', 'note', stored.response->'note', 'blocks', stored.response->'blocks'); end if;
     return jsonb_build_object('status', 'mutation_reuse_conflict');
   end if;
-  select * into note_row from public.notes where id = p_note_id and owner_id = p_owner_id for update;
+  select * into note_row from notesdb.notes where id = p_note_id and owner_id = p_owner_id for update;
   if not found then return jsonb_build_object('status', 'not_found'); end if;
   if note_row.version <> p_expected_version then return jsonb_build_object('status', 'version_conflict', 'currentVersion', note_row.version, 'currentNote', public.qnotes_note_json(note_row)); end if;
-  if exists (select 1 from public.notes where owner_id = p_owner_id and id <> p_note_id and deleted_at is null and lower(slug) = lower(note_row.slug)) then return jsonb_build_object('status', 'slug_conflict'); end if;
-  update public.notes set deleted_at = null, version = version + 1, last_mutation_id = p_mutation_id, updated_by_device_id = p_device_id, updated_at = timezone('utc', now()) where id = p_note_id and owner_id = p_owner_id returning * into note_row;
+  if exists (select 1 from notesdb.notes where owner_id = p_owner_id and id <> p_note_id and deleted_at is null and lower(slug) = lower(note_row.slug)) then return jsonb_build_object('status', 'slug_conflict'); end if;
+  update notesdb.notes set deleted_at = null, version = version + 1, last_mutation_id = p_mutation_id, updated_by_device_id = p_device_id, updated_at = timezone('utc', now()) where id = p_note_id and owner_id = p_owner_id returning * into note_row;
   response := jsonb_build_object('note', public.qnotes_note_json(note_row), 'blocks', public.qnotes_blocks_json(p_note_id));
-  insert into public.note_mutations (owner_id, mutation_id, operation, request_hash, note_id, resulting_version, response) values (p_owner_id, p_mutation_id, 'restored', p_request_hash, p_note_id, note_row.version, response);
+  insert into notesdb.note_mutations (owner_id, mutation_id, operation, request_hash, note_id, resulting_version, response) values (p_owner_id, p_mutation_id, 'restored', p_request_hash, p_note_id, note_row.version, response);
   return jsonb_build_object('status', 'ok') || response;
 end;
 $$;
@@ -320,12 +320,12 @@ security definer
 set search_path = public, extensions
 as $$
 declare
-  item public.attachments%rowtype;
+  item notesdb.attachments%rowtype;
 begin
-  select * into item from public.attachments where id = p_attachment_id and owner_id = p_owner_id and deleted_at is null for update;
+  select * into item from notesdb.attachments where id = p_attachment_id and owner_id = p_owner_id and deleted_at is null for update;
   if not found then return jsonb_build_object('status', 'not_found'); end if;
   if item.extraction_status <> 'pending_upload' then return jsonb_build_object('status', item.extraction_status, 'attachmentId', item.id); end if;
-  update public.attachments set extraction_status = 'queued', updated_at = timezone('utc', now()) where id = item.id returning * into item;
+  update notesdb.attachments set extraction_status = 'queued', updated_at = timezone('utc', now()) where id = item.id returning * into item;
   perform pgmq.send('attachment-processing', jsonb_build_object('attachmentId', item.id, 'ownerId', p_owner_id));
   return jsonb_build_object('status', 'ok', 'attachmentId', item.id);
 end;
@@ -338,22 +338,22 @@ security definer
 set search_path = public, extensions
 as $$
 declare
-  item public.attachments%rowtype;
+  item notesdb.attachments%rowtype;
   document jsonb;
-  document_row public.search_documents%rowtype;
+  document_row notesdb.search_documents%rowtype;
 begin
-  select * into item from public.attachments where id = p_attachment_id and owner_id = p_owner_id and deleted_at is null for update;
+  select * into item from notesdb.attachments where id = p_attachment_id and owner_id = p_owner_id and deleted_at is null for update;
   if not found then return jsonb_build_object('status', 'not_found'); end if;
-  if not exists (select 1 from public.notes where id = item.note_id and owner_id = p_owner_id and deleted_at is null) then return jsonb_build_object('status', 'not_found'); end if;
-  delete from public.search_documents where owner_id = p_owner_id and note_id = item.note_id and source_type = 'attachment_chunk' and source_key like 'attachment:' || item.id::text || ':%';
+  if not exists (select 1 from notesdb.notes where id = item.note_id and owner_id = p_owner_id and deleted_at is null) then return jsonb_build_object('status', 'not_found'); end if;
+  delete from notesdb.search_documents where owner_id = p_owner_id and note_id = item.note_id and source_type = 'attachment_chunk' and source_key like 'attachment:' || item.id::text || ':%';
   for document in select value from jsonb_array_elements(coalesce(p_documents, '[]'::jsonb))
   loop
-    insert into public.search_documents (owner_id, note_id, source_type, source_id, source_key, source_title, heading_path, content, content_hash, position, embedding_status)
+    insert into notesdb.search_documents (owner_id, note_id, source_type, source_id, source_key, source_title, heading_path, content, content_hash, position, embedding_status)
     values (p_owner_id, item.note_id, 'attachment_chunk', item.id, document->>'sourceKey', coalesce(document->>'sourceTitle', item.original_file_name), document->>'headingPath', coalesce(document->>'content', ''), document->>'contentHash', (document->>'position')::integer, 'pending')
     returning * into document_row;
     perform public.qnotes_enqueue_embedding(document_row.id, p_owner_id, document_row.content_hash);
   end loop;
-  update public.attachments set checksum_sha256 = p_checksum_sha256, extraction_status = 'ready', extraction_error = null, updated_at = timezone('utc', now()) where id = item.id;
+  update notesdb.attachments set checksum_sha256 = p_checksum_sha256, extraction_status = 'ready', extraction_error = null, updated_at = timezone('utc', now()) where id = item.id;
   return jsonb_build_object('status', 'ok', 'attachmentId', item.id);
 end;
 $$;
@@ -365,9 +365,9 @@ security definer
 set search_path = public, extensions
 as $$
 declare
-  item public.attachments%rowtype;
+  item notesdb.attachments%rowtype;
 begin
-  update public.attachments set extraction_status = p_status, extraction_error = p_error, updated_at = timezone('utc', now()) where id = p_attachment_id and owner_id = p_owner_id and deleted_at is null returning * into item;
+  update notesdb.attachments set extraction_status = p_status, extraction_error = p_error, updated_at = timezone('utc', now()) where id = p_attachment_id and owner_id = p_owner_id and deleted_at is null returning * into item;
   if not found then return jsonb_build_object('status', 'not_found'); end if;
   return jsonb_build_object('status', 'ok', 'attachmentId', item.id);
 end;
@@ -407,7 +407,7 @@ begin
 end;
 $$;
 
-create trigger notes_realtime_after_change after insert or update on public.notes
+create trigger notes_realtime_after_change after insert or update on notesdb.notes
 for each row execute function public.qnotes_note_realtime_event();
 
 do $$
@@ -415,6 +415,12 @@ declare
   signature text;
 begin
   foreach signature in array array[
+    'qnotes_set_updated_at()',
+    'qnotes_note_json(notesdb.notes)',
+    'qnotes_blocks_json(uuid)',
+    'qnotes_enqueue_embedding(uuid,uuid,text)',
+    'qnotes_sync_note_content(uuid,uuid,jsonb,jsonb)',
+    'qnotes_note_realtime_event()',
     'qnotes_create_note(uuid,uuid,text,text,text,text,text[],uuid,uuid,text,jsonb,jsonb)',
     'qnotes_update_note(uuid,uuid,text,text,text,text,text[],bigint,uuid,uuid,text,jsonb,jsonb)',
     'qnotes_soft_delete_note(uuid,uuid,bigint,uuid,uuid,text)',

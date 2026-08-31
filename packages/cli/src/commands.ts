@@ -65,18 +65,18 @@ function textFromArgs(args: string[]): string {
   return args.filter((value) => !value.startsWith('--')).join(' ').trim();
 }
 
-export async function runCommand(args: string[], io: CommandIo, api = createClientFromEnvironment()): Promise<void> {
+export async function runCommand(args: string[], io: CommandIo, api?: QNotesClient): Promise<void> {
   const command = args[0];
   if (!command || command === '--help' || command === '-h') {
     io.stdout(`${help()}\n`);
     return;
   }
-
   if (command === 'search') {
     const query = textFromArgs(args.slice(1));
     if (!query) usage('Usage: qnotes search "query"');
+    const client = api ?? createClientFromEnvironment();
     const mode = args.includes('--semantic') ? 'semantic' : args.includes('--hybrid') ? 'hybrid' : 'keyword';
-    const results = await api.search({ query, mode });
+    const results = await client.search({ query, mode });
     io.stdout(`${args.includes('--json') ? JSON.stringify(results, null, 2) : formatSearchResults(results)}\n`);
     return;
   }
@@ -84,14 +84,16 @@ export async function runCommand(args: string[], io: CommandIo, api = createClie
   if (command === 'get') {
     const reference = args[1];
     if (!reference || reference.startsWith('--')) usage('Usage: qnotes get <note-id-or-slug> [--raw]');
-    io.stdout(formatNote(await api.getNote(reference), args.includes('--raw')));
+    const client = api ?? createClientFromEnvironment();
+    io.stdout(formatNote(await client.getNote(reference), args.includes('--raw')));
     return;
   }
 
   if (command === 'blocks') {
     const reference = args[1];
     if (!reference || reference.startsWith('--')) usage('Usage: qnotes blocks <note-id-or-slug>');
-    const blocks: NoteBlock[] = await api.listBlocks(reference);
+    const client = api ?? createClientFromEnvironment();
+    const blocks: NoteBlock[] = await client.listBlocks(reference);
     io.stdout(`${formatBlockSummary(blocks)}\n`);
     return;
   }
@@ -100,7 +102,8 @@ export async function runCommand(args: string[], io: CommandIo, api = createClie
     const reference = args[2];
     const key = args[3];
     if (!reference || !key || reference.startsWith('--') || key.startsWith('--')) usage('Usage: qnotes block get <note-id-or-slug> <block-key>');
-    io.stdout(withOneFinalNewline((await api.getBlock(reference, key)).content));
+    const client = api ?? createClientFromEnvironment();
+    io.stdout(withOneFinalNewline((await client.getBlock(reference, key)).content));
     return;
   }
 
@@ -108,8 +111,9 @@ export async function runCommand(args: string[], io: CommandIo, api = createClie
     const title = valueAfter(args, '--title');
     const file = valueAfter(args, '--file');
     if (!title || !file) usage('Usage: qnotes create --title "Title" --file note.md');
+    const client = api ?? createClientFromEnvironment();
     const contentMarkdown = await readFile(resolve(file), 'utf8');
-    const note = await api.createNote({ title, contentMarkdown, tags: [], deviceId: randomUUID(), mutationId: randomUUID() });
+    const note = await client.createNote({ title, contentMarkdown, tags: [], deviceId: randomUUID(), mutationId: randomUUID() });
     io.stdout(`${JSON.stringify(note, null, 2)}\n`);
     return;
   }
@@ -117,8 +121,9 @@ export async function runCommand(args: string[], io: CommandIo, api = createClie
   if (command === 'capture') {
     const content = textFromArgs(args.slice(1));
     if (!content) usage('Usage: qnotes capture "Text to remember"');
+    const client = api ?? createClientFromEnvironment();
     const title = content.split(/\r?\n/).find((line) => line.trim())?.trim().slice(0, 80) ?? 'Capture';
-    const note = await api.createNote({ title, contentMarkdown: `${content}\n`, tags: ['capture'], deviceId: randomUUID(), mutationId: randomUUID() });
+    const note = await client.createNote({ title, contentMarkdown: `${content}\n`, tags: ['capture'], deviceId: randomUUID(), mutationId: randomUUID() });
     io.stdout(`${JSON.stringify(note, null, 2)}\n`);
     return;
   }
@@ -127,9 +132,10 @@ export async function runCommand(args: string[], io: CommandIo, api = createClie
     const reference = args[1];
     const content = textFromArgs(args.slice(2));
     if (!reference || !content) usage('Usage: qnotes append <note-id-or-slug> "Text to append"');
-    const note = await api.getNote(reference);
+    const client = api ?? createClientFromEnvironment();
+    const note = await client.getNote(reference);
     const next = note.contentMarkdown.trim() ? `${note.contentMarkdown.trimEnd()}\n\n${content}\n` : `${content}\n`;
-    io.stdout(`${JSON.stringify(await api.updateNote(note.id, notePayload(note, next)), null, 2)}\n`);
+    io.stdout(`${JSON.stringify(await client.updateNote(note.id, notePayload(note, next)), null, 2)}\n`);
     return;
   }
 
@@ -138,14 +144,16 @@ export async function runCommand(args: string[], io: CommandIo, api = createClie
     const output = valueAfter(args, '--output');
     if (workspace) {
       if (!output) usage('Usage: qnotes export --workspace --output backup.zip [--force]');
-      const bytes = new Uint8Array(await (await api.exportWorkspace()).arrayBuffer());
+      const client = api ?? createClientFromEnvironment();
+      const bytes = new Uint8Array(await (await client.exportWorkspace()).arrayBuffer());
       await writeBinaryFile(resolve(output), bytes, args.includes('--force'));
       io.stdout(`Exported workspace to ${output}\n`);
       return;
     }
     const reference = args[1];
     if (!reference || reference.startsWith('--')) usage('Usage: qnotes export <note-id-or-slug> [--output note.md] [--force]');
-    const response = await api.exportNote(reference);
+    const client = api ?? createClientFromEnvironment();
+    const response = await client.exportNote(reference);
     if (output) {
       await writeBinaryFile(resolve(output), new Uint8Array(await response.arrayBuffer()), args.includes('--force'));
       io.stdout(`Exported note to ${output}\n`);

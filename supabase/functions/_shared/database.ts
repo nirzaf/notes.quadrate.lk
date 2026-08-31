@@ -8,6 +8,7 @@ const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 export const serviceClient = createClient(supabaseUrl, serviceRoleKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
+export const appDbClient = serviceClient.schema('notesdb');
 
 export function noteFromRow(row: Record<string, unknown>): Note {
   return {
