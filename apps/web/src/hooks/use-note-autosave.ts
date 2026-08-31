@@ -5,7 +5,7 @@ import { AutosaveCoordinator } from '@qnotes/sync';
 import { api } from '../api';
 import { draftStore, getDeviceId, rememberNote } from '../indexed-db';
 
-interface SavePayload { markdown: string; }
+interface SavePayload { markdown: string; editRevision: number; }
 
 interface UseNoteAutosaveOptions {
   note: Note;
@@ -24,6 +24,8 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange }: Us
   const noteIdRef = useRef(note.id);
   const acknowledgedMutationIdRef = useRef<string | null>(null);
   const saveRevision = useRef(0);
+  const editRevision = useRef(0);
+  const dirtyRef = useRef(false);
   const saveHandler = useRef<((payload: SavePayload) => Promise<void>) | null>(null);
   const onSavedRef = useRef(onSaved);
   const onConflictRef = useRef(onConflict);
@@ -34,7 +36,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange }: Us
 
   const sleep = (milliseconds: number) => new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
 
-  saveHandler.current = async ({ markdown }) => {
+  saveHandler.current = async ({ markdown, editRevision: payloadRevision }) => {
     const revision = saveRevision.current;
     const current = authoritative.current;
     const mutationId = crypto.randomUUID();
@@ -59,14 +61,25 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange }: Us
         const saved = await api.updateNote(current.id, payload);
         if (revision !== saveRevision.current) return;
         authoritative.current = saved;
-        if (valueRef.current === saved.contentMarkdown) coordinatorRef.current?.cancelPending();
-        await draftStore.delete(saved.id);
-        await rememberNote(saved);
         setAcknowledgedMutationId(mutationId);
         acknowledgedMutationIdRef.current = mutationId;
-        setDirty(false);
-        onDirtyRef.current?.(false);
-        setStatus('saved');
+        void rememberNote(saved).catch(() => undefined);
+        if (payloadRevision === editRevision.current || valueRef.current === saved.contentMarkdown) {
+          valueRef.current = saved.contentMarkdown;
+          dirtyRef.current = false;
+          setValue(saved.contentMarkdown);
+          coordinatorRef.current?.cancelPending();
+          void draftStore.delete(saved.id).catch(() => undefined);
+          setDirty(false);
+          onDirtyRef.current?.(false);
+          setStatus('saved');
+        } else {
+          dirtyRef.current = true;
+          setDirty(true);
+          onDirtyRef.current?.(true);
+          setStatus(navigator.onLine ? 'saving' : 'offline');
+          coordinatorRef.current?.schedule({ markdown: valueRef.current, editRevision: editRevision.current });
+        }
         onSavedRef.current(saved);
         return;
       } catch (error: unknown) {
@@ -99,11 +112,13 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange }: Us
 
   useEffect(() => {
     if (note.id !== noteIdRef.current) {
+      void coordinatorRef.current?.flush();
       saveRevision.current += 1;
-      coordinatorRef.current?.cancelPending();
       noteIdRef.current = note.id;
       authoritative.current = note;
       valueRef.current = note.contentMarkdown;
+      editRevision.current = 0;
+      dirtyRef.current = false;
       setValue(note.contentMarkdown);
       setDirty(false);
       setAcknowledgedMutationId(null);
@@ -121,13 +136,19 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange }: Us
 
   useEffect(() => {
     let active = true;
+    const requestedNoteId = note.id;
+    const requestedMarkdown = note.contentMarkdown;
+    const requestedVersion = note.version;
     void draftStore.get(note.id).then((draft) => {
-      if (active && draft && draft.localMarkdown !== note.contentMarkdown && draft.baseVersion <= note.version) {
+      if (active && noteIdRef.current === requestedNoteId && !dirtyRef.current && valueRef.current === requestedMarkdown && draft && draft.localMarkdown !== requestedMarkdown && draft.baseVersion <= requestedVersion) {
+        editRevision.current += 1;
         valueRef.current = draft.localMarkdown;
+        dirtyRef.current = true;
         setValue(draft.localMarkdown);
         setDirty(true);
         onDirtyRef.current?.(true);
-        setStatus('offline');
+        setStatus(navigator.onLine ? 'saving' : 'offline');
+        coordinatorRef.current?.schedule({ markdown: draft.localMarkdown, editRevision: editRevision.current });
       }
     }).catch(() => undefined);
     return () => { active = false; };
@@ -140,24 +161,31 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange }: Us
     return () => {
       window.removeEventListener('online', updateOnline);
       window.removeEventListener('offline', updateOnline);
-      coordinatorRef.current?.dispose();
+      const coordinator = coordinatorRef.current;
+      if (coordinator) void coordinator.flush().finally(() => coordinator.dispose());
     };
   }, []);
 
   const change = useCallback((next: string) => {
+    editRevision.current += 1;
     valueRef.current = next;
     setValue(next);
     const isDirty = next !== authoritative.current.contentMarkdown;
+    dirtyRef.current = isDirty;
     setDirty(isDirty);
     onDirtyRef.current?.(isDirty);
     if (!isDirty) {
-      void draftStore.delete(authoritative.current.id);
+      coordinatorRef.current?.cancelPending();
+      void draftStore.delete(authoritative.current.id).catch(() => undefined);
       setStatus('saved');
       return;
     }
     setStatus(navigator.onLine ? 'saving' : 'offline');
-    void draftStore.put({ noteId: authoritative.current.id, baseVersion: authoritative.current.version, baseMarkdown: authoritative.current.contentMarkdown, localMarkdown: next, updatedAt: new Date().toISOString() }).catch(() => setStatus('offline'));
-    coordinatorRef.current?.schedule({ markdown: next });
+    const revision = editRevision.current;
+    void draftStore.put({ noteId: authoritative.current.id, baseVersion: authoritative.current.version, baseMarkdown: authoritative.current.contentMarkdown, localMarkdown: next, updatedAt: new Date().toISOString() }).catch(() => {
+      if (revision === editRevision.current) setStatus('offline');
+    });
+    coordinatorRef.current?.schedule({ markdown: next, editRevision: revision });
   }, []);
 
   const flush = useCallback(() => coordinatorRef.current?.flush() ?? Promise.resolve(), []);
@@ -166,13 +194,15 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange }: Us
     coordinatorRef.current?.cancelPending();
     authoritative.current = nextNote;
     valueRef.current = nextNote.contentMarkdown;
+    editRevision.current = 0;
+    dirtyRef.current = false;
     setValue(nextNote.contentMarkdown);
     setDirty(false);
     setAcknowledgedMutationId(null);
     acknowledgedMutationIdRef.current = null;
     onDirtyRef.current?.(false);
     setStatus('saved');
-    void draftStore.delete(nextNote.id);
+    void draftStore.delete(nextNote.id).catch(() => undefined);
   }, []);
   const acknowledgeMutation = useCallback((mutationId: string) => {
     acknowledgedMutationIdRef.current = mutationId;

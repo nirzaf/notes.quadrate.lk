@@ -72,6 +72,56 @@ test('creates, edits, renders, copies, deletes, restores, and isolates notes', a
   await other.close();
 });
 
+test('flushes a just-typed edit before leaving the note', async ({ page }) => {
+  await signInPage(page);
+  await page.getByRole('button', { name: 'New note' }).first().click();
+  await expect(page).toHaveURL(/\/notes\/[0-9a-f-]+$/);
+  const noteId = noteIdFromUrl(page.url());
+  await page.locator('.cm-content').fill('Typed immediately before navigation.\n');
+  await page.getByRole('link', { name: 'Quadrate Notes home' }).click();
+  await expect(page).toHaveURL(/\/$/);
+
+  const session = await signInSession();
+  const saved = await poll(() => getNoteApi(session.access_token, noteId), (note) => note.contentMarkdown === 'Typed immediately before navigation.\n', 10_000);
+  expect(saved.contentMarkdown).toBe('Typed immediately before navigation.\n');
+});
+
+test('keeps newer typing when an earlier autosave response is delayed', async ({ page }) => {
+  await signInPage(page);
+  await page.getByRole('button', { name: 'New note' }).first().click();
+  await expect(page).toHaveURL(/\/notes\/[0-9a-f-]+$/);
+  const noteId = noteIdFromUrl(page.url());
+  const firstPatchStarted = page.waitForRequest((request) => request.url().includes(`/api/notes/${noteId}`) && request.method() === 'PATCH');
+  let releaseFirstPatch!: () => void;
+  const firstPatchReleased = new Promise<void>((resolve) => { releaseFirstPatch = resolve; });
+  let patchCount = 0;
+  await page.route('**/functions/v1/qnotes-api/api/notes/**', async (route) => {
+    if (route.request().method() !== 'PATCH') {
+      await route.continue();
+      return;
+    }
+    patchCount += 1;
+    if (patchCount !== 1) {
+      await route.continue();
+      return;
+    }
+    const response = await route.fetch();
+    await firstPatchReleased;
+    await route.fulfill({ response });
+  });
+
+  const editor = page.locator('.cm-content');
+  await editor.fill('First revision.\n');
+  await firstPatchStarted;
+  await editor.fill('First revision.\n\nSecond revision typed while saving.\n');
+  releaseFirstPatch();
+  await page.getByRole('link', { name: 'Quadrate Notes home' }).click();
+  await expect(page).toHaveURL(/\/$/);
+  const session = await signInSession();
+  await expect.poll(async () => (await getNoteApi(session.access_token, noteId)).contentMarkdown, { timeout: 10_000 }).toBe('First revision.\n\nSecond revision typed while saving.\n');
+  await page.unroute('**/functions/v1/qnotes-api/api/notes/**');
+});
+
 test('rejects duplicate named block IDs through the API contract', async () => {
   const session = await signInSession(OWNER);
   const note = await createNoteApi(session.access_token, `Duplicate blocks ${crypto.randomUUID()}`, 'one');
