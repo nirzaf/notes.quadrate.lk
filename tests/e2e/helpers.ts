@@ -46,7 +46,7 @@ export async function clearApplicationData(): Promise<void> {
     ids.push(found.id);
     await removeObjects(client, found.id);
   }
-  for (const table of ['search_documents', 'note_blocks', 'note_mutations', 'api_tokens', 'attachments', 'notes']) {
+  for (const table of ['search_documents', 'note_blocks', 'note_mutations', 'api_tokens', 'attachments', 'notes', 'notebooks']) {
     const result = await client.from(table).delete().in('owner_id', ids);
     if (result.error) throw result.error;
   }

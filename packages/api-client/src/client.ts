@@ -3,8 +3,10 @@ import type {
   Attachment,
   CreateApiTokenInput,
   CreateApiTokenResult,
+  CreateNotebookInput,
   CreateNoteInput,
   Note,
+  Notebook,
   NoteBlock,
   NoteSummary,
   SearchMode,
@@ -96,6 +98,14 @@ export class QNotesClient {
     return this.request(`/notes${queryString({ cursor: params.cursor, limit: params.limit, includeDeleted: params.includeDeleted, tag: params.tag })}`);
   }
 
+  listNotebooks(): Promise<{ items: Notebook[] }> {
+    return this.request('/notebooks');
+  }
+
+  createNotebook(input: CreateNotebookInput): Promise<Notebook> {
+    return this.request('/notebooks', { method: 'POST', body: JSON.stringify(input) });
+  }
+
   getNote(noteRef: string): Promise<Note> {
     return this.request(`/notes/${encodeURIComponent(noteRef)}`);
   }
@@ -106,6 +116,10 @@ export class QNotesClient {
 
   updateNote(noteId: UUID, input: UpdateNoteInput): Promise<Note> {
     return this.request(`/notes/${encodeURIComponent(noteId)}`, { method: 'PATCH', body: JSON.stringify(input) });
+  }
+
+  moveNoteToNotebook(noteId: UUID, input: { notebookId: UUID | null; expectedVersion: number; deviceId: UUID; mutationId: UUID }): Promise<Note> {
+    return this.request(`/notes/${encodeURIComponent(noteId)}/notebook`, { method: 'PATCH', body: JSON.stringify(input) });
   }
 
   deleteNote(noteId: UUID, input: VersionedNoteMutationInput): Promise<Note> {

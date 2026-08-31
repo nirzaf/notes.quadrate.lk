@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import { deriveSlug, isUUID, normalizeSlug, validateCreateNoteInput, validateLimit, validateUpdateNoteInput, validateVersionedMutation } from '@qnotes/shared';
+import { DEFAULT_NOTE_LIST_LIMIT, deriveSlug, isUUID, MAX_NOTE_LIST_LIMIT, normalizeSlug, validateCreateNoteInput, validateLimit, validateMoveNoteToNotebookInput, validateUpdateNoteInput, validateVersionedMutation } from '@qnotes/shared';
 import { MarkdownParseError, parseMarkdown } from '@qnotes/markdown';
 import { authFromContext, requireScope } from '../_shared/auth.ts';
 import { ApiError } from '../_shared/errors.ts';
@@ -23,6 +23,7 @@ function noteFromRpc(value: unknown): ReturnType<typeof noteFromRow> {
     contentMarkdown: String(row.contentMarkdown ?? row.content_markdown ?? ''),
     contentPlain: String(row.contentPlain ?? row.content_plain ?? ''),
     tags: Array.isArray(row.tags) ? row.tags.map(String) : [],
+    notebookId: row.notebookId ? String(row.notebookId) : row.notebook_id ? String(row.notebook_id) : null,
     version: Number(row.version),
     createdAt: String(row.createdAt ?? row.created_at),
     updatedAt: String(row.updatedAt ?? row.updated_at),
@@ -35,6 +36,7 @@ function mapMutationResult(data: unknown): NoteResult {
   const status = result.status;
   if (status === 'ok' || status === 'idempotent') return { note: noteFromRpc(result.note), blocks: Array.isArray(result.blocks) ? result.blocks : [] };
   if (status === 'not_found') throw new ApiError(404, 'NOTE_NOT_FOUND', 'The note was not found.');
+  if (status === 'notebook_not_found') throw new ApiError(404, 'NOTEBOOK_NOT_FOUND', 'The notebook was not found.');
   if (status === 'slug_conflict') throw new ApiError(409, 'NOTE_SLUG_CONFLICT', 'An active note already uses that slug.');
   if (status === 'mutation_reuse_conflict') throw new ApiError(409, 'MUTATION_REUSE_CONFLICT', 'The mutation ID was already used for a different request.');
   if (status === 'version_conflict') throw new ApiError(409, 'NOTE_VERSION_CONFLICT', 'The note was changed on another device.', { currentVersion: result.currentVersion, currentNote: result.currentNote });
@@ -82,7 +84,7 @@ export async function listNotes(context: Context): Promise<Response> {
   const auth = authFromContext(context);
   requireScope(auth, 'notes:read');
   const query = context.req.query();
-  const limit = validateLimit(query.limit, 100, 50);
+  const limit = validateLimit(query.limit, MAX_NOTE_LIST_LIMIT, DEFAULT_NOTE_LIST_LIMIT);
   const includeDeleted = query.includeDeleted === 'true';
   let builder = appDbClient.from('notes').select('*').eq('owner_id', auth.userId);
   if (!includeDeleted) builder = builder.is('deleted_at', null);
@@ -137,6 +139,25 @@ export async function updateNote(context: Context): Promise<Response> {
     p_owner_id: auth.userId, p_note_id: noteId, p_slug: normalizeSlug(input.slug, input.title), p_title: input.title, p_content_markdown: parsed.parsed.normalizedMarkdown,
     p_content_plain: parsed.parsed.plainText, p_tags: input.tags, p_expected_version: input.expectedVersion, p_device_id: input.deviceId,
     p_mutation_id: input.mutationId, p_request_hash: hash, p_blocks: parsed.blocks, p_documents: parsed.documents,
+  }));
+  return dataBody(context, mapMutationResult(result).note);
+}
+
+export async function moveNoteToNotebook(context: Context): Promise<Response> {
+  const auth = authFromContext(context);
+  requireScope(auth, 'notes:write');
+  const noteId = context.req.param('noteId');
+  if (!isUUID(noteId)) throw new ApiError(422, 'VALIDATION_ERROR', 'noteId must be a valid UUID.');
+  const input = validateMoveNoteToNotebookInput(await context.req.json());
+  const hash = await requestHash({ userId: auth.userId, operation: 'updated', noteId, expectedVersion: input.expectedVersion, body: input });
+  const result = assertSupabase(await serviceClient.rpc('qnotes_move_note_to_notebook', {
+    p_owner_id: auth.userId,
+    p_note_id: noteId,
+    p_notebook_id: input.notebookId,
+    p_expected_version: input.expectedVersion,
+    p_device_id: input.deviceId,
+    p_mutation_id: input.mutationId,
+    p_request_hash: hash,
   }));
   return dataBody(context, mapMutationResult(result).note);
 }

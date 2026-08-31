@@ -15,7 +15,7 @@ export function HomePage(): JSX.Element {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const notesQuery = useQuery({ queryKey: ['notes'], queryFn: () => api.listNotes() });
+  const notesQuery = useQuery({ queryKey: ['notes'], queryFn: () => api.listNotes({ limit: 500 }) });
   const { syncing, recover } = useSyncRecovery();
   const handleRealtimeEvent = useCallback((_event: RealtimeNoteEvent) => { void recover(); }, [recover]);
   const createNote = useCallback(async () => {

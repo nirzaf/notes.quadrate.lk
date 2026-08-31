@@ -10,7 +10,7 @@ function io() {
   return { output, io: { stdout: (value) => { output.stdout += value; }, stderr: (value) => { output.stderr += value; } } };
 }
 
-const note = { id: '11111111-1111-4111-8111-111111111111', slug: 'demo', title: 'Demo', contentMarkdown: '# Demo\n\nbody\n', contentPlain: 'Demo\nbody', tags: ['demo'], version: 1, createdAt: '2026-08-31T00:00:00Z', updatedAt: '2026-08-31T00:00:00Z', deletedAt: null };
+const note = { id: '11111111-1111-4111-8111-111111111111', slug: 'demo', title: 'Demo', contentMarkdown: '# Demo\n\nbody\n', contentPlain: 'Demo\nbody', tags: ['demo'], notebookId: null, version: 1, createdAt: '2026-08-31T00:00:00Z', updatedAt: '2026-08-31T00:00:00Z', deletedAt: null };
 const block = { id: '22222222-2222-4222-8222-222222222222', noteId: note.id, blockKey: 'deploy', blockType: 'command', title: 'Deploy', language: 'bash', content: 'docker compose up -d', position: 0, copyable: true, contentHash: 'x' };
 
 test('invalid CLI usage returns exit code 2', async () => {
@@ -38,4 +38,17 @@ test('existing export target is not overwritten without --force', async () => {
   const { io: streams } = io();
   await assert.rejects(() => runCommand(['export', 'demo', '--output', target], streams, { exportNote: async () => new Response('replacement') }));
   assert.equal(await readFile(target, 'utf8'), 'original');
+});
+
+test('lists notebooks and moves a note to a notebook', async () => {
+  const { output, io: streams } = io();
+  let moveInput;
+  await runCommand(['notebooks'], streams, { listNotebooks: async () => ({ items: [{ id: 'n-1', name: 'Work' }] }) });
+  await runCommand(['notebook', 'move', 'demo', 'n-1'], streams, {
+    getNote: async () => note,
+    moveNoteToNotebook: async (noteId, input) => { moveInput = { noteId, input }; return { ...note, notebookId: input.notebookId, version: 2 }; },
+  });
+  assert.match(output.stdout, /"name": "Work"/);
+  assert.equal(moveInput.noteId, note.id);
+  assert.equal(moveInput.input.notebookId, 'n-1');
 });

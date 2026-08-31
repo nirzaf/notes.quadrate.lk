@@ -31,7 +31,10 @@ Commands:
   qnotes get <note-id-or-slug> [--raw]
   qnotes blocks <note-id-or-slug>
   qnotes block get <note-id-or-slug> <block-key>
-  qnotes create --title "Title" --file note.md
+  qnotes notebooks
+  qnotes notebook create "Notebook name"
+  qnotes notebook move <note-id-or-slug> <notebook-id|unfiled>
+  qnotes create --title "Title" --file note.md [--notebook <id>]
   qnotes capture "Text to remember"
   qnotes append <note-id-or-slug> "Text to append"
   qnotes export <note-id-or-slug> [--output note.md] [--force]
@@ -65,6 +68,10 @@ function textFromArgs(args: string[]): string {
   return args.filter((value) => !value.startsWith('--')).join(' ').trim();
 }
 
+async function moveToNotebook(client: QNotesClient, note: Note, notebookId: string): Promise<Note> {
+  return client.moveNoteToNotebook(note.id, { notebookId: notebookId === 'unfiled' ? null : notebookId, expectedVersion: note.version, deviceId: randomUUID(), mutationId: randomUUID() });
+}
+
 export async function runCommand(args: string[], io: CommandIo, api?: QNotesClient): Promise<void> {
   const command = args[0];
   if (!command || command === '--help' || command === '-h') {
@@ -86,6 +93,29 @@ export async function runCommand(args: string[], io: CommandIo, api?: QNotesClie
     if (!reference || reference.startsWith('--')) usage('Usage: qnotes get <note-id-or-slug> [--raw]');
     const client = api ?? createClientFromEnvironment();
     io.stdout(formatNote(await client.getNote(reference), args.includes('--raw')));
+    return;
+  }
+
+  if (command === 'notebooks') {
+    const client = api ?? createClientFromEnvironment();
+    io.stdout(`${JSON.stringify(await client.listNotebooks(), null, 2)}\n`);
+    return;
+  }
+
+  if (command === 'notebook' && args[1] === 'create') {
+    const name = textFromArgs(args.slice(2));
+    if (!name) usage('Usage: qnotes notebook create "Notebook name"');
+    const client = api ?? createClientFromEnvironment();
+    io.stdout(`${JSON.stringify(await client.createNotebook({ name }), null, 2)}\n`);
+    return;
+  }
+
+  if (command === 'notebook' && args[1] === 'move') {
+    const reference = args[2];
+    const notebookId = args[3];
+    if (!reference || !notebookId || reference.startsWith('--') || notebookId.startsWith('--')) usage('Usage: qnotes notebook move <note-id-or-slug> <notebook-id|unfiled>');
+    const client = api ?? createClientFromEnvironment();
+    io.stdout(`${JSON.stringify(await moveToNotebook(client, await client.getNote(reference), notebookId), null, 2)}\n`);
     return;
   }
 
@@ -113,7 +143,9 @@ export async function runCommand(args: string[], io: CommandIo, api?: QNotesClie
     if (!title || !file) usage('Usage: qnotes create --title "Title" --file note.md');
     const client = api ?? createClientFromEnvironment();
     const contentMarkdown = await readFile(resolve(file), 'utf8');
-    const note = await client.createNote({ title, contentMarkdown, tags: [], deviceId: randomUUID(), mutationId: randomUUID() });
+    const created = await client.createNote({ title, contentMarkdown, tags: [], deviceId: randomUUID(), mutationId: randomUUID() });
+    const notebookId = valueAfter(args, '--notebook');
+    const note = notebookId ? await moveToNotebook(client, created, notebookId) : created;
     io.stdout(`${JSON.stringify(note, null, 2)}\n`);
     return;
   }

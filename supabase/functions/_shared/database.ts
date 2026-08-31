@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import type { Attachment, Note, NoteBlock, NoteSummary, SearchResult } from '@qnotes/shared';
+import type { Attachment, Note, NoteBlock, NoteSummary, Notebook, SearchResult } from '@qnotes/shared';
 import { ApiError } from './errors.ts';
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL') ?? '';
@@ -18,10 +18,20 @@ export function noteFromRow(row: Record<string, unknown>): Note {
     contentMarkdown: String(row.content_markdown ?? ''),
     contentPlain: String(row.content_plain ?? ''),
     tags: Array.isArray(row.tags) ? row.tags.map(String) : [],
+    notebookId: row.notebook_id ? String(row.notebook_id) : row.notebookId ? String(row.notebookId) : null,
     version: Number(row.version),
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
     deletedAt: row.deleted_at ? String(row.deleted_at) : null,
+  };
+}
+
+export function notebookFromRow(row: Record<string, unknown>): Notebook {
+  return {
+    id: String(row.id),
+    name: String(row.name),
+    createdAt: String(row.created_at ?? row.createdAt),
+    updatedAt: String(row.updated_at ?? row.updatedAt),
   };
 }
 

@@ -10,6 +10,7 @@ import { AppShell } from '../components/app-shell';
 import { NoteEditor } from '../components/note-editor';
 import { NotePreview } from '../components/note-preview';
 import { NoteToolbar } from '../components/note-toolbar';
+import { NotebookPicker } from '../components/notebook-picker';
 import { SyncStatus } from '../components/sync-status';
 import { ConflictResolver } from '../components/conflict-resolver';
 import { AttachmentPanel } from '../components/attachment-panel';
@@ -31,8 +32,10 @@ export function NotePage(): JSX.Element {
   const { toast } = useToast();
   const [conflict, setConflict] = useState<{ error: QNotesHttpError; remote: Note | null; remoteDeleted?: boolean } | null>(null);
   const [view, setView] = useState<'edit' | 'preview'>('edit');
+  const [movingNotebook, setMovingNotebook] = useState(false);
   const noteQuery = useQuery({ queryKey: ['note', noteId], queryFn: () => api.getNote(noteId), enabled: Boolean(noteId) });
-  const notesQuery = useQuery({ queryKey: ['notes'], queryFn: () => api.listNotes() });
+  const notesQuery = useQuery({ queryKey: ['notes'], queryFn: () => api.listNotes({ limit: 500 }) });
+  const notebooksQuery = useQuery({ queryKey: ['notebooks'], queryFn: () => api.listNotebooks() });
   const attachmentsQuery = useQuery({ queryKey: ['attachments', noteId], queryFn: () => api.listAttachments(noteId), enabled: Boolean(noteQuery.data) });
   const onSaved = useCallback((saved: Note) => {
     queryClient.setQueryData(['note', saved.id], saved);
@@ -44,7 +47,7 @@ export function NotePage(): JSX.Element {
     setConflict({ error, remote: asNote(details?.currentNote) });
   }, []);
   const note = noteQuery.data;
-  const autosave = useNoteAutosave({ note: note ?? { id: noteId, slug: '', title: '', contentMarkdown: '', contentPlain: '', tags: [], version: 1, createdAt: '', updatedAt: '', deletedAt: null }, onSaved, onConflict });
+  const autosave = useNoteAutosave({ note: note ?? { id: noteId, slug: '', title: '', contentMarkdown: '', contentPlain: '', tags: [], notebookId: null, version: 1, createdAt: '', updatedAt: '', deletedAt: null }, onSaved, onConflict });
   const { syncing, recover } = useSyncRecovery();
   const noteRef = useRef(note);
   const autosaveRef = useRef(autosave);
@@ -99,6 +102,26 @@ export function NotePage(): JSX.Element {
   if (noteQuery.isLoading || !note) return <AppShell notes={notesQuery.data?.items ?? []}><div className="q-main-body"><div className="q-empty">Loading note…</div></div></AppShell>;
 
   const noteForCopy = { ...note, contentMarkdown: autosave.value };
+  const moveNotebook = async (notebookId: string | null) => {
+    if (notebookId === note.notebookId || movingNotebook) return;
+    setMovingNotebook(true);
+    try {
+      if (autosave.dirty || autosave.status === 'saving') await autosave.flush();
+      const current = await queryClient.fetchQuery({ queryKey: ['note', note.id], queryFn: () => api.getNote(note.id) });
+      if (notebookId === current.notebookId) return;
+      const mutationId = crypto.randomUUID();
+      const saved = await api.moveNoteToNotebook(current.id, { notebookId, expectedVersion: current.version, deviceId: getDeviceId(), mutationId });
+      autosave.adoptRemote(saved);
+      autosave.acknowledgeMutation(mutationId);
+      queryClient.setQueryData(['note', saved.id], saved);
+      await queryClient.invalidateQueries({ queryKey: ['notes'] });
+      toast(notebookId ? 'Note moved to notebook.' : 'Note moved to Unfiled.', 'success');
+    } catch (error: unknown) {
+      toast(error instanceof Error ? error.message : 'Unable to move note.', 'error');
+    } finally {
+      setMovingNotebook(false);
+    }
+  };
   const updateDeletion = async (action: 'delete' | 'restore') => {
     try {
       const input = { expectedVersion: note.version, deviceId: getDeviceId(), mutationId: crypto.randomUUID() };
@@ -154,5 +177,5 @@ export function NotePage(): JSX.Element {
       toast(error instanceof Error ? error.message : 'Unable to recover the draft.', 'error');
     }
   };
-  return <AppShell title={note.title} notes={notesQuery.data?.items ?? []} activeNoteId={note.id} onNew={() => void navigate({ to: '/' })} onSelectNote={(id) => void navigate({ to: '/notes/$noteId', params: { noteId: id } })} onRealtimeEvent={event} onRealtimeReconnect={reconnect}><div className="q-main-body q-main-body-wide"><div className="q-editor-page"><section className="q-card q-editor-card"><div className="q-editor-meta"><div><h2 className="q-editor-title">{note.title}</h2><div className="q-small">{note.slug} · updated {formatUpdatedAt(note.updatedAt)}</div></div><SyncStatus status={syncing ? 'syncing' : autosave.status} /></div><div className="q-toolbar" style={{ padding: '12px 20px', borderBottom: '1px solid var(--line)' }}><Button variant={view === 'edit' ? 'secondary' : 'ghost'} size="sm" onClick={() => setView('edit')}>Edit</Button><Button variant={view === 'preview' ? 'secondary' : 'ghost'} size="sm" onClick={() => setView('preview')}>Preview</Button></div>{view === 'edit' ? <NoteEditor value={autosave.value} onChange={autosave.change} /> : <NotePreview markdown={autosave.value} />}<div className="q-editor-footer"><span className="q-small">Markdown is saved after 800ms of quiet.</span><NoteToolbar note={noteForCopy} onDelete={() => void updateDeletion('delete')} onRestore={() => void updateDeletion('restore')} onExport={() => void exportNote()} /></div></section><aside className="q-panel-stack"><AttachmentPanel noteId={note.id} attachments={attachmentsQuery.data ?? []} onRefresh={() => void attachmentsQuery.refetch()} /><section className="q-card q-card-pad q-panel"><h3>Note details</h3><p>Version {note.version}. Your browser keeps only local drafts and recent snapshots in IndexedDB.</p><div className="q-tag-row">{note.tags.map((tag) => <span className="q-badge" key={tag}>{tag}</span>)}</div></section></aside></div></div><ConflictResolver open={Boolean(conflict)} baseMarkdown={note.contentMarkdown} localMarkdown={autosave.value} remoteNote={conflict?.remote ?? null} remoteDeleted={conflict?.remoteDeleted ?? false} error={conflict?.error} onUseMine={saveMine} onUseRemote={saveRemote} onSaveMerged={saveMerged} onSaveAsNew={() => void saveAsNew()} onCancel={() => setConflict(null)} /></AppShell>;
+  return <AppShell title={note.title} notes={notesQuery.data?.items ?? []} activeNoteId={note.id} onNew={() => void navigate({ to: '/' })} onSelectNote={(id) => void navigate({ to: '/notes/$noteId', params: { noteId: id } })} onRealtimeEvent={event} onRealtimeReconnect={reconnect}><div className="q-main-body q-main-body-wide"><div className="q-editor-page"><section className="q-card q-editor-card"><div className="q-editor-meta"><div><h2 className="q-editor-title">{note.title}</h2><div className="q-small">{note.slug} · updated {formatUpdatedAt(note.updatedAt)}</div></div><SyncStatus status={syncing ? 'syncing' : autosave.status} /></div><div className="q-editor-controls"><div className="q-toolbar" aria-label="Note view"><Button variant={view === 'edit' ? 'secondary' : 'ghost'} size="sm" onClick={() => setView('edit')}>Edit</Button><Button variant={view === 'preview' ? 'secondary' : 'ghost'} size="sm" onClick={() => setView('preview')}>Preview</Button></div><NotebookPicker notebooks={notebooksQuery.data?.items ?? []} value={note.notebookId} disabled={movingNotebook || autosave.dirty || autosave.status === 'saving'} onChange={(notebookId) => void moveNotebook(notebookId)} /><div className="q-editor-actions"><NoteToolbar note={noteForCopy} onDelete={() => void updateDeletion('delete')} onRestore={() => void updateDeletion('restore')} onExport={() => void exportNote()} /></div></div>{view === 'edit' ? <NoteEditor value={autosave.value} onChange={autosave.change} /> : <NotePreview markdown={autosave.value} />}<div className="q-editor-footer"><span className="q-small">Markdown is saved after 800ms of quiet.</span></div></section><aside className="q-panel-stack"><AttachmentPanel noteId={note.id} attachments={attachmentsQuery.data ?? []} onRefresh={() => void attachmentsQuery.refetch()} /><section className="q-card q-card-pad q-panel"><h3>Note details</h3><p>Version {note.version}. Your browser keeps only local drafts and recent snapshots in IndexedDB.</p><div className="q-tag-row">{note.tags.map((tag) => <span className="q-badge" key={tag}>{tag}</span>)}</div></section></aside></div></div><ConflictResolver open={Boolean(conflict)} baseMarkdown={note.contentMarkdown} localMarkdown={autosave.value} remoteNote={conflict?.remote ?? null} remoteDeleted={conflict?.remoteDeleted ?? false} error={conflict?.error} onUseMine={saveMine} onUseRemote={saveRemote} onSaveMerged={saveMerged} onSaveAsNew={() => void saveAsNew()} onCancel={() => setConflict(null)} /></AppShell>;
 }

@@ -9,7 +9,7 @@ export async function syncNotes(context: Context): Promise<Response> {
   requireScope(auth, 'notes:read');
   const params = context.req.query();
   const limit = validateLimit(params.limit, 500, 200);
-  let query = appDbClient.from('notes').select('id, slug, title, tags, version, updated_at, deleted_at').eq('owner_id', auth.userId);
+  let query = appDbClient.from('notes').select('id, slug, title, tags, notebook_id, version, updated_at, deleted_at').eq('owner_id', auth.userId);
   if (params.cursor) {
     const cursor = decodeCursor(params.cursor);
     query = query.or(`updated_at.gt.${cursor.updatedAt},and(updated_at.eq.${cursor.updatedAt},id.gt.${cursor.id})`);
@@ -24,6 +24,7 @@ export async function syncNotes(context: Context): Promise<Response> {
     slug: String(row.slug),
     title: String(row.title),
     tags: Array.isArray(row.tags) ? row.tags.map(String) : [],
+    notebookId: row.notebook_id ? String(row.notebook_id) : null,
     version: Number(row.version),
     updatedAt: String(row.updated_at),
     deletedAt: row.deleted_at ? String(row.deleted_at) : null,

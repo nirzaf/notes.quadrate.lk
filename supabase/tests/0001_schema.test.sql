@@ -5,7 +5,7 @@ select ok(to_regnamespace('notesdb') is not null, 'notesdb schema exists');
 
 select is(
   (select array_agg(column_name order by ordinal_position)::text[] from information_schema.columns where table_schema = 'notesdb' and table_name = 'notes'),
-  array['id','owner_id','slug','title','content_markdown','content_plain','tags','version','last_mutation_id','updated_by_device_id','created_at','updated_at','deleted_at']::text[],
+  array['id','owner_id','slug','title','content_markdown','content_plain','tags','version','last_mutation_id','updated_by_device_id','created_at','updated_at','deleted_at','notebook_id']::text[],
   'notes has the required columns'
 );
 select is(

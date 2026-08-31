@@ -32,3 +32,23 @@ test('returns successful binary exports without JSON conversion', async () => {
   const response = await client.exportWorkspace();
   assert.deepEqual([...new Uint8Array(await response.arrayBuffer())], [80, 75, 3, 4]);
 });
+
+test('supports notebook listing, creation, and versioned note moves', async () => {
+  const calls = [];
+  const client = new QNotesClient({ baseUrl: 'http://example.test', getAccessToken: () => null, fetchImplementation: async (url, init) => {
+    calls.push({ url, init });
+    const body = url.endsWith('/notebooks') && init?.method === 'POST'
+      ? { data: { id: 'n-1', name: 'Work', createdAt: '2026-01-01', updatedAt: '2026-01-01' } }
+      : url.includes('/notebook')
+        ? { data: { id: 'note-1', notebookId: 'n-1' } }
+        : { data: { items: [] } };
+    return jsonResponse(body);
+  } });
+  await client.listNotebooks();
+  await client.createNotebook({ name: 'Work' });
+  await client.moveNoteToNotebook('note-1', { notebookId: 'n-1', expectedVersion: 1, deviceId: 'device-1', mutationId: 'mutation-1' });
+  assert.equal(calls[0].url, 'http://example.test/api/notebooks');
+  assert.equal(calls[1].init.method, 'POST');
+  assert.equal(calls[2].url, 'http://example.test/api/notes/note-1/notebook');
+  assert.deepEqual(JSON.parse(calls[2].init.body), { notebookId: 'n-1', expectedVersion: 1, deviceId: 'device-1', mutationId: 'mutation-1' });
+});

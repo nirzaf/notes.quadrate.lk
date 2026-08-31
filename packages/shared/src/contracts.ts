@@ -61,6 +61,7 @@ export interface Note {
   contentMarkdown: string;
   contentPlain: string;
   tags: string[];
+  notebookId: UUID | null;
   version: number;
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
@@ -73,10 +74,26 @@ export interface NoteSummary {
   title: string;
   excerpt: string;
   tags: string[];
+  notebookId: UUID | null;
   version: number;
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
   deletedAt: ISODateTime | null;
+}
+
+export interface Notebook {
+  id: UUID;
+  name: string;
+  createdAt: ISODateTime;
+  updatedAt: ISODateTime;
+}
+
+export interface CreateNotebookInput {
+  name: string;
+}
+
+export interface MoveNoteToNotebookInput extends VersionedNoteMutationInput {
+  notebookId: UUID | null;
 }
 
 export interface CreateNoteInput {
@@ -167,6 +184,7 @@ export interface SyncChange {
   slug: string;
   title: string;
   tags: string[];
+  notebookId: UUID | null;
   version: number;
   updatedAt: ISODateTime;
   deletedAt: ISODateTime | null;

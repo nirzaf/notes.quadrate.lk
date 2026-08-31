@@ -1,7 +1,9 @@
 import type {
   ApiTokenScope,
   CreateApiTokenInput,
+  CreateNotebookInput,
   CreateNoteInput,
+  MoveNoteToNotebookInput,
   SearchMode,
   UpdateNoteInput,
   UUID,
@@ -10,13 +12,14 @@ import type {
 import { QNotesValidationError } from './errors.ts';
 
 export const MAX_MARKDOWN_CODE_UNITS = 2_000_000;
-export const MAX_NOTE_LIST_LIMIT = 100;
+export const MAX_NOTE_LIST_LIMIT = 500;
 export const DEFAULT_NOTE_LIST_LIMIT = 50;
 export const MAX_SYNC_LIMIT = 500;
 export const DEFAULT_SYNC_LIMIT = 200;
 export const MAX_SEARCH_QUERY_LENGTH = 500;
 export const MAX_SEARCH_LIMIT = 50;
 export const DEFAULT_SEARCH_LIMIT = 20;
+export const MAX_NOTEBOOK_NAME_LENGTH = 80;
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SLUG_PATTERN = /^[a-z0-9][a-z0-9_-]{0,79}$/;
@@ -64,6 +67,13 @@ export function normalizeTitle(value: unknown): string {
   return title;
 }
 
+export function normalizeNotebookName(value: unknown): string {
+  if (typeof value !== 'string') throw new QNotesValidationError('name must be a string.');
+  const name = value.trim();
+  if (name.length < 1 || name.length > MAX_NOTEBOOK_NAME_LENGTH) throw new QNotesValidationError(`Notebook names must contain 1 to ${MAX_NOTEBOOK_NAME_LENGTH} characters.`);
+  return name;
+}
+
 export function deriveSlug(title: string, noteId?: UUID): string {
   const slug = title.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9_-]/g, '').replace(/-+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80);
   return slug || `note-${noteId ? noteId.slice(0, 8).toLowerCase() : 'untitled'}`;
@@ -86,6 +96,19 @@ export function validateCreateNoteInput(value: unknown): CreateNoteInput {
   const mutationId = requireUUID(value.mutationId, 'mutationId');
   const slug = value.slug === undefined ? undefined : normalizeSlug(value.slug, title);
   return { title, ...(slug ? { slug } : {}), contentMarkdown, tags, deviceId, mutationId };
+}
+
+export function validateCreateNotebookInput(value: unknown): CreateNotebookInput {
+  if (!isRecord(value)) throw new QNotesValidationError('Request body must be an object.');
+  return { name: normalizeNotebookName(value.name) };
+}
+
+export function validateMoveNoteToNotebookInput(value: unknown): MoveNoteToNotebookInput {
+  if (!isRecord(value)) throw new QNotesValidationError('Request body must be an object.');
+  const expectedVersion = value.expectedVersion;
+  if (typeof expectedVersion !== 'number' || !Number.isSafeInteger(expectedVersion) || expectedVersion < 1) throw new QNotesValidationError('expectedVersion must be a positive integer.');
+  const notebookId = value.notebookId === null || value.notebookId === undefined ? null : requireUUID(value.notebookId, 'notebookId');
+  return { notebookId, expectedVersion, deviceId: requireUUID(value.deviceId, 'deviceId'), mutationId: requireUUID(value.mutationId, 'mutationId') };
 }
 
 export function validateUpdateNoteInput(value: unknown): UpdateNoteInput {

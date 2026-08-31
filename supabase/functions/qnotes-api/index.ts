@@ -4,13 +4,14 @@ import { authenticateRequest, type AuthContext } from '../_shared/auth.ts';
 import { applyCors } from '../_shared/cors.ts';
 import { errorBody } from '../_shared/errors.ts';
 import { ApiError } from '../_shared/errors.ts';
-import { listNotes, getNote, createNote, updateNote, deleteNote, restoreNote } from './notes.ts';
+import { listNotes, getNote, createNote, updateNote, moveNoteToNotebook, deleteNote, restoreNote } from './notes.ts';
 import { listBlocks, getBlock } from './blocks.ts';
 import { searchNotes } from './search.ts';
 import { syncNotes } from './sync.ts';
 import { listAttachments, requestUpload, finalizeAttachment, getDownloadUrl, deleteAttachment } from './attachments.ts';
 import { listTokens, createToken, revokeToken } from './tokens.ts';
 import { exportNote, exportWorkspace } from './exports.ts';
+import { listNotebooks, createNotebook } from './notebooks.ts';
 
 interface Variables {
   auth: AuthContext;
@@ -60,8 +61,11 @@ app.get('/api/notes', listNotes);
 app.get('/api/notes/:noteRef', getNote);
 app.post('/api/notes', createNote);
 app.patch('/api/notes/:noteId', updateNote);
+app.patch('/api/notes/:noteId/notebook', moveNoteToNotebook);
 app.delete('/api/notes/:noteId', deleteNote);
 app.post('/api/notes/:noteId/restore', restoreNote);
+app.get('/api/notebooks', listNotebooks);
+app.post('/api/notebooks', createNotebook);
 app.get('/api/notes/:noteRef/blocks/:blockKey', getBlock);
 app.get('/api/notes/:noteRef/blocks', listBlocks);
 app.get('/api/search', searchNotes);

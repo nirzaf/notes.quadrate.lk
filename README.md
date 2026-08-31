@@ -1,6 +1,6 @@
 # Quadrate Notes
 
-`notes.quadrate.lk` is a browser-first personal knowledge engine for canonical Markdown notes, copyable knowledge blocks, hybrid search, private attachments, and first-class HTTP/CLI access for AI agents.
+`notes.quadrate.lk` is a browser-first personal knowledge engine for canonical Markdown notes, notebook organization, copyable knowledge blocks, hybrid search, private attachments, and first-class HTTP/CLI access for AI agents.
 
 ## Local setup
 
@@ -79,8 +79,11 @@ export QNOTES_TOKEN=qnt_your_scoped_token
 qnotes search "ERPNext docker" --hybrid
 qnotes get erpnext-production --raw
 qnotes blocks erpnext-production
-qnotes block get erpnext-production production-deploy
-qnotes export --workspace --output notes-backup.zip
+  qnotes block get erpnext-production production-deploy
+  qnotes notebooks
+  qnotes notebook create "Operations"
+  qnotes notebook move erpnext-production <notebook-id>
+  qnotes export --workspace --output notes-backup.zip
 ```
 
 The CLI uses native `fetch` only; it never connects directly to PostgreSQL. Mutation requests use optimistic versions and do not retry automatically.

@@ -196,6 +196,30 @@ export type Database = {
         }
         Relationships: []
       }
+      notebooks: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+          owner_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name: string
+          owner_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+          owner_id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       notes: {
         Row: {
           content_markdown: string
@@ -204,6 +228,7 @@ export type Database = {
           deleted_at: string | null
           id: string
           last_mutation_id: string
+          notebook_id: string | null
           owner_id: string
           slug: string
           tags: string[]
@@ -219,6 +244,7 @@ export type Database = {
           deleted_at?: string | null
           id: string
           last_mutation_id: string
+          notebook_id?: string | null
           owner_id: string
           slug: string
           tags?: string[]
@@ -234,6 +260,7 @@ export type Database = {
           deleted_at?: string | null
           id?: string
           last_mutation_id?: string
+          notebook_id?: string | null
           owner_id?: string
           slug?: string
           tags?: string[]
@@ -242,7 +269,15 @@ export type Database = {
           updated_by_device_id?: string
           version?: number
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "notes_notebook_id_fkey"
+            columns: ["notebook_id"]
+            isOneToOne: false
+            referencedRelation: "notebooks"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       search_documents: {
         Row: {
@@ -437,6 +472,18 @@ export type Database = {
           source_type: string
         }[]
       }
+      qnotes_move_note_to_notebook: {
+        Args: {
+          p_device_id: string
+          p_expected_version: number
+          p_mutation_id: string
+          p_note_id: string
+          p_notebook_id: string
+          p_owner_id: string
+          p_request_hash: string
+        }
+        Returns: Json
+      }
       qnotes_note_json: {
         Args: { p_note: Database["notesdb"]["Tables"]["notes"]["Row"] }
         Returns: Json
@@ -532,7 +579,6 @@ export type Database = {
     }
   }
 }
-
 type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">
 
 type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">]
