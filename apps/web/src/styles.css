@@ -181,7 +181,7 @@ a { color: inherit; text-decoration: none; }
   .q-main-body { width: 100%; padding: 22px 18px; }
   .q-home-intro { display: block; }
   .q-home-notes { max-width: none; }
-  .q-note-card-grid { grid-template-columns: 1fr; }
+  .q-note-card-grid { grid-template-columns: minmax(0, 1fr); }
   .q-display { font-size: clamp(2.7rem, 13vw, 4.5rem); }
   .q-home-actions { margin-top: 18px; }
   .q-editor-page { display: block; }
