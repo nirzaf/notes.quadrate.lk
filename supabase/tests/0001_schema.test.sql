@@ -34,7 +34,7 @@ select is(
   'api_tokens has the required columns'
 );
 
-select ok((select count(*) = 6 from pg_extension e join pg_namespace n on n.oid = e.extnamespace where (e.extname, n.nspname) in (('pgcrypto','extensions'),('vector','extensions'),('pgmq','pgmq'),('pg_net','extensions'),('pg_cron','pg_catalog'),('supabase_vault','vault'))), 'required extensions are installed in their expected schemas');
+select ok((select count(*) = 7 from pg_extension e join pg_namespace n on n.oid = e.extnamespace where (e.extname, n.nspname) in (('pgcrypto','extensions'),('vector','extensions'),('pgmq','pgmq'),('pg_net','extensions'),('pg_cron','pg_catalog'),('supabase_vault','vault'),('pg_trgm','extensions'))), 'required extensions are installed in their expected schemas');
 
 select ok((select relrowsecurity from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'notesdb' and c.relname = 'notes'), 'RLS is enabled on notesdb.notes');
 select ok((select relrowsecurity from pg_class c join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'notesdb' and c.relname = 'note_blocks'), 'RLS is enabled on notesdb.note_blocks');

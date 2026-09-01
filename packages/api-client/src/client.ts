@@ -35,6 +35,7 @@ export interface SearchParams {
   query: string;
   mode: SearchMode;
   limit?: number;
+  signal?: AbortSignal;
 }
 
 type Success<T> = { data: T };
@@ -139,7 +140,7 @@ export class QNotesClient {
   }
 
   search(params: SearchParams): Promise<SearchResult[]> {
-    return this.request(`/search${queryString({ q: params.query, mode: params.mode, limit: params.limit })}`);
+    return this.request(`/search${queryString({ q: params.query, mode: params.mode, limit: params.limit })}`, params.signal ? { signal: params.signal } : {});
   }
 
   sync(cursor?: string, limit?: number): Promise<SyncPage> {

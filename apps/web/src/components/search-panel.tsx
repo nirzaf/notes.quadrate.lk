@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Search, Copy, ArrowUpRight } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
-import type { SearchMode, SearchResult } from '@qnotes/shared';
+import type { SearchResult } from '@qnotes/shared';
 import { api } from '../api';
 import { Button } from './ui/button';
 import { useToast } from './ui/toast';
@@ -30,7 +30,6 @@ function Result({ result, onOpenNote }: { result: SearchResult; onOpenNote?: ((n
 export function SearchPanel({ onOpenNote }: SearchPanelProps): JSX.Element {
   const [query, setQuery] = useState('');
   const [debounced, setDebounced] = useState('');
-  const [mode, setMode] = useState<SearchMode>('keyword');
   const inputRef = useRef<HTMLInputElement | null>(null);
   useEffect(() => {
     const timer = window.setTimeout(() => setDebounced(query.trim()), 100);
@@ -46,12 +45,16 @@ export function SearchPanel({ onOpenNote }: SearchPanelProps): JSX.Element {
     window.addEventListener('keydown', focus);
     return () => window.removeEventListener('keydown', focus);
   }, []);
-  const result = useQuery({ queryKey: ['search', debounced, mode], queryFn: () => api.search({ query: debounced, mode }), enabled: Boolean(debounced) });
+  const result = useQuery({
+    queryKey: ['search', debounced],
+    queryFn: ({ signal }) => api.search({ query: debounced, mode: 'keyword', signal }),
+    enabled: Boolean(debounced),
+    staleTime: 30_000,
+    placeholderData: (previous) => previous,
+  });
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!query.trim()) return;
-    setMode('hybrid');
     setDebounced(query.trim());
   };
-  return <section aria-label="Search notes"><form className="q-search-large q-mobile-search" onSubmit={submit}><Search size={19} aria-hidden="true" /><input ref={inputRef} value={query} onChange={(event) => { setQuery(event.target.value); setMode('keyword'); }} placeholder="Search your notes, blocks, and attachments…" aria-label="Search notes" /><span className="q-search-kbd">⌘K</span></form>{debounced && <div className="q-results" aria-live="polite">{result.isLoading ? <div className="q-empty">Searching…</div> : result.error ? <div className="q-error">Search is unavailable right now.</div> : result.data?.length ? result.data.map((item) => <Result key={item.id} result={item} onOpenNote={onOpenNote} />) : <div className="q-empty">No matches for “{debounced}”.</div>}</div>}</section>;
+  return <section aria-label="Search notes"><form className="q-search-large q-mobile-search" onSubmit={submit}><Search size={19} aria-hidden="true" /><input ref={inputRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your notes, blocks, and attachments…" aria-label="Search notes" /><span className="q-search-kbd">⌘K</span></form>{debounced && <div className="q-results" aria-live="polite">{result.isLoading && !result.data ? <div className="q-empty">Searching…</div> : result.error ? <div className="q-error">Search is unavailable right now.</div> : result.data?.length ? result.data.map((item) => <Result key={item.id} result={item} onOpenNote={onOpenNote} />) : <div className="q-empty">No matches for “{debounced}”.</div>}</div>}</section>;
 }
