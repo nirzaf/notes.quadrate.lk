@@ -2,7 +2,6 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { api } from '../api';
 import { AppShell } from '../components/app-shell';
-import { NoteList } from '../components/note-list';
 import { TokenManager } from '../components/token-manager';
 
 export function TokensPage(): JSX.Element {

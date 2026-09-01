@@ -1,5 +1,4 @@
 // markdown-it intentionally remains a runtime-only dependency of this package.
-// @ts-ignore The workspace keeps its type-only dependency surface minimal.
 import MarkdownItImport from 'markdown-it';
 import type { BlockType, ParsedBlock } from '@qnotes/shared';
 import { sha256Hex } from './hash.ts';

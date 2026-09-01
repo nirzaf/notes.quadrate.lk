@@ -23,7 +23,6 @@ async function copyText(value: string): Promise<void> {
 
 export function NotePreview({ markdown, onBlockCopied }: NotePreviewProps): JSX.Element {
   const [html, setHtml] = useState('');
-  const [blocks, setBlocks] = useState<ParsedBlock[]>([]);
   const blockMap = useRef(new Map<string, ParsedBlock>());
   const { toast } = useToast();
   useEffect(() => {
@@ -32,7 +31,6 @@ export function NotePreview({ markdown, onBlockCopied }: NotePreviewProps): JSX.
       if (!active) return;
       const sanitized = DOMPurify.sanitize(rendered.html).replaceAll('<a ', '<a rel="noopener noreferrer" ');
       setHtml(sanitized);
-      setBlocks(rendered.blocks);
       blockMap.current = new Map(rendered.blocks.map((block) => [block.blockKey, block]));
     }).catch(() => { if (active) setHtml('<p>Unable to render this Markdown.</p>'); });
     return () => { active = false; };

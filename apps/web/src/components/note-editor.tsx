@@ -1,7 +1,5 @@
-import { useEffect, useRef } from 'react';
-import { EditorState } from '@codemirror/state';
-import { basicSetup, EditorView } from 'codemirror';
-import { markdown } from '@codemirror/lang-markdown';
+import { useEffect, useRef, useState } from 'react';
+import type { EditorView } from 'codemirror';
 
 interface NoteEditorProps {
   value: string;
@@ -12,6 +10,7 @@ interface NoteEditorProps {
 export function NoteEditor({ value, onChange, readOnly = false }: NoteEditorProps): JSX.Element {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const [editorReady, setEditorReady] = useState(false);
   const valueRef = useRef(value);
   const onChangeRef = useRef(onChange);
   const readOnlyRef = useRef(readOnly);
@@ -21,21 +20,28 @@ export function NoteEditor({ value, onChange, readOnly = false }: NoteEditorProp
 
   useEffect(() => {
     if (!mountRef.current) return undefined;
-    const state = EditorState.create({
-      doc: valueRef.current,
-      extensions: [
-        basicSetup,
-        markdown(),
-        EditorView.editable.of(!readOnlyRef.current),
-        EditorView.updateListener.of((update) => {
-          if (update.docChanged) onChangeRef.current(update.state.doc.toString());
-        }),
-      ],
+    let active = true;
+    let view: EditorView | null = null;
+    void Promise.all([import('@codemirror/state'), import('codemirror'), import('@codemirror/lang-markdown')]).then(([stateModule, codemirrorModule, markdownModule]) => {
+      if (!active || !mountRef.current) return;
+      const state = stateModule.EditorState.create({
+        doc: valueRef.current,
+        extensions: [
+          codemirrorModule.basicSetup,
+          markdownModule.markdown(),
+          codemirrorModule.EditorView.editable.of(!readOnlyRef.current),
+          codemirrorModule.EditorView.updateListener.of((update) => {
+            if (update.docChanged) onChangeRef.current(update.state.doc.toString());
+          }),
+        ],
+      });
+      view = new codemirrorModule.EditorView({ state, parent: mountRef.current });
+      viewRef.current = view;
+      setEditorReady(true);
     });
-    const view = new EditorView({ state, parent: mountRef.current });
-    viewRef.current = view;
     return () => {
-      view.destroy();
+      active = false;
+      view?.destroy();
       viewRef.current = null;
     };
   }, []);
@@ -46,5 +52,5 @@ export function NoteEditor({ value, onChange, readOnly = false }: NoteEditorProp
     view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } });
   }, [value]);
 
-  return <div ref={mountRef} className="q-editor-mount" aria-label="Markdown editor" />;
+  return <div ref={mountRef} className="q-editor-mount" aria-busy={!editorReady} aria-label="Markdown editor" />;
 }

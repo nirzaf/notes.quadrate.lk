@@ -13,5 +13,8 @@
   "dependencies": {
     "@qnotes/shared": "workspace:*",
     "markdown-it": "14.1.0"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "14.1.2"
   }
 }

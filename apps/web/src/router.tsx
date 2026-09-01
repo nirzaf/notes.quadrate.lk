@@ -1,9 +1,8 @@
-import { createRootRoute, createRoute, createRouter, Outlet, redirect, useLocation, useNavigate } from '@tanstack/react-router';
+import { createRootRoute, createRoute, createRouter, lazyRouteComponent, Outlet, useLocation, useNavigate } from '@tanstack/react-router';
 import { useEffect } from 'react';
 import { useAuth } from './auth-context';
 import { LoginPage } from './pages/login-page';
 import { HomePage } from './pages/home-page';
-import { NotePage } from './pages/note-page';
 import { TokensPage } from './pages/tokens-page';
 
 function RootLayout(): JSX.Element {
@@ -22,7 +21,7 @@ function RootLayout(): JSX.Element {
 export const rootRoute = createRootRoute({ component: RootLayout });
 export const loginRoute = createRoute({ getParentRoute: () => rootRoute, path: '/login', component: LoginPage });
 export const homeRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: HomePage });
-export const noteRoute = createRoute({ getParentRoute: () => rootRoute, path: '/notes/$noteId', component: NotePage });
+export const noteRoute = createRoute({ getParentRoute: () => rootRoute, path: '/notes/$noteId', component: lazyRouteComponent(() => import('./pages/note-page'), 'NotePage') });
 export const tokensRoute = createRoute({ getParentRoute: () => rootRoute, path: '/settings/tokens', component: TokensPage });
 export const routeTree = rootRoute.addChildren([loginRoute, homeRoute, noteRoute, tokensRoute]);
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });

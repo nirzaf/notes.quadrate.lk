@@ -12,10 +12,13 @@
       "@qnotes/cli": ["packages/cli/src/index.ts"]
     },
     "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
+    "allowSyntheticDefaultImports": true,
     "allowImportingTsExtensions": true,
     "rewriteRelativeImportExtensions": true,
     "skipLibCheck": true,
