@@ -1,33 +1,17 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Search, Copy, ArrowUpRight } from 'lucide-react';
+import { Search } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import type { SearchResult } from '@qnotes/shared';
 import { api } from '../api';
-import { Button } from './ui/button';
-import { useToast } from './ui/toast';
 
-interface SearchPanelProps { onOpenNote?: (noteId: string) => void; }
-
-async function copy(value: string): Promise<void> {
-  if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(value);
-  throw new Error('Clipboard unavailable');
+export interface SearchState {
+  query: string;
+  results: SearchResult[] | null;
 }
 
-function Result({ result, onOpenNote }: { result: SearchResult; onOpenNote?: ((noteId: string) => void) | undefined }): JSX.Element {
-  const { toast } = useToast();
-  const copyResult = async () => {
-    try {
-      const value = result.blockKey ? (await api.getBlock(result.noteId, result.blockKey)).content : result.snippet;
-      await copy(value);
-      toast('Result copied.', 'success');
-    } catch {
-      toast('Clipboard access was unavailable.', 'error');
-    }
-  };
-  return <article className="q-result"><div><p className="q-result-title">{result.sourceTitle || result.noteTitle}</p><p className="q-result-meta">{result.noteTitle} · {result.sourceType}{result.headingPath ? ` · ${result.headingPath}` : ''}</p><p className="q-result-snippet">{result.snippet}</p></div><div className="q-toolbar q-result-copy">{result.copyable && <Button variant="secondary" size="sm" onClick={() => void copyResult()}><Copy size={14} aria-hidden="true" />Copy</Button>}<Button variant="ghost" size="icon" onClick={() => onOpenNote?.(result.noteId)} aria-label={`Open ${result.noteTitle}`}><ArrowUpRight size={17} aria-hidden="true" /></Button></div></article>;
-}
+interface SearchPanelProps { onSearchStateChange?: (state: SearchState) => void; }
 
-export function SearchPanel({ onOpenNote }: SearchPanelProps): JSX.Element {
+export function SearchPanel({ onSearchStateChange }: SearchPanelProps): JSX.Element {
   const [query, setQuery] = useState('');
   const [debounced, setDebounced] = useState('');
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -47,14 +31,21 @@ export function SearchPanel({ onOpenNote }: SearchPanelProps): JSX.Element {
   }, []);
   const result = useQuery({
     queryKey: ['search', debounced],
-    queryFn: ({ signal }) => api.search({ query: debounced, mode: 'keyword', signal }),
+    queryFn: ({ signal }) => api.search({ query: debounced, mode: 'keyword', limit: 50, signal }),
     enabled: Boolean(debounced),
     staleTime: 30_000,
     placeholderData: (previous) => previous,
   });
+  useEffect(() => {
+    onSearchStateChange?.({
+      query: debounced,
+      results: debounced && !result.isFetching && !result.error ? result.data ?? [] : null,
+    });
+  }, [debounced, onSearchStateChange, result.data, result.error, result.isFetching]);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setDebounced(query.trim());
   };
-  return <section aria-label="Search notes"><form className="q-search-large q-mobile-search" onSubmit={submit}><Search size={19} aria-hidden="true" /><input ref={inputRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your notes, blocks, and attachments…" aria-label="Search notes" /><span className="q-search-kbd">⌘K</span></form>{debounced && <div className="q-results" aria-live="polite">{result.isLoading && !result.data ? <div className="q-empty">Searching…</div> : result.error ? <div className="q-error">Search is unavailable right now.</div> : result.data?.length ? result.data.map((item) => <Result key={item.id} result={item} onOpenNote={onOpenNote} />) : <div className="q-empty">No matches for “{debounced}”.</div>}</div>}</section>;
+  const matchingNoteCount = new Set(result.data?.map((item) => item.noteId)).size;
+  return <section aria-label="Search notes"><form className="q-search-large q-mobile-search" onSubmit={submit}><Search size={19} aria-hidden="true" /><input ref={inputRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your notes, blocks, and attachments…" aria-label="Search notes" /><span className="q-search-kbd">⌘K</span></form>{debounced && <p className="q-search-status" role="status">{result.isFetching ? 'Searching notes…' : result.error ? 'Search is unavailable right now.' : matchingNoteCount ? `${matchingNoteCount} matching ${matchingNoteCount === 1 ? 'note' : 'notes'}` : `No notes match “${debounced}”. Try a shorter phrase.`}</p>}</section>;
 }

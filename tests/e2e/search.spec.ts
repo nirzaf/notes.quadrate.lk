@@ -7,24 +7,25 @@ function dataArray(body: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 
-test('searches keyword, named blocks, semantic, hybrid, and enforces owner isolation', async ({ page }) => {
+test('filters notes by title and partial body matches, then covers semantic, hybrid, and isolation', async ({ page }) => {
   const session = await signInSession();
   const marker = `keyword-${crypto.randomUUID().slice(0, 8)}`;
-  const note = await createNoteApi(session.access_token, `Search fixture ${marker}`, `# Search fixture\n\nKeyword marker ${marker}.\n\n:::copy{id="search-block" title="Search Block" lang="bash" type="command"}\necho reusable-search-command\n:::\n`);
+  const bodyMarker = `body-only-${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`;
+  const note = await createNoteApi(session.access_token, `Search fixture ${marker}`, `# Search fixture\n\nKeyword marker ${marker}.\n\nPartial body marker ${bodyMarker}.\n\n:::copy{id="search-block" title="Search Block" lang="bash" type="command"}\necho reusable-search-command\n:::\n`);
 
   await signInPage(page);
   const search = page.getByRole('textbox', { name: 'Search notes' });
   await search.fill(marker);
-  const keywordResult = page.locator('.q-result').filter({ hasText: note.title }).first();
-  await expect(keywordResult).toBeVisible({ timeout: 15_000 });
-  await expect(keywordResult).toContainText(marker);
+  const matchingNotes = page.locator('section.q-card').filter({ has: page.getByRole('heading', { name: 'Matching notes' }) }).locator('.q-note-item');
+  const keywordNote = matchingNotes.filter({ hasText: note.title }).first();
+  await expect(keywordNote).toBeVisible({ timeout: 15_000 });
+  await expect(keywordNote).toContainText(marker);
+  await expect(page.locator('.q-result')).toHaveCount(0);
 
-  await search.fill('search-block');
-  const blockResult = page.locator('.q-result').filter({ hasText: 'copy_block' }).first();
-  await expect(blockResult).toBeVisible({ timeout: 15_000 });
-  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://127.0.0.1:5173' });
-  await blockResult.getByRole('button', { name: 'Copy' }).click();
-  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe('echo reusable-search-command');
+  await search.fill(bodyMarker.slice(0, -4));
+  const bodyNote = matchingNotes.filter({ hasText: note.title }).first();
+  await expect(bodyNote).toBeVisible({ timeout: 15_000 });
+  await expect(bodyNote).toContainText(bodyMarker);
 
   await invokeWorker('embedding-worker');
   const semantic = await poll(async () => {

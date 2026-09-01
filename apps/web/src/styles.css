@@ -72,6 +72,7 @@ a { color: inherit; text-decoration: none; }
 .q-search-large { display: flex; align-items: center; gap: 12px; border: 1px solid var(--line); border-radius: 15px; padding: 0 15px; background: var(--white); box-shadow: 0 9px 25px rgb(23 52 54 / 0.05); }
 .q-search-large input { min-width: 0; flex: 1; height: 54px; border: 0; outline: 0; background: transparent; color: var(--ink); }
 .q-search-kbd { border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; color: var(--muted); font-size: 0.7rem; }
+.q-search-status { margin: 10px 2px 0; color: var(--muted); font-size: 0.82rem; }
 .q-card { border: 1px solid var(--line); border-radius: 18px; background: var(--white); box-shadow: var(--shadow); }
 .q-card-pad { padding: 22px; }
 .q-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
@@ -135,11 +136,6 @@ a { color: inherit; text-decoration: none; }
 .qnotes-block-language { font-size: 0.72rem; opacity: 0.75; }
 
 .q-results { display: grid; gap: 10px; }
-.q-result { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: var(--white); }
-.q-result-title { margin: 0; font-weight: 800; }
-.q-result-meta { margin: 3px 0 7px; color: var(--muted); font-size: 0.75rem; }
-.q-result-snippet { margin: 0; color: var(--muted); font-size: 0.86rem; line-height: 1.45; }
-.q-result-copy { align-self: center; }
 .q-auth-page { display: grid; min-height: 100vh; place-items: center; padding: 24px; }
 .q-auth-card { width: min(100%, 440px); padding: 34px; }
 .q-auth-form { display: grid; gap: 16px; margin-top: 24px; }
@@ -200,8 +196,6 @@ a { color: inherit; text-decoration: none; }
   .q-mobile-nav a, .q-mobile-nav button { display: grid; min-height: 64px; place-items: center; border: 0; color: var(--muted); background: transparent; font-size: 0.78rem; font-weight: 750; }
   .q-mobile-nav a[data-active="true"] { color: var(--teal); }
   .q-floating-new { position: fixed; right: 18px; bottom: calc(82px + env(safe-area-inset-bottom, 0px)); z-index: 31; display: inline-flex; width: 52px; height: 52px; align-items: center; justify-content: center; border: 0; border-radius: 50%; color: var(--white); background: var(--orange); box-shadow: 0 10px 22px rgb(230 106 60 / 0.3); font-size: 1.5rem; }
-  .q-result { grid-template-columns: 1fr; }
-  .q-result-copy { justify-content: flex-start; }
   .q-toast-viewport { right: 12px; bottom: calc(84px + env(safe-area-inset-bottom, 0px)); width: calc(100vw - 24px); }
 }
 
