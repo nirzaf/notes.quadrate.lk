@@ -29,6 +29,7 @@ export function NoteEditor({ value, onChange, readOnly = false }: NoteEditorProp
         extensions: [
           codemirrorModule.basicSetup,
           markdownModule.markdown(),
+          ...(window.matchMedia('(max-width: 860px)').matches ? [codemirrorModule.EditorView.lineWrapping] : []),
           codemirrorModule.EditorView.editable.of(!readOnlyRef.current),
           codemirrorModule.EditorView.updateListener.of((update) => {
             if (update.docChanged) onChangeRef.current(update.state.doc.toString());
