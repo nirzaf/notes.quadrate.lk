@@ -22,10 +22,13 @@ interface SearchDocumentRow {
   id: string;
   note_id: string;
   source_type: string;
+  source_id: string | null;
+  source_key: string;
   source_title: string;
   heading_path: string | null;
   content: string;
   position: number;
+  page_number: number | null;
 }
 
 interface NoteRow {
@@ -85,7 +88,7 @@ function takeNeighbors(rows: SearchDocumentRow[], maxTokens: number): string[] {
 async function loadDocument(userId: string, documentId: string): Promise<SearchDocumentRow> {
   const { data, error } = await appDbClient
     .from('search_documents')
-    .select('id, note_id, source_type, source_title, heading_path, content, position')
+    .select('id, note_id, source_type, source_id, source_key, source_title, heading_path, content, position, page_number')
     .eq('id', documentId)
     .eq('owner_id', userId)
     .maybeSingle();
@@ -106,13 +109,17 @@ async function loadNote(userId: string, noteId: string): Promise<NoteRow> {
 }
 
 async function loadNeighbors(userId: string, document: SearchDocumentRow, request: ContextRequest): Promise<{ previous: SearchDocumentRow[]; next: SearchDocumentRow[] }> {
-  if (document.source_type === 'note_metadata') return { previous: [], next: [] };
+  if (document.source_type === 'note_metadata' || document.source_type === 'copy_block' || document.source_type === 'code_block') return { previous: [], next: [] };
+  const previousBase = appDbClient.from('search_documents').select('id, note_id, source_type, source_id, source_key, source_title, heading_path, content, position, page_number').eq('owner_id', userId).eq('note_id', document.note_id).eq('source_type', document.source_type).lt('position', document.position);
+  const nextBase = appDbClient.from('search_documents').select('id, note_id, source_type, source_id, source_key, source_title, heading_path, content, position, page_number').eq('owner_id', userId).eq('note_id', document.note_id).eq('source_type', document.source_type).gt('position', document.position);
+  const previousScoped = document.source_id ? previousBase.eq('source_id', document.source_id) : previousBase.is('source_id', null);
+  const nextScoped = document.source_id ? nextBase.eq('source_id', document.source_id) : nextBase.is('source_id', null);
   const [previousResult, nextResult] = await Promise.all([
     request.before > 0
-      ? appDbClient.from('search_documents').select('id, note_id, source_type, source_title, heading_path, content, position').eq('owner_id', userId).eq('note_id', document.note_id).eq('source_type', document.source_type).lt('position', document.position).order('position', { ascending: false }).limit(request.before)
+      ? previousScoped.order('position', { ascending: false }).limit(request.before)
       : Promise.resolve({ data: [], error: null }),
     request.after > 0
-      ? appDbClient.from('search_documents').select('id, note_id, source_type, source_title, heading_path, content, position').eq('owner_id', userId).eq('note_id', document.note_id).eq('source_type', document.source_type).gt('position', document.position).order('position', { ascending: true }).limit(request.after)
+      ? nextScoped.order('position', { ascending: true }).limit(request.after)
       : Promise.resolve({ data: [], error: null }),
   ]);
   if (previousResult.error || nextResult.error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to retrieve document context.');
@@ -144,6 +151,11 @@ async function contextFor(userId: string, request: ContextRequest): Promise<Sear
     next,
     updatedAt: note.updated_at,
     sourceType: document.source_type as SearchSourceType,
+    sourceId: document.source_id,
+    sourceKey: document.source_key,
+    sourceTitle: document.source_title,
+    attachmentId: document.source_type === 'attachment_chunk' ? document.source_id : null,
+    pageNumber: document.page_number,
   };
 }
 

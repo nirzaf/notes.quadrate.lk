@@ -1,4 +1,5 @@
 import { extractText } from 'unpdf';
+import { chunkText } from '@qnotes/markdown';
 
 export interface ExtractedAttachment {
   status: 'ready' | 'unsupported';
@@ -15,8 +16,8 @@ export async function extractAttachment(bytes: Uint8Array, mimeType: string): Pr
   }
   if (mimeType === 'application/pdf') {
     const result = await extractText(bytes, { mergePages: false });
-    const pages = result.text.map((page) => page.trim());
-    const text = pages.join('\n').replace(/\s+/g, ' ').trim();
+    const pages = result.text.map((page) => page.replace(/\r\n?/g, '\n').trim());
+    const text = pages.join('\n\n').trim();
     return text ? { status: 'ready', text, pages, error: null } : { status: 'ready', text: '', pages: [], error: 'NO_EXTRACTABLE_TEXT' };
   }
   return { status: 'unsupported', text: '', pages: [], error: 'UNSUPPORTED_ATTACHMENT_TYPE' };
@@ -24,10 +25,5 @@ export async function extractAttachment(bytes: Uint8Array, mimeType: string): Pr
 
 export function attachmentParagraphs(text: string): string[] {
   const paragraphs = text.replace(/\r\n?/g, '\n').split(/\n{2,}/).map((value) => value.trim()).filter(Boolean);
-  const chunks: string[] = [];
-  for (const paragraph of paragraphs) {
-    const words = paragraph.split(/\s+/).filter(Boolean);
-    for (let index = 0; index < words.length; index += 350) chunks.push(words.slice(index, index + 350).join(' '));
-  }
-  return chunks;
+  return paragraphs.flatMap((paragraph) => chunkText(paragraph, 350, 40));
 }

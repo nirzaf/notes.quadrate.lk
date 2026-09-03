@@ -4,7 +4,7 @@ import type { ResolvedSearchMode, SearchFilters, SearchIndexMetadata, SearchRequ
 import { EMBEDDING_MODEL, EMBEDDING_MODEL_VERSION, createEmbedding } from '../embedding-worker/embedding.ts';
 import { authFromContext, requireScope } from '../_shared/auth.ts';
 import { ApiError } from '../_shared/errors.ts';
-import { appDbClient, searchResultFromRow, serviceClient } from '../_shared/database.ts';
+import { appDbClient, decodeSearchCursor, encodeSearchCursor, requestHash, searchResultFromRow, serviceClient } from '../_shared/database.ts';
 
 const QUERY_EMBEDDING_CACHE_TTL_MS = 5 * 60 * 1000;
 const QUERY_EMBEDDING_CACHE_MAX_ENTRIES = 256;
@@ -34,8 +34,15 @@ function elapsedMilliseconds(started: number): number {
   return Math.max(0, Math.round(performance.now() - started));
 }
 
-async function keywordSearch(userId: string, query: string, limit: number): Promise<SearchResult[]> {
-  const result = await serviceClient.rpc('qnotes_keyword_search', { p_owner_id: userId, p_query: query, p_limit: limit });
+async function keywordSearch(userId: string, query: string, limit: number, filters: SearchFilters, offset: number, maxPerNote: number): Promise<SearchResult[]> {
+  const result = await serviceClient.rpc('qnotes_keyword_search', {
+    p_owner_id: userId,
+    p_query: query,
+    p_limit: limit,
+    p_filters: filters,
+    p_offset: offset,
+    p_max_per_note: maxPerNote,
+  });
   if (result.error) throw new ApiError(500, 'INTERNAL_ERROR', 'Keyword search failed.');
   return (Array.isArray(result.data) ? result.data : []).map((row) => searchResultFromRow(row as Record<string, unknown>));
 }
@@ -57,19 +64,18 @@ async function noteMetadata(userId: string, noteIds: string[]): Promise<Map<stri
 }
 
 async function indexMetadata(userId: string): Promise<SearchIndexMetadata> {
-  const [pendingCount, failedCount, oldestPending] = await Promise.all([
-    appDbClient.from('search_documents').select('id', { count: 'exact', head: true }).eq('owner_id', userId).eq('embedding_status', 'pending'),
-    appDbClient.from('search_documents').select('id', { count: 'exact', head: true }).eq('owner_id', userId).eq('embedding_status', 'failed'),
-    appDbClient.from('search_documents').select('created_at').eq('owner_id', userId).eq('embedding_status', 'pending').order('created_at', { ascending: true }).limit(1),
-  ]);
-  if (pendingCount.error || failedCount.error || oldestPending.error) throw new ApiError(500, 'INTERNAL_ERROR', 'Search freshness lookup failed.');
-  const oldestCreatedAt = Array.isArray(oldestPending.data) && oldestPending.data[0] && typeof oldestPending.data[0].created_at === 'string' ? Date.parse(oldestPending.data[0].created_at) : NaN;
+  const freshness = await serviceClient.rpc('qnotes_search_freshness', { p_owner_id: userId });
+  if (freshness.error) throw new ApiError(500, 'INTERNAL_ERROR', 'Search freshness lookup failed.');
+  const row = Array.isArray(freshness.data) ? freshness.data[0] as Record<string, unknown> | undefined : freshness.data as Record<string, unknown> | null;
+  const pendingDocuments = Number(row?.pending_documents ?? 0);
+  const failedDocuments = Number(row?.failed_documents ?? 0);
+  const oldestQueuedAt = typeof row?.oldest_queued_at === 'string' ? Date.parse(row.oldest_queued_at) : NaN;
   return {
     model: `${EMBEDDING_MODEL}:${EMBEDDING_MODEL_VERSION}`,
-    pendingDocuments: pendingCount.count ?? 0,
-    failedDocuments: failedCount.count ?? 0,
-    oldestPendingAgeSeconds: Number.isFinite(oldestCreatedAt) ? Math.max(0, Math.floor((Date.now() - oldestCreatedAt) / 1000)) : null,
-    fresh: (pendingCount.count ?? 0) === 0 && (failedCount.count ?? 0) === 0,
+    pendingDocuments,
+    failedDocuments,
+    oldestPendingAgeSeconds: Number.isFinite(oldestQueuedAt) ? Math.max(0, Math.floor((Date.now() - oldestQueuedAt) / 1000)) : null,
+    fresh: pendingDocuments === 0 && failedDocuments === 0,
   };
 }
 
@@ -87,6 +93,7 @@ function normalizeResult(item: SearchResult, note: SearchNoteRow | undefined, mi
     uri: `qnotes://notes/${item.noteId}/documents/${item.id}`,
     matchReasons,
     scores: {
+      // Relative score is deliberately not described as a probability.
       hybrid: maximumScore > minimumScore ? (item.score - minimumScore) / (maximumScore - minimumScore) : 1,
       keywordRank: item.keywordRank,
       semanticRank: item.semanticRank,
@@ -94,43 +101,34 @@ function normalizeResult(item: SearchResult, note: SearchNoteRow | undefined, mi
   };
 }
 
-function filterResults(items: SearchResult[], notes: Map<string, SearchNoteRow>, filters: SearchFilters, maxPerNote: number, minimumConfidence?: number): SearchResult[] {
-  const scores = items.map((item) => item.score);
-  const minimumScore = scores.length ? Math.min(...scores) : 0;
-  const maximumScore = scores.length ? Math.max(...scores) : 0;
-  const candidates = items
-    .map((item) => normalizeResult(item, notes.get(item.noteId), minimumScore, maximumScore))
-    .filter((item) => {
-      const note = notes.get(item.noteId);
-      if (!note) return false;
-      if (filters.notebookIds?.length && !filters.notebookIds.includes(note.notebook_id ?? '')) return false;
-      if (filters.tags?.length && !filters.tags.every((tag) => note.tags.includes(tag))) return false;
-      if (filters.sourceTypes?.length && !filters.sourceTypes.includes(item.sourceType)) return false;
-      if (filters.languages?.length && !filters.languages.includes((item.language ?? '').toLowerCase())) return false;
-      if (filters.updatedAfter && Date.parse(note.updated_at) < Date.parse(filters.updatedAfter)) return false;
-      if (minimumConfidence !== undefined && (item.scores?.hybrid ?? 0) < minimumConfidence) return false;
-      return true;
-    });
-  const counts = new Map<string, number>();
-  return candidates.filter((item) => {
-    const count = counts.get(item.noteId) ?? 0;
-    if (count >= maxPerNote) return false;
-    counts.set(item.noteId, count + 1);
-    return true;
+function requestFingerprint(request: SearchRequest, resolvedMode: ResolvedSearchMode): Promise<string> {
+  return requestHash({
+    query: request.query,
+    mode: resolvedMode,
+    filters: request.filters,
+    maxPerNote: request.maxPerNote,
+    minimumRelativeScore: request.minimumRelativeScore,
   });
 }
 
-function pageResults(items: SearchResult[], request: SearchRequest): { items: SearchResult[]; nextCursor: string | null } {
-  let offset = 0;
-  if (request.cursor !== undefined) {
-    const match = /^offset:(\d+)$/.exec(request.cursor);
-    if (!match) throw new ApiError(422, 'VALIDATION_ERROR', 'cursor must be an opaque search cursor.');
-    offset = Number(match[1]);
-    if (!Number.isSafeInteger(offset) || offset < 0) throw new ApiError(422, 'VALIDATION_ERROR', 'cursor is invalid.');
-  }
-  const page = items.slice(offset, offset + request.limit);
-  const nextOffset = offset + page.length;
-  return { items: page, nextCursor: nextOffset < items.length ? `offset:${nextOffset}` : null };
+function cursorOffset(request: SearchRequest, fingerprint: string): number {
+  if (!request.cursor) return 0;
+  const cursor = decodeSearchCursor(request.cursor);
+  if (cursor.fingerprint !== fingerprint) throw new ApiError(422, 'VALIDATION_ERROR', 'cursor does not belong to this search request.');
+  return cursor.offset;
+}
+
+function pageResults(items: SearchResult[], request: SearchRequest, fingerprint: string, offset: number, notes: Map<string, SearchNoteRow>): { items: SearchResult[]; nextCursor: string | null } {
+  const scores = items.map((item) => item.score);
+  const minimumScore = scores.length ? Math.min(...scores) : 0;
+  const maximumScore = scores.length ? Math.max(...scores) : 0;
+  const normalized = items
+    .map((item) => normalizeResult(item, notes.get(item.noteId), minimumScore, maximumScore))
+    .filter((item) => request.minimumRelativeScore === undefined || (item.scores?.hybrid ?? 0) >= request.minimumRelativeScore);
+  const page = normalized.slice(0, request.limit);
+  const hasMore = items.length > request.limit;
+  const nextOffset = offset + items.length;
+  return { items: page, nextCursor: hasMore ? encodeSearchCursor({ fingerprint, offset: nextOffset }) : null };
 }
 
 function searchResponse(
@@ -178,6 +176,7 @@ async function requestFromContext(context: Context): Promise<SearchRequest> {
       limit: validateLimit(params.limit, 50, 20),
       maxPerNote: 2,
       filters: {},
+      ...(params.cursor ? { cursor: params.cursor } : {}),
     };
   } catch (error: unknown) {
     return validationError(error);
@@ -190,7 +189,9 @@ export async function searchNotes(context: Context): Promise<Response> {
   const started = performance.now();
   const request = await requestFromContext(context);
   const mode: ResolvedSearchMode = request.mode === 'auto' ? resolveAutoSearchMode(request.query) : request.mode;
-  const candidateLimit = context.req.method === 'POST' ? 50 : request.limit;
+  const fingerprint = await requestFingerprint(request, mode);
+  const offset = cursorOffset(request, fingerprint);
+  const retrievalLimit = request.limit + 1;
   const queryId = crypto.randomUUID();
   const embeddingStarted = performance.now();
   let embedding: number[] | undefined;
@@ -199,34 +200,36 @@ export async function searchNotes(context: Context): Promise<Response> {
       embedding = await cachedQueryEmbedding(request.query);
     } catch {
       const retrievalStarted = performance.now();
-      const fallbackItems = await keywordSearch(auth.userId, request.query, candidateLimit);
+      const fallbackItems = await keywordSearch(auth.userId, request.query, retrievalLimit, request.filters, offset, request.maxPerNote);
       const fallbackNotes = await noteMetadata(auth.userId, [...new Set(fallbackItems.map((item) => item.noteId))]);
-      const page = pageResults(filterResults(fallbackItems, fallbackNotes, request.filters, request.maxPerNote, request.minimumConfidence), request);
+      const page = pageResults(fallbackItems, request, fingerprint, offset, fallbackNotes);
       return searchResponse(context, page.items, { queryId, modeUsed: 'keyword', degraded: true, started, embeddingMs: elapsedMilliseconds(embeddingStarted), retrievalStarted }, await indexMetadata(auth.userId), page.nextCursor, 'QUERY_EMBEDDING_UNAVAILABLE');
     }
   }
 
   const retrievalStarted = performance.now();
   let rawItems: SearchResult[];
-  let degradedReason: SearchResponseMetadata['degradedReason'];
   try {
     if (mode === 'keyword') {
-      rawItems = await keywordSearch(auth.userId, request.query, candidateLimit);
+      rawItems = await keywordSearch(auth.userId, request.query, retrievalLimit, request.filters, offset, request.maxPerNote);
     } else {
       const result = mode === 'semantic'
-        ? await serviceClient.rpc('qnotes_semantic_search', { p_owner_id: auth.userId, p_query: request.query, p_embedding: embedding!, p_limit: candidateLimit })
-        : await serviceClient.rpc('qnotes_hybrid_search', { p_owner_id: auth.userId, p_query: request.query, p_embedding: embedding!, p_limit: candidateLimit, p_rrf_k: 60 });
+        ? await serviceClient.rpc('qnotes_semantic_search', { p_owner_id: auth.userId, p_query: request.query, p_embedding: embedding!, p_limit: retrievalLimit, p_filters: request.filters, p_offset: offset, p_max_per_note: request.maxPerNote })
+        : await serviceClient.rpc('qnotes_hybrid_search', { p_owner_id: auth.userId, p_query: request.query, p_embedding: embedding!, p_limit: retrievalLimit, p_rrf_k: 60, p_filters: request.filters, p_offset: offset, p_max_per_note: request.maxPerNote });
       if (result.error) throw new ApiError(503, 'SEMANTIC_SEARCH_UNAVAILABLE', 'Semantic search is temporarily unavailable.');
       rawItems = (Array.isArray(result.data) ? result.data : []).map((row) => searchResultFromRow(row as Record<string, unknown>));
     }
   } catch (error: unknown) {
     if (mode === 'keyword') throw error;
-    const fallbackItems = await keywordSearch(auth.userId, request.query, candidateLimit);
+    const fallbackItems = await keywordSearch(auth.userId, request.query, retrievalLimit, request.filters, offset, request.maxPerNote);
     const fallbackNotes = await noteMetadata(auth.userId, [...new Set(fallbackItems.map((item) => item.noteId))]);
-    const page = pageResults(filterResults(fallbackItems, fallbackNotes, request.filters, request.maxPerNote, request.minimumConfidence), request);
-    return searchResponse(context, page.items, { queryId, modeUsed: 'keyword', degraded: true, started, embeddingMs: elapsedMilliseconds(embeddingStarted), retrievalStarted }, await indexMetadata(auth.userId), page.nextCursor, 'SEMANTIC_SEARCH_UNAVAILABLE');
+    const page = pageResults(fallbackItems, request, fingerprint, offset, fallbackNotes);
+    const degradedReason: SearchResponseMetadata['degradedReason'] = error instanceof ApiError && (error.code === 'SEMANTIC_SEARCH_UNAVAILABLE' || error.code === 'QUERY_EMBEDDING_UNAVAILABLE')
+      ? error.code
+      : 'SEMANTIC_SEARCH_UNAVAILABLE';
+    return searchResponse(context, page.items, { queryId, modeUsed: 'keyword', degraded: true, started, embeddingMs: elapsedMilliseconds(embeddingStarted), retrievalStarted }, await indexMetadata(auth.userId), page.nextCursor, degradedReason);
   }
   const notes = await noteMetadata(auth.userId, [...new Set(rawItems.map((item) => item.noteId))]);
-  const page = pageResults(filterResults(rawItems, notes, request.filters, request.maxPerNote, request.minimumConfidence), request);
-  return searchResponse(context, page.items, { queryId, modeUsed: mode, degraded: Boolean(degradedReason), started, embeddingMs: mode === 'keyword' ? 0 : elapsedMilliseconds(embeddingStarted), retrievalStarted }, await indexMetadata(auth.userId), page.nextCursor, degradedReason);
+  const page = pageResults(rawItems, request, fingerprint, offset, notes);
+  return searchResponse(context, page.items, { queryId, modeUsed: mode, degraded: false, started, embeddingMs: mode === 'keyword' ? 0 : elapsedMilliseconds(embeddingStarted), retrievalStarted }, await indexMetadata(auth.userId), page.nextCursor);
 }

@@ -37,6 +37,11 @@ export interface SearchParams {
   query: string;
   mode?: SearchMode;
   limit?: number;
+  cursor?: string;
+  signal?: AbortSignal;
+}
+
+export interface SearchPostOptions {
   signal?: AbortSignal;
 }
 
@@ -148,11 +153,11 @@ export class QNotesClient {
   }
 
   search(params: SearchParams): Promise<SearchResponse> {
-    return this.request(`/search${queryString({ q: params.query, mode: params.mode, limit: params.limit })}`, params.signal ? { signal: params.signal } : {});
+    return this.request(`/search${queryString({ q: params.query, mode: params.mode, limit: params.limit, cursor: params.cursor })}`, params.signal ? { signal: params.signal } : {});
   }
 
-  searchPost(input: SearchRequest): Promise<SearchResponse> {
-    return this.request('/search', { method: 'POST', body: JSON.stringify(input) });
+  searchPost(input: SearchRequest, options: SearchPostOptions = {}): Promise<SearchResponse> {
+    return this.request('/search', { method: 'POST', body: JSON.stringify(input), ...(options.signal ? { signal: options.signal } : {}) });
   }
 
   readNoteContext(documentId: UUID, params: NoteContextParams = {}): Promise<SearchContext> {

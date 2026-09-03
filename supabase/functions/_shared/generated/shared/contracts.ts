@@ -30,6 +30,7 @@ export interface SearchFilters {
   sourceTypes?: SearchSourceType[];
   languages?: string[];
   updatedAfter?: ISODateTime;
+  unfiled?: boolean;
 }
 
 export interface SearchRequest {
@@ -38,6 +39,8 @@ export interface SearchRequest {
   limit: number;
   maxPerNote: number;
   filters: SearchFilters;
+  minimumRelativeScore?: number;
+  /** @deprecated Use minimumRelativeScore. This remains accepted for clients of the v1 API. */
   minimumConfidence?: number;
   cursor?: string;
 }
@@ -121,6 +124,8 @@ export interface CreateNoteInput {
   slug?: string;
   contentMarkdown?: string;
   tags?: string[];
+  notebookId?: UUID | null;
+  dedupeKey?: string;
   deviceId: UUID;
   mutationId: UUID;
 }
@@ -129,7 +134,7 @@ export interface UpdateNoteInput {
   title: string;
   slug: string;
   contentMarkdown: string;
-  tags: string[];
+  tags?: string[];
   expectedVersion: number;
   deviceId: UUID;
   mutationId: UUID;
@@ -228,6 +233,11 @@ export interface SearchContext {
   next: string[];
   updatedAt: ISODateTime;
   sourceType: SearchSourceType;
+  sourceId?: UUID | null;
+  sourceKey?: string;
+  sourceTitle?: string;
+  attachmentId?: UUID | null;
+  pageNumber?: number | null;
 }
 export interface SearchResult {
   id: UUID;

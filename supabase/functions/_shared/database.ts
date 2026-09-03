@@ -126,3 +126,26 @@ export function decodeCursor(value: string): { updatedAt: string; id: string } {
     throw new ApiError(422, 'VALIDATION_ERROR', 'cursor must be a valid opaque cursor.');
   }
 }
+
+export interface SearchCursor {
+  version: 1;
+  fingerprint: string;
+  offset: number;
+}
+
+export function encodeSearchCursor(value: Omit<SearchCursor, 'version'>): string {
+  return btoa(JSON.stringify({ version: 1, ...value })).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+export function decodeSearchCursor(value: string): SearchCursor {
+  try {
+    const padded = value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4);
+    const parsed: unknown = JSON.parse(atob(padded));
+    if (!parsed || typeof parsed !== 'object') throw new Error('invalid');
+    const cursor = parsed as Partial<SearchCursor>;
+    if (cursor.version !== 1 || typeof cursor.fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(cursor.fingerprint) || !Number.isSafeInteger(cursor.offset) || cursor.offset < 0) throw new Error('invalid');
+    return cursor as SearchCursor;
+  } catch {
+    throw new ApiError(422, 'VALIDATION_ERROR', 'cursor must be a valid opaque search cursor.');
+  }
+}

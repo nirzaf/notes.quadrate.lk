@@ -34,7 +34,7 @@ function noteFromRpc(value: unknown): ReturnType<typeof noteFromRow> {
 function mapMutationResult(data: unknown): NoteResult {
   const result = record(data);
   const status = result.status;
-  if (status === 'ok' || status === 'idempotent') return { note: noteFromRpc(result.note), blocks: Array.isArray(result.blocks) ? result.blocks : [] };
+  if (status === 'ok' || status === 'idempotent' || status === 'dedupe_existing') return { note: noteFromRpc(result.note), blocks: Array.isArray(result.blocks) ? result.blocks : [] };
   if (status === 'not_found') throw new ApiError(404, 'NOTE_NOT_FOUND', 'The note was not found.');
   if (status === 'notebook_not_found') throw new ApiError(404, 'NOTEBOOK_NOT_FOUND', 'The notebook was not found.');
   if (status === 'slug_conflict') throw new ApiError(409, 'NOTE_SLUG_CONFLICT', 'An active note already uses that slug.');
@@ -116,12 +116,12 @@ export async function createNote(context: Context): Promise<Response> {
   const noteId = crypto.randomUUID();
   const slug = input.slug ?? deriveSlug(input.title, noteId);
   const parsed = await parsedContent(input.contentMarkdown ?? '', input.title);
-  const normalizedBody = { title: input.title, slug, contentMarkdown: parsed.parsed.normalizedMarkdown, tags: input.tags ?? [], deviceId: input.deviceId, mutationId: input.mutationId };
+  const normalizedBody = { title: input.title, slug, contentMarkdown: parsed.parsed.normalizedMarkdown, tags: input.tags ?? [], notebookId: input.notebookId ?? null, dedupeKey: input.dedupeKey ?? null, deviceId: input.deviceId, mutationId: input.mutationId };
   const hash = await requestHash({ userId: auth.userId, operation: 'created', noteId, expectedVersion: null, body: normalizedBody });
   const result = assertSupabase(await serviceClient.rpc('qnotes_create_note', {
     p_owner_id: auth.userId, p_note_id: noteId, p_slug: slug, p_title: input.title, p_content_markdown: parsed.parsed.normalizedMarkdown,
     p_content_plain: parsed.parsed.plainText, p_tags: input.tags ?? [], p_device_id: input.deviceId, p_mutation_id: input.mutationId,
-    p_request_hash: hash, p_blocks: parsed.blocks, p_documents: parsed.documents,
+    p_request_hash: hash, p_blocks: parsed.blocks, p_documents: parsed.documents, p_notebook_id: input.notebookId ?? null, p_dedupe_key: input.dedupeKey ?? null,
   }));
   return dataBody(context, mapMutationResult(result).note, 201);
 }
@@ -132,12 +132,14 @@ export async function updateNote(context: Context): Promise<Response> {
   const noteId = context.req.param('noteId');
   if (!isUUID(noteId)) throw new ApiError(422, 'VALIDATION_ERROR', 'noteId must be a valid UUID.');
   const input = validateUpdateNoteInput(await context.req.json());
+  const currentNote = input.tags === undefined ? await findOwnedNote(auth.userId, noteId) : null;
+  const tags = input.tags ?? currentNote?.tags ?? [];
   const parsed = await parsedContent(input.contentMarkdown, input.title);
-  const normalizedBody = { title: input.title, slug: input.slug, contentMarkdown: parsed.parsed.normalizedMarkdown, tags: input.tags, deviceId: input.deviceId, mutationId: input.mutationId };
+  const normalizedBody = { title: input.title, slug: input.slug, contentMarkdown: parsed.parsed.normalizedMarkdown, tags, deviceId: input.deviceId, mutationId: input.mutationId };
   const hash = await requestHash({ userId: auth.userId, operation: 'updated', noteId, expectedVersion: input.expectedVersion, body: normalizedBody });
   const result = assertSupabase(await serviceClient.rpc('qnotes_update_note', {
     p_owner_id: auth.userId, p_note_id: noteId, p_slug: normalizeSlug(input.slug, input.title), p_title: input.title, p_content_markdown: parsed.parsed.normalizedMarkdown,
-    p_content_plain: parsed.parsed.plainText, p_tags: input.tags, p_expected_version: input.expectedVersion, p_device_id: input.deviceId,
+    p_content_plain: parsed.parsed.plainText, p_tags: tags, p_expected_version: input.expectedVersion, p_device_id: input.deviceId,
     p_mutation_id: input.mutationId, p_request_hash: hash, p_blocks: parsed.blocks, p_documents: parsed.documents,
   }));
   return dataBody(context, mapMutationResult(result).note);

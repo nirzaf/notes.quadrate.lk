@@ -214,13 +214,14 @@ curl -fsS -X POST \
       "tags": ["operations"],
       "sourceTypes": ["note_chunk", "code_block"],
       "languages": ["bash"],
-      "updatedAfter": "2026-01-01T00:00:00Z"
+      "updatedAfter": "2026-01-01T00:00:00Z",
+      "unfiled": false
     },
-    "minimumConfidence": 0.45
+    "minimumRelativeScore": 0.45
   }'
 ```
 
-The structured success response is `{ data: { queryId, modeUsed, degraded, degradedReason?, timing, index, items, nextCursor } }`. Each item includes `documentId`, `noteId`, `noteVersion`, a stable `qnotes://notes/{noteId}/documents/{documentId}` URI, title, heading path, source type/language, snippet, tags, notebook, updated time, match reasons, and normalized/raw scores. `index` reports the embedding model, pending/failed document counts, oldest pending age, and freshness. Explicit semantic retrieval falls back to keyword results with `degraded: true` when embeddings or semantic retrieval are unavailable.
+The structured success response is `{ data: { queryId, modeUsed, degraded, degradedReason?, timing, index, items, nextCursor } }`. Each item includes `documentId`, `noteId`, `noteVersion`, a stable `qnotes://notes/{noteId}/documents/{documentId}` URI, title, heading path, source type/language, snippet, tags, notebook, updated time, match reasons, and normalized/raw scores. `index` reports the embedding model, pending/failed document counts, oldest queued age, and freshness. `nextCursor` is opaque and bound to the query, resolved mode, filters, per-note cap, and score threshold; pass it unchanged in the next POST body. `minimumRelativeScore` is a page-relative ranking threshold and is not calibrated confidence. `minimumConfidence` remains accepted as a deprecated request alias. Explicit semantic retrieval falls back to keyword results with `degraded: true` when embeddings or semantic retrieval are unavailable.
 
 Read one exact document with bounded neighboring context:
 
@@ -231,11 +232,11 @@ curl -fsS --get \
   --data 'before=1' --data 'after=1' --data 'maxTokens=1800'
 ```
 
-The context response contains `noteId`, `noteVersion`, `documentId`, stable URI, title, heading path, exact bounded `content`, `previous` and `next` neighboring chunks, `updatedAt`, and `sourceType`. The route enforces ownership and excludes deleted notes.
+The context response contains `noteId`, `noteVersion`, `documentId`, stable URI, title, heading path, exact bounded `content`, `previous` and `next` neighboring chunks, `updatedAt`, `sourceType`, `sourceId`, `sourceKey`, `sourceTitle`, and attachment `pageNumber` when applicable. The route enforces ownership, excludes deleted notes, and keeps neighbors within the same note source; attachment neighbors are restricted to the same attachment.
 
 ### Create, update, and organize notes
 
-Create a note with `notes:write`. `slug`, `contentMarkdown`, and `tags` are optional; omitted values default to a derived slug, an empty body, and an empty tag list:
+Create a note with `notes:write`. `slug`, `contentMarkdown`, `tags`, `notebookId`, and `dedupeKey` are optional; omitted values default to a derived slug, an empty body, an unfiled note, and no dedupe key:
 
 ```bash
 curl -fsS -X POST \
@@ -246,12 +247,14 @@ curl -fsS -X POST \
     "title": "Deployment checklist",
     "contentMarkdown": "- Check backups\n- Check health endpoint\n",
     "tags": ["operations", "deployment"],
+    "notebookId": "NOTEBOOK_UUID",
+    "dedupeKey": "import:deployment-checklist:1",
     "deviceId": "11111111-1111-4111-8111-111111111111",
     "mutationId": "22222222-2222-4222-8222-222222222222"
   }'
 ```
 
-Update replaces the complete title, slug, Markdown body, and tag list. First read the note and use its current `version`:
+Update replaces the complete title, slug, and Markdown body. `tags` is optional; when omitted, the current tag list is preserved. First read the note and use its current `version`:
 
 ```bash
 curl -fsS -X PATCH \
@@ -445,7 +448,7 @@ pnpm --filter @qnotes/cli exec node dist/index.js --help
 
 ## Use the JavaScript client
 
-`@qnotes/api-client` handles the `/api` prefix, bearer authorization, `{ data: ... }` envelopes, binary exports, and structured `QNotesHttpError` failures. `search` returns `{ items, queryId, modeUsed, degraded, timing }`; use `items` for matching documents and inspect the metadata when measuring retrieval or handling keyword fallback:
+`@qnotes/api-client` handles the `/api` prefix, bearer authorization, `{ data: ... }` envelopes, binary exports, abort signals for searches, and structured `QNotesHttpError` failures. `search` returns `{ items, queryId, modeUsed, degraded, timing, index, nextCursor }`; use `items` for matching documents and inspect the metadata when measuring retrieval or handling keyword fallback:
 
 ```js
 import { QNotesClient } from '@qnotes/api-client';
@@ -493,7 +496,7 @@ The default read profile exposes only `search_notes`, `read_note_context`, and `
 - `qnotes://notes/{noteId}/documents/{documentId}`
 - `qnotes://notes/{noteId}/blocks/{blockKey}`
 
-Use a separate write profile and token for `capture_note`, `append_note`, and `update_note`. Write tools require explicit device/mutation IDs; updates also require the expected note version.
+Use a separate write profile and token for `capture_note`, `append_note`, and `update_note`. The server generates one stable device ID per process and fresh mutation IDs internally; callers never need to put mutation IDs or tokens in tool arguments. `capture_note` accepts optional `notebookId` and `dedupeKey`, `append_note` preserves Markdown boundaries, and `update_note` preserves tags when `tags` is omitted. Updates still require the expected note version.
 
 ```yaml
 mcp_servers:

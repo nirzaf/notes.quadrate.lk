@@ -1,5 +1,5 @@
 export const EMBEDDING_MODEL = 'gte-small';
-export const EMBEDDING_MODEL_VERSION = 'v1';
+export const EMBEDDING_MODEL_VERSION = 'v2';
 
 interface EmbeddingSession {
   run(input: string): Promise<unknown>;
@@ -35,6 +35,11 @@ export function embeddingInput(document: { content: string; sourceTitle?: string
     .map((value) => typeof value === 'string' ? value.trim() : '')
     .filter(Boolean)
     .join('\n\n');
+}
+
+export async function embeddingInputHash(document: { content: string; sourceTitle?: string | null; headingPath?: string | null }): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(embeddingInput(document)));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 function getSession(): EmbeddingSession {

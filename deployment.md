@@ -110,6 +110,8 @@ pnpm run test:unit
 pnpm exec supabase db push --linked --dry-run
 ```
 
+The current search hardening release includes `20260903000300_search_hardening.sql`. Review that additive migration in the dry-run output before applying it; it re-queues vectors whose input hash/model version is unknown and adds filtered search RPCs, attachment page provenance, and capture deduplication.
+
 ### 3. Apply pending production migrations
 
 ```bash

@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { getBlockTool } from '../dist/tools/get-block.js';
 import { readNoteContextTool } from '../dist/tools/read-note-context.js';
 import { searchNotesTool } from '../dist/tools/search-notes.js';
+import { appendNoteTool, captureNoteTool, updateNoteTool } from '../dist/tools/write-notes.js';
+import { appendMarkdown } from '../dist/tools/common.js';
 import { READ_TOOL_NAMES, createQNotesMcpServer } from '../dist/server.js';
 
 const context = {
@@ -44,4 +46,29 @@ test('default MCP profile exposes only the read surface', () => {
   const server = createQNotesMcpServer(mockClient());
   assert.ok(server);
   assert.deepEqual(READ_TOOL_NAMES, ['search_notes', 'read_note_context', 'get_block']);
+});
+
+test('MCP write helpers preserve markdown boundaries and omitted tags', async () => {
+  assert.equal(appendMarkdown('  keep indentation\n', '\n## Added\n\ntext\n'), '  keep indentation\n\n## Added\n\ntext\n');
+  const calls = [];
+  const client = {
+    async getNote() { return { id: 'note-1', title: 'Title', slug: 'title', contentMarkdown: '# Existing\n', contentPlain: 'Existing', tags: ['ops'], notebookId: null, version: 3, createdAt: '2026-01-01', updatedAt: '2026-01-01', deletedAt: null }; },
+    async updateNote(noteId, input) { calls.push({ noteId, input }); return { id: noteId, ...input }; },
+  };
+  await appendNoteTool(client, { noteId: 'note-1', contentMarkdown: '\n## Added\n' });
+  await updateNoteTool(client, { noteId: 'note-1', title: 'Title', slug: 'title', contentMarkdown: '# Replaced', expectedVersion: 3 });
+  assert.equal(calls[0].input.contentMarkdown, '# Existing\n\n## Added\n');
+  assert.deepEqual(calls[1].input.tags, ['ops']);
+  assert.match(calls[0].input.deviceId, /^[0-9a-f-]{36}$/);
+  assert.match(calls[0].input.mutationId, /^[0-9a-f-]{36}$/);
+});
+
+test('MCP capture accepts dedupe and notebook provenance without caller mutation IDs', async () => {
+  let captured;
+  const client = { async createNote(input) { captured = input; return { id: 'note-1', ...input }; } };
+  await captureNoteTool(client, { title: 'Captured', contentMarkdown: 'text', notebookId: null, dedupeKey: 'source:event:1' });
+  assert.equal(captured.notebookId, null);
+  assert.equal(captured.dedupeKey, 'source:event:1');
+  assert.match(captured.deviceId, /^[0-9a-f-]{36}$/);
+  assert.match(captured.mutationId, /^[0-9a-f-]{36}$/);
 });

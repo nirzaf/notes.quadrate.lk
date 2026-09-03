@@ -10,7 +10,7 @@ export function estimateTokenCount(value: string): number {
   return Math.max(0, Math.ceil(value.trim().length / 4));
 }
 
-function splitTokenAware(value: string, maxTokens: number, overlapTokens: number): string[] {
+export function splitTokenAware(value: string, maxTokens: number, overlapTokens: number): string[] {
   const words = value.trim().split(/\s+/).filter(Boolean);
   const result: string[] = [];
   let start = 0;
@@ -37,6 +37,10 @@ function splitTokenAware(value: string, maxTokens: number, overlapTokens: number
     start = Math.max(start + 1, overlapStart);
   }
   return result;
+}
+
+export function chunkText(value: string, maxTokens = MARKDOWN_CHUNK_MAX_TOKENS, overlapTokens = MARKDOWN_CHUNK_OVERLAP_TOKENS): string[] {
+  return splitTokenAware(value, maxTokens, overlapTokens);
 }
 
 export async function chunkMarkdown(markdown: string, sourceTitle: string): Promise<MarkdownChunk[]> {

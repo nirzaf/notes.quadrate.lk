@@ -1,0 +1,12 @@
+{
+  "queries": [
+    { "id": "rollback", "relevant": ["doc-rollback", "doc-runbook"], "graded": { "doc-rollback": 3, "doc-runbook": 2, "doc-history": 1 } },
+    { "id": "token rotation", "relevant": ["doc-token"], "graded": { "doc-token": 3, "doc-auth": 1 } },
+    { "id": "unicorn database incident", "relevant": [], "expectedNoResult": true, "graded": {} }
+  ],
+  "predictions": {
+    "rollback": ["doc-rollback", "doc-history", "doc-runbook"],
+    "token rotation": ["doc-token", "doc-auth"],
+    "unicorn database incident": []
+  }
+}

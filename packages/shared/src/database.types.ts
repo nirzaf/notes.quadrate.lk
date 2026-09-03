@@ -225,6 +225,7 @@ export type Database = {
           content_markdown: string
           content_plain: string
           created_at: string
+          dedupe_key: string | null
           deleted_at: string | null
           id: string
           last_mutation_id: string
@@ -241,6 +242,7 @@ export type Database = {
           content_markdown?: string
           content_plain?: string
           created_at?: string
+          dedupe_key?: string | null
           deleted_at?: string | null
           id: string
           last_mutation_id: string
@@ -257,6 +259,7 @@ export type Database = {
           content_markdown?: string
           content_plain?: string
           created_at?: string
+          dedupe_key?: string | null
           deleted_at?: string | null
           id?: string
           last_mutation_id?: string
@@ -288,12 +291,15 @@ export type Database = {
           embedding_error: string | null
           embedding_model: string | null
           embedding_model_version: string | null
+          embedding_input_hash: string | null
+          embedding_queued_at: string | null
           embedding_status: string
           heading_path: string | null
           id: string
           note_id: string
           owner_id: string
           position: number
+          page_number: number | null
           search_vector: unknown
           source_id: string | null
           source_key: string
@@ -309,6 +315,8 @@ export type Database = {
           embedding_error?: string | null
           embedding_model?: string | null
           embedding_model_version?: string | null
+          embedding_input_hash?: string | null
+          embedding_queued_at?: string | null
           embedding_status?: string
           heading_path?: string | null
           id?: string
@@ -336,6 +344,7 @@ export type Database = {
           note_id?: string
           owner_id?: string
           position?: number
+          page_number?: number | null
           search_vector?: unknown
           source_id?: string | null
           source_key?: string
@@ -396,12 +405,14 @@ export type Database = {
           p_content_plain: string
           p_device_id: string
           p_documents: Json
+          p_dedupe_key: string | null
           p_mutation_id: string
           p_note_id: string
+          p_notebook_id: string | null
           p_owner_id: string
           p_request_hash: string
           p_slug: string
-          p_tags: string[]
+          p_tags: string[] | null
           p_title: string
         }
         Returns: Json
@@ -411,8 +422,16 @@ export type Database = {
         Returns: boolean
       }
       qnotes_enqueue_embedding: {
-        Args: { p_document_id: string; p_hash: string; p_owner_id: string }
+        Args: { p_document_id: string; p_hash: string; p_input_hash?: string; p_model_version?: string; p_owner_id: string }
         Returns: undefined
+      }
+      qnotes_embedding_input: {
+        Args: { p_content: string; p_heading_path: string; p_source_title: string }
+        Returns: string
+      }
+      qnotes_embedding_input_hash: {
+        Args: { p_content: string; p_heading_path: string; p_source_title: string }
+        Returns: string
       }
       qnotes_fail_attachment_processing: {
         Args: {
@@ -430,7 +449,10 @@ export type Database = {
       qnotes_hybrid_search: {
         Args: {
           p_embedding: string
+          p_filters: Json
           p_limit: number
+          p_max_per_note: number
+          p_offset: number
           p_owner_id: string
           p_query: string
           p_rrf_k?: number
@@ -455,7 +477,7 @@ export type Database = {
         }[]
       }
       qnotes_keyword_search: {
-        Args: { p_limit: number; p_owner_id: string; p_query: string }
+        Args: { p_filters: Json; p_limit: number; p_max_per_note: number; p_offset: number; p_owner_id: string; p_query: string }
         Returns: {
           attachment_id: string
           block_key: string
@@ -491,6 +513,10 @@ export type Database = {
         Args: { p_note: Database["notesdb"]["Tables"]["notes"]["Row"] }
         Returns: Json
       }
+      qnotes_prepare_search_document: {
+        Args: Record<PropertyKey, never>
+        Returns: undefined
+      }
       qnotes_read_queue: {
         Args: {
           p_batch_size: number
@@ -518,8 +544,12 @@ export type Database = {
         Args: { p_content: string; p_query: string }
         Returns: string
       }
+      qnotes_search_freshness: {
+        Args: { p_owner_id: string }
+        Returns: { failed_documents: number; oldest_queued_at: string; pending_documents: number }[]
+      }
       qnotes_semantic_search: {
-        Args: { p_embedding: string; p_limit: number; p_owner_id: string; p_query: string }
+        Args: { p_embedding: string; p_filters: Json; p_limit: number; p_max_per_note: number; p_offset: number; p_owner_id: string; p_query: string }
         Returns: {
           attachment_id: string
           block_key: string
@@ -576,7 +606,7 @@ export type Database = {
           p_owner_id: string
           p_request_hash: string
           p_slug: string
-          p_tags: string[]
+          p_tags: string[] | null
           p_title: string
         }
         Returns: Json

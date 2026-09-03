@@ -1,13 +1,13 @@
-import type { SearchMode } from '@qnotes/shared';
+import type { SearchFilters, SearchMode } from '@qnotes/shared';
 import { toolResult, type ReadQNotesClient } from './common.js';
 
-export async function searchNotesTool(client: ReadQNotesClient, args: { query: string; mode?: SearchMode; limit?: number }) {
+export async function searchNotesTool(client: ReadQNotesClient, args: { query: string; mode?: SearchMode; limit?: number; filters?: SearchFilters }) {
   const response = await client.searchPost({
     query: args.query,
     mode: args.mode ?? 'auto',
     limit: args.limit ?? 8,
     maxPerNote: 2,
-    filters: {},
+    filters: args.filters ?? {},
   });
   return toolResult(response);
 }

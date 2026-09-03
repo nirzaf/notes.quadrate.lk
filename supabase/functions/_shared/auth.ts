@@ -22,7 +22,14 @@ export async function authenticateRequest(request: Request): Promise<AuthContext
     if (error || !data) throw new ApiError(401, 'INVALID_TOKEN', 'The personal token is invalid.');
     if (data.revoked_at) throw new ApiError(401, 'INVALID_TOKEN', 'The personal token has been revoked.');
     if (data.expires_at && Date.parse(data.expires_at) <= Date.now()) throw new ApiError(401, 'TOKEN_EXPIRED', 'The personal token has expired.');
-    await appDbClient.from('api_tokens').update({ last_used_at: new Date().toISOString() }).eq('id', data.id);
+    const telemetryCutoff = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    await appDbClient
+      .from('api_tokens')
+      .update({ last_used_at: new Date().toISOString() })
+      .eq('id', data.id)
+      .or(`last_used_at.is.null,last_used_at.lt.${telemetryCutoff}`)
+      .then(() => undefined)
+      .catch(() => undefined);
     return { userId: data.owner_id, authKind: 'personal', scopes: data.scopes as ApiTokenScope[], tokenId: data.id };
   }
   const { data, error } = await serviceClient.auth.getUser(credential);

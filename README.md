@@ -9,19 +9,19 @@ The repository is a pnpm monorepo. The web app is a Vite/React PWA, the API is a
 - Email/password sign-in and self-service account creation through Supabase Auth.
 - A Markdown editor with Edit and Preview views, 800 ms quiet-period autosave, copy-as-Markdown/plain text/rendered content, and one-click copyable blocks.
 - Personal notebooks. The sidebar and home page can show All notes, Unfiled notes, or one named notebook. Notes can be moved from the note editor.
-- Keyword search in the web app, with title/body relevance and results from copyable blocks and extracted attachment text. The API additionally supports semantic and hybrid search.
+- Progressive local-first search in the web app, with title/body relevance, structured notebook/tag/source/date filters, and results from copyable blocks and extracted attachment text. The API additionally supports semantic and hybrid search with opaque request-bound cursors.
 - Private attachments stored in Supabase Storage. Plain text, Markdown, and text-bearing PDFs are indexed asynchronously; PNG, JPEG, and WebP files are stored but report that image OCR is unsupported.
 - Versioned mutations, private Realtime Broadcast invalidation, reconnect recovery, IndexedDB draft persistence, and a conflict resolver for concurrent edits.
 - Personal API tokens with least-privilege scopes for scripts, agents, backups, and the CLI.
 - Note Markdown exports and workspace ZIP exports containing active notes, attachments, and a manifest.
 
-The repository does not ship an MCP server or MCP transport. See [API_ACCESS_GUIDE.md](API_ACCESS_GUIDE.md) for the REST API, CLI, JavaScript client, and MCP-adapter pattern.
+The repository ships a native stdio MCP server in `packages/mcp-server`. See [API_ACCESS_GUIDE.md](API_ACCESS_GUIDE.md) for the REST API, CLI, JavaScript client, and MCP setup.
 
 ## Using the web app
 
 Open `/login` to sign in or create an account. Authenticated users land on the private notes workspace at `/`.
 
-The home page provides a recent-notes view, a search field, and a notebook filter. Search accepts a query after a short debounce and can also be focused with `Ctrl-K` or `⌘K`. Selecting a notebook filters both the home list and the sidebar; `Unfiled` means notes whose `notebookId` is `null`. The home page uses the API keyword-search mode; semantic and hybrid modes are available to API clients.
+The home page provides a paginated recent-notes view, a search field, and a notebook filter. Search accepts a query after a short debounce, shows matching recent local snapshots while the API request is in flight, and can also be focused with `Ctrl-K` or `⌘K`. Selecting a notebook filters both the home list and the sidebar; `Unfiled` means notes whose `notebookId` is `null` and is sent as an explicit search filter. The API selects keyword, semantic, or hybrid retrieval through `auto` mode.
 
 Use the `+` action in the Notebooks section to create a notebook. Names are trimmed, limited to 80 characters, and unique per owner. Open a note and use its notebook selector to move it to a notebook or back to Unfiled. The selector is disabled while an edit is waiting to be saved.
 
@@ -43,7 +43,7 @@ Named blocks support the `id`, `title`, `lang`, and `type` attributes. `id` is r
 
 Named block IDs must be unique within a note. Nested or unclosed named blocks, invalid attributes, invalid types, and unclosed fenced code blocks are rejected with `422`. Markdown HTML is disabled in the renderer. Content is limited to 2,000,000 JavaScript code units.
 
-The parser also derives plain text and search chunks from notes. Chunks are grouped by headings and emitted with an approximate 350-token budget and 40-token overlap for asynchronous embedding work.
+The parser also derives plain text and search chunks from notes. Chunks are grouped by headings and emitted with an approximate 350-token budget and 40-token overlap for asynchronous embedding work. Attachment chunks use the same token-aware overlap policy; PDF chunks retain page provenance.
 
 ## Architecture
 
@@ -58,7 +58,7 @@ The parser also derives plain text and search chunks from notes. Chunks are grou
 - `supabase/functions/embedding-worker` consumes the `note-embeddings` queue. `supabase/functions/attachment-worker` consumes `attachment-processing`, extracts supported files, and indexes attachment chunks.
 - `supabase/migrations` defines the `notesdb` schema, RLS, private Storage, pgvector/pgmq/pg_cron integration, Realtime Broadcast trigger, API tokens, notebooks, and search relevance indexes.
 
-PostgreSQL full-text and relevance-ranked keyword search is available immediately. Embeddings are generated asynchronously in 384 dimensions with `gte-small`; local tests set `QNOTES_FAKE_EMBEDDINGS=1` for deterministic embeddings. Worker cron jobs process both queues every 30 seconds in the configured Supabase project.
+PostgreSQL full-text and relevance-ranked keyword search is available immediately. Embeddings are generated asynchronously in 384 dimensions with `gte-small` model version `v2`. Every vector records a hash of the exact source title, heading path, and content used to create it; model changes and stale inputs are re-queued instead of being relabeled. Local tests set `QNOTES_FAKE_EMBEDDINGS=1` for deterministic embeddings. Worker cron jobs process both queues in the configured Supabase project, with bounded concurrency and batch draining.
 
 The browser subscribes to the private `user:<user-id>:notes` Realtime channel and receives metadata-only `note.changed` events. IndexedDB stores drafts, a notes sync cursor, and recent authoritative note snapshots. Access tokens are not stored in IndexedDB or the service-worker cache.
 
@@ -79,7 +79,10 @@ pnpm run sync:edge
 pnpm run typecheck
 pnpm run build
 pnpm run test:unit
+pnpm run test:mcp
 ```
+
+Search evaluation fixtures and a deterministic evaluator live under `tests/search-evaluation-fixtures.json` and `scripts/evaluate-search.mjs`. Run `pnpm run evaluate:search`, or pass `--results` with a JSON map of query IDs to ranked document IDs. `scripts/search-benchmark.mjs` measures p50/p95 API latency for representative 1k, 10k, and 100k corpus labels; run it with `QNOTES_URL` and a scoped `QNOTES_TOKEN`. Query-plan collection uses `scripts/search-query-plans.sql` against a representative database.
 
 `local:env` reads the local Supabase status without printing keys and writes ignored files at `apps/web/.env.local`, `supabase/functions/.env.test`, and `.tmp/local-env.json`. `seed:test-users` is deliberately restricted to a local Supabase URL and creates the E2E accounts used by the test suite:
 
@@ -116,7 +119,7 @@ pnpm run sync:edge
 pnpm exec supabase test db
 ```
 
-The unit suite covers the Markdown, sync, API-client, and CLI packages:
+The unit suite covers the Markdown, sync, API-client, CLI, and MCP packages:
 
 ```bash
 pnpm run test:unit
@@ -139,7 +142,7 @@ pnpm exec supabase functions deploy qnotes-api embedding-worker attachment-worke
   --import-map supabase/functions/deno.json
 ```
 
-The hosted database must contain the migrations through `20260903000200_indexing_v2.sql`. The worker cron jobs read the project URL and internal worker secret from Supabase Vault, so those Vault secrets and the Edge Function secrets must be configured before expecting asynchronous embeddings or attachment extraction.
+The hosted database must contain the migrations through `20260903000300_search_hardening.sql`. That migration adds request-safe search functions, embedding input/version invariants, stale-vector requeueing, attachment page provenance, and safe capture deduplication. The worker cron jobs read the project URL and internal worker secret from Supabase Vault, so those Vault secrets and the Edge Function secrets must be configured before expecting asynchronous embeddings or attachment extraction.
 
 Build and deploy the web package to Cloudflare Pages with the hosted Supabase values:
 
@@ -158,7 +161,7 @@ Every exposed application table is protected by owner-based RLS. Browser clients
 
 Set `QNOTES_ALLOWED_ORIGIN` to an exact comma-separated allow-list and keep Realtime “Allow public access” disabled. Keep `QNOTES_TOKEN_PEPPER`, `QNOTES_INTERNAL_WORKER_SECRET`, and `SUPABASE_SERVICE_ROLE_KEY` server-side. Keep attachment and export limits aligned with the desired deployment; the local defaults are 20 MiB per attachment and 50 MiB per workspace ZIP.
 
-Autosave-level synchronization deliberately stops short of character-level collaboration. Shared cursors, CRDTs, operational transformation, team workspaces, public publishing, native apps, image OCR, analytics, an included MCP server, and a large offline write queue are outside the current product boundary.
+Autosave-level synchronization deliberately stops short of character-level collaboration. Shared cursors, CRDTs, operational transformation, team workspaces, public publishing, native apps, image OCR, and a large offline write queue are outside the current product boundary.
 
 ## API and CLI quick start
 

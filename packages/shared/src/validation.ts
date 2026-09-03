@@ -24,6 +24,13 @@ export const MAX_SEARCH_QUERY_LENGTH = 500;
 export const MAX_SEARCH_LIMIT = 50;
 export const DEFAULT_SEARCH_LIMIT = 20;
 export const MAX_NOTEBOOK_NAME_LENGTH = 80;
+export const MAX_TITLE_LENGTH = 200;
+export const MAX_SLUG_LENGTH = 80;
+export const MAX_TAG_LENGTH = 64;
+export const MAX_TAG_COUNT = 50;
+export const MAX_BLOCK_KEY_LENGTH = 100;
+export const MAX_TOKEN_NAME_LENGTH = 80;
+export const MAX_DEDUPE_KEY_LENGTH = 200;
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SLUG_PATTERN = /^[a-z0-9][a-z0-9_-]{0,79}$/;
@@ -57,17 +64,17 @@ export function normalizeTags(value: unknown, optional = true): string[] {
     if (typeof item !== 'string') throw new QNotesValidationError('Every tag must be a string.');
     const tag = item.trim().toLowerCase();
     if (!tag) throw new QNotesValidationError('Tags cannot be empty.');
-    if (tag.length > 64) throw new QNotesValidationError('Tags must be 64 characters or fewer.');
+    if (tag.length > MAX_TAG_LENGTH) throw new QNotesValidationError(`Tags must be ${MAX_TAG_LENGTH} characters or fewer.`);
     if (!tags.includes(tag)) tags.push(tag);
   }
-  if (tags.length > 50) throw new QNotesValidationError('A note may have at most 50 tags.');
+  if (tags.length > MAX_TAG_COUNT) throw new QNotesValidationError(`A note may have at most ${MAX_TAG_COUNT} tags.`);
   return tags;
 }
 
 export function normalizeTitle(value: unknown): string {
   if (typeof value !== 'string') throw new QNotesValidationError('title must be a string.');
   const title = value.trim();
-  if (title.length < 1 || title.length > 200) throw new QNotesValidationError('title must contain 1 to 200 characters.');
+  if (title.length < 1 || title.length > MAX_TITLE_LENGTH) throw new QNotesValidationError(`title must contain 1 to ${MAX_TITLE_LENGTH} characters.`);
   return title;
 }
 
@@ -99,7 +106,15 @@ export function validateCreateNoteInput(value: unknown): CreateNoteInput {
   const deviceId = requireUUID(value.deviceId, 'deviceId');
   const mutationId = requireUUID(value.mutationId, 'mutationId');
   const slug = value.slug === undefined ? undefined : normalizeSlug(value.slug, title);
-  return { title, ...(slug ? { slug } : {}), contentMarkdown, tags, deviceId, mutationId };
+  const notebookId = value.notebookId === null || value.notebookId === undefined ? undefined : requireUUID(value.notebookId, 'notebookId');
+  let dedupeKey: string | undefined;
+  if (value.dedupeKey !== undefined) {
+    if (typeof value.dedupeKey !== 'string' || !value.dedupeKey.trim() || value.dedupeKey.trim().length > MAX_DEDUPE_KEY_LENGTH) {
+      throw new QNotesValidationError(`dedupeKey must contain 1 to ${MAX_DEDUPE_KEY_LENGTH} characters.`);
+    }
+    dedupeKey = value.dedupeKey.trim();
+  }
+  return { title, ...(slug ? { slug } : {}), contentMarkdown, tags, ...(notebookId !== undefined ? { notebookId } : {}), ...(dedupeKey ? { dedupeKey } : {}), deviceId, mutationId };
 }
 
 export function validateCreateNotebookInput(value: unknown): CreateNotebookInput {
@@ -120,12 +135,12 @@ export function validateUpdateNoteInput(value: unknown): UpdateNoteInput {
   const title = normalizeTitle(value.title);
   const slug = normalizeSlug(value.slug, title);
   const contentMarkdown = normalizeMarkdown(value.contentMarkdown);
-  const tags = normalizeTags(value.tags, false);
+  const tags = value.tags === undefined ? undefined : normalizeTags(value.tags, false);
   const expectedVersion = value.expectedVersion;
   if (typeof expectedVersion !== 'number' || !Number.isSafeInteger(expectedVersion) || expectedVersion < 1) throw new QNotesValidationError('expectedVersion must be a positive integer.');
   const deviceId = requireUUID(value.deviceId, 'deviceId');
   const mutationId = requireUUID(value.mutationId, 'mutationId');
-  return { title, slug, contentMarkdown, tags, expectedVersion, deviceId, mutationId };
+  return { title, slug, contentMarkdown, ...(tags !== undefined ? { tags } : {}), expectedVersion, deviceId, mutationId };
 }
 
 export function validateVersionedMutation(value: unknown): VersionedNoteMutationInput {
@@ -182,6 +197,10 @@ function normalizeSearchFilters(value: unknown): SearchFilters {
     if (typeof value.updatedAfter !== 'string' || Number.isNaN(Date.parse(value.updatedAfter))) throw new QNotesValidationError('updatedAfter must be an ISO date.');
     filters.updatedAfter = value.updatedAfter;
   }
+  if (value.unfiled !== undefined) {
+    if (typeof value.unfiled !== 'boolean') throw new QNotesValidationError('unfiled must be a boolean.');
+    filters.unfiled = value.unfiled;
+  }
   return filters;
 }
 
@@ -194,9 +213,10 @@ export function validateSearchRequest(value: unknown): SearchRequest {
     maxPerNote: validateLimit(value.maxPerNote, 2, 2),
     filters: normalizeSearchFilters(value.filters),
   };
-  if (value.minimumConfidence !== undefined) {
-    if (typeof value.minimumConfidence !== 'number' || !Number.isFinite(value.minimumConfidence) || value.minimumConfidence < 0 || value.minimumConfidence > 1) throw new QNotesValidationError('minimumConfidence must be a number from 0 to 1.');
-    request.minimumConfidence = value.minimumConfidence;
+  const relativeScore = value.minimumRelativeScore ?? value.minimumConfidence;
+  if (relativeScore !== undefined) {
+    if (typeof relativeScore !== 'number' || !Number.isFinite(relativeScore) || relativeScore < 0 || relativeScore > 1) throw new QNotesValidationError('minimumRelativeScore must be a number from 0 to 1.');
+    request.minimumRelativeScore = relativeScore;
   }
   if (value.cursor !== undefined) {
     if (typeof value.cursor !== 'string' || !value.cursor.trim() || value.cursor.length > 500) throw new QNotesValidationError('cursor must be a non-empty string of at most 500 characters.');
@@ -223,7 +243,7 @@ export function validateLimit(value: unknown, max: number, fallback: number): nu
 
 export function validateTokenInput(value: unknown): CreateApiTokenInput {
   if (!isRecord(value)) throw new QNotesValidationError('Request body must be an object.');
-  if (typeof value.name !== 'string' || !value.name.trim() || value.name.trim().length > 80) throw new QNotesValidationError('Token name must contain 1 to 80 characters.');
+  if (typeof value.name !== 'string' || !value.name.trim() || value.name.trim().length > MAX_TOKEN_NAME_LENGTH) throw new QNotesValidationError(`Token name must contain 1 to ${MAX_TOKEN_NAME_LENGTH} characters.`);
   if (!Array.isArray(value.scopes) || value.scopes.length < 1) throw new QNotesValidationError('At least one token scope is required.');
   const scopes: ApiTokenScope[] = [];
   for (const scope of value.scopes) {

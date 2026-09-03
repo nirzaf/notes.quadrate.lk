@@ -1,11 +1,11 @@
 import { archiveQueueMessage, deleteQueueMessage, readQueue } from '../_shared/queue.ts';
 import { appDbClient } from '../_shared/database.ts';
-import { EMBEDDING_MODEL, EMBEDDING_MODEL_VERSION, createEmbedding, embeddingInput } from './embedding.ts';
+import { EMBEDDING_MODEL, EMBEDDING_MODEL_VERSION, createEmbedding, embeddingInput, embeddingInputHash } from './embedding.ts';
 
 const queueName = 'note-embeddings';
 const WORKER_CONCURRENCY = 3;
 
-type EmbeddingJob = { searchDocumentId: string; ownerId: string; contentHash: string };
+type EmbeddingJob = { searchDocumentId: string; ownerId: string; contentHash: string; embeddingInputHash?: string; embeddingModelVersion?: string };
 type WorkerOutcome = 'completed' | 'skipped' | 'retried' | 'failed';
 
 function validMessage(value: unknown): value is EmbeddingJob {
@@ -24,7 +24,7 @@ async function processMessage(message: { message_id: number; read_count: number;
   try {
     const { data: document, error } = await appDbClient
       .from('search_documents')
-      .select('id, owner_id, content, source_title, heading_path, content_hash, embedding_status, embedding_model, embedding_model_version')
+      .select('id, owner_id, content, source_title, heading_path, content_hash, embedding_input_hash, embedding_status, embedding_model, embedding_model_version')
       .eq('id', job.searchDocumentId)
       .eq('owner_id', job.ownerId)
       .maybeSingle();
@@ -33,10 +33,16 @@ async function processMessage(message: { message_id: number; read_count: number;
       await deleteQueueMessage(queueName, message.message_id);
       return 'skipped';
     }
+    const expectedInputHash = await embeddingInputHash(document);
+    if (job.embeddingInputHash && job.embeddingInputHash !== expectedInputHash) {
+      await deleteQueueMessage(queueName, message.message_id);
+      return 'skipped';
+    }
     if (
       document.embedding_status === 'ready'
       && document.embedding_model === EMBEDDING_MODEL
       && document.embedding_model_version === EMBEDDING_MODEL_VERSION
+      && document.embedding_input_hash === expectedInputHash
     ) {
       await deleteQueueMessage(queueName, message.message_id);
       return 'skipped';
@@ -45,12 +51,13 @@ async function processMessage(message: { message_id: number; read_count: number;
     const vector = await createEmbedding(embeddingInput(document));
     const { data: current, error: currentError } = await appDbClient
       .from('search_documents')
-      .select('content_hash')
+      .select('content, source_title, heading_path, content_hash, embedding_input_hash')
       .eq('id', job.searchDocumentId)
       .eq('owner_id', job.ownerId)
       .maybeSingle();
     if (currentError) throw currentError;
-    if (!current || current.content_hash !== job.contentHash) {
+    const currentInputHash = current ? await embeddingInputHash(current) : null;
+    if (!current || current.content_hash !== job.contentHash || currentInputHash !== expectedInputHash || current.embedding_input_hash !== expectedInputHash) {
       await deleteQueueMessage(queueName, message.message_id);
       return 'skipped';
     }
@@ -61,11 +68,14 @@ async function processMessage(message: { message_id: number; read_count: number;
         embedding_status: 'ready',
         embedding_model: EMBEDDING_MODEL,
         embedding_model_version: EMBEDDING_MODEL_VERSION,
+        embedding_input_hash: expectedInputHash,
+        embedding_queued_at: null,
         embedding_error: null,
       })
       .eq('id', job.searchDocumentId)
       .eq('owner_id', job.ownerId)
-      .eq('content_hash', job.contentHash);
+      .eq('content_hash', job.contentHash)
+      .eq('embedding_input_hash', expectedInputHash);
     if (updateError) throw updateError;
     await deleteQueueMessage(queueName, message.message_id);
     return 'completed';
@@ -102,8 +112,12 @@ async function processBounded(messages: Array<{ message_id: number; read_count: 
 
 async function processRequest(request: Request): Promise<Response> {
   if (request.headers.get('x-qnotes-worker-secret') !== Deno.env.get('QNOTES_INTERNAL_WORKER_SECRET')) return Response.json({ error: 'unauthorized' }, { status: 401 });
-  const messages = await readQueue(queueName, 60, 10);
-  const outcomes = await processBounded(messages);
+  const outcomes: WorkerOutcome[] = [];
+  for (let batch = 0; batch < 4; batch += 1) {
+    const messages = await readQueue(queueName, 120, 50);
+    if (!messages.length) break;
+    outcomes.push(...await processBounded(messages));
+  }
   return Response.json({
     data: {
       completed: outcomes.filter((outcome) => outcome === 'completed').length,
