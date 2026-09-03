@@ -78,7 +78,17 @@ a { color: inherit; text-decoration: none; }
 .q-search-large input { min-width: 0; flex: 1; height: 54px; border: 0; outline: 0; background: transparent; color: var(--ink); }
 .q-search-kbd { border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; color: var(--muted); font-size: 0.7rem; }
 .q-search-status { margin: 10px 2px 0; color: var(--muted); font-size: 0.82rem; }
-.q-home-filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(190px, 230px); gap: 12px; align-items: start; }
+.q-search-options { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin-top: 10px; }
+.q-search-options label:not(.q-search-local) { display: grid; gap: 4px; }
+.q-search-options select { min-height: 32px; border: 1px solid var(--line); border-radius: 8px; padding: 4px 8px; color: var(--ink); background: var(--white); }
+.q-search-local { display: flex; align-items: center; gap: 6px; min-height: 32px; color: var(--muted); font-size: 0.78rem; }
+.q-search-results { display: grid; gap: 8px; max-height: 380px; overflow: auto; margin: 12px 0 0; padding: 0; list-style: none; }
+.q-search-results button { display: grid; gap: 3px; width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; text-align: left; color: var(--ink); background: var(--white); cursor: pointer; }
+.q-search-results button:hover, .q-search-results button:focus-visible { border-color: var(--teal); background: var(--mint); }
+.q-search-results strong { font-size: 0.88rem; }
+.q-search-results span { color: var(--muted); font-size: 0.72rem; }
+.q-search-results small { display: -webkit-box; overflow: hidden; color: var(--ink); font-size: 0.78rem; line-height: 1.4; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+ .q-home-filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(190px, 230px); gap: 12px; align-items: start; }
 .q-home-notebook-filter { display: grid; gap: 6px; }
 .q-home-notebook-filter .q-label { margin: 0; }
 .q-home-notebook-filter select { width: 100%; min-height: 54px; border: 1px solid var(--line); border-radius: 15px; padding: 0 32px 0 15px; color: var(--ink); background: var(--white); font-size: 0.88rem; }

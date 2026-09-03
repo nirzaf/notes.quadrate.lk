@@ -27,8 +27,15 @@ test('raw block output contains no decoration', async () => {
 
 test('JSON search output is valid JSON', async () => {
   const { output, io: streams } = io();
-  await runCommand(['search', 'deploy', '--json'], streams, { search: async () => [ { noteTitle: 'Demo', sourceTitle: 'Deploy', snippet: 'x' } ] });
-  assert.deepEqual(JSON.parse(output.stdout), [{ noteTitle: 'Demo', sourceTitle: 'Deploy', snippet: 'x' }]);
+  const response = { items: [{ noteTitle: 'Demo', sourceTitle: 'Deploy', snippet: 'x' }], queryId: '33333333-3333-4333-8333-333333333333', modeUsed: 'keyword', degraded: false, timing: { embeddingMs: 0, retrievalMs: 1, totalMs: 1 } };
+  await runCommand(['search', 'deploy', '--json'], streams, { search: async () => response });
+  assert.deepEqual(JSON.parse(output.stdout), response);
+});
+
+test('human search output renders items from the response envelope', async () => {
+  const { output, io: streams } = io();
+  await runCommand(['search', 'deploy'], streams, { search: async () => ({ items: [{ noteTitle: 'Demo', sourceTitle: 'Deploy', snippet: 'x' }], queryId: '33333333-3333-4333-8333-333333333333', modeUsed: 'keyword', degraded: false, timing: { embeddingMs: 0, retrievalMs: 1, totalMs: 1 } }) });
+  assert.match(output.stdout, /1\. Demo · Deploy\n   x/);
 });
 
 test('existing export target is not overwritten without --force', async () => {

@@ -1,11 +1,13 @@
 import { readFile } from 'node:fs/promises';
-import { createClient, type Session } from '@supabase/supabase-js';
+import { createClient, type Session, type SupabaseClient } from '@supabase/supabase-js';
 import type { Note, Attachment, NoteSummary } from '@qnotes/shared';
 import { expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
 
 export const OWNER = { email: 'owner@qnotes.local', password: 'Qnotes-Test-Owner-2026!' } as const;
 export const OTHER = { email: 'other@qnotes.local', password: 'Qnotes-Test-Other-2026!' } as const;
 const TEST_USERS = [OWNER, OTHER] as const;
+type TestUser = (typeof TEST_USERS)[number];
+
 
 interface LocalEnv {
   supabaseUrl: string;
@@ -18,7 +20,7 @@ export async function localEnv(): Promise<LocalEnv> {
   return JSON.parse(await readFile('.tmp/local-env.json', 'utf8')) as LocalEnv;
 }
 
-async function removeObjects(client: ReturnType<typeof createClient>, prefix: string): Promise<void> {
+async function removeObjects(client: SupabaseClient<any, 'notesdb'>, prefix: string): Promise<void> {
   const storage = client.storage.from('note-attachments');
   const { data, error } = await storage.list(prefix, { limit: 1000 });
   if (error) throw error;
@@ -52,7 +54,7 @@ export async function clearApplicationData(): Promise<void> {
   }
 }
 
-export async function signInSession(user = OWNER): Promise<Session> {
+export async function signInSession(user: TestUser = OWNER): Promise<Session> {
   const env = await localEnv();
   const client = createClient(env.supabaseUrl, env.publishableKey, { auth: { autoRefreshToken: false, persistSession: false } });
   const result = await client.auth.signInWithPassword(user);
@@ -60,7 +62,7 @@ export async function signInSession(user = OWNER): Promise<Session> {
   return result.data.session;
 }
 
-export async function signInPage(page: Page, user = OWNER): Promise<void> {
+export async function signInPage(page: Page, user: TestUser = OWNER): Promise<void> {
   await page.goto('/login');
   await page.getByLabel('Email').fill(user.email);
   await page.getByLabel('Password').fill(user.password);
@@ -69,7 +71,7 @@ export async function signInPage(page: Page, user = OWNER): Promise<void> {
   await expect(page.getByRole('heading', { name: /Think clearly/ })).toBeVisible();
 }
 
-export async function createDevice(browser: Browser, user = OWNER): Promise<{ context: BrowserContext; page: Page }> {
+export async function createDevice(browser: Browser, user: TestUser = OWNER): Promise<{ context: BrowserContext; page: Page }> {
   const context = await browser.newContext();
   const page = await context.newPage();
   await signInPage(page, user);
@@ -85,6 +87,14 @@ export async function apiJson(path: string, token: string, init: RequestInit = {
   const response = await fetch(`${env.apiUrl}${path}`, { ...init, headers });
   const body = (response.headers.get('content-type') ?? '').includes('json') ? await response.json() : await response.text();
   return { response, body };
+}
+
+export function searchItems(body: unknown): unknown[] {
+  if (!body || typeof body !== 'object' || !('data' in body)) return [];
+  const data = (body as { data?: unknown }).data;
+  if (!data || typeof data !== 'object' || !('items' in data)) return [];
+  const items = (data as { items?: unknown }).items;
+  return Array.isArray(items) ? items : [];
 }
 
 export async function poll<T>(read: () => Promise<T> | T, matches: (value: T) => boolean, timeoutMs = 10_000): Promise<T> {

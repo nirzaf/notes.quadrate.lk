@@ -1,11 +1,5 @@
 import { test, expect } from './test-fixtures';
-import { apiJson, createNoteApi, invokeWorker, localEnv, OTHER, signInPage, signInSession, poll } from './helpers';
-
-function dataArray(body: unknown): unknown[] {
-  if (!body || typeof body !== 'object' || !('data' in body)) return [];
-  const value = (body as { data?: unknown }).data;
-  return Array.isArray(value) ? value : [];
-}
+import { apiJson, createNoteApi, invokeWorker, localEnv, OTHER, signInPage, signInSession, poll, searchItems } from './helpers';
 
 test('filters notes by title and partial body matches, then covers semantic, hybrid, and isolation', async ({ page }) => {
   const session = await signInSession();
@@ -30,20 +24,21 @@ test('filters notes by title and partial body matches, then covers semantic, hyb
   await invokeWorker('embedding-worker');
   const semantic = await poll(async () => {
     const result = await apiJson(`/api/search?q=${encodeURIComponent(marker)}&mode=semantic`, session.access_token);
-    return { response: result.response, rows: dataArray(result.body) };
+    return { response: result.response, rows: searchItems(result.body) };
   }, (result) => result.response.ok && result.rows.some((row) => row && typeof row === 'object' && (row as { noteId?: unknown }).noteId === note.id), 20_000);
   expect(semantic.response.status).toBe(200);
+  expect(semantic.rows.some((row) => row && typeof row === 'object' && (row as { noteId?: unknown }).noteId === note.id)).toBe(true);
 
   const hybrid = await poll(async () => {
     const result = await apiJson(`/api/search?q=${encodeURIComponent(marker)}&mode=hybrid`, session.access_token);
-    return { response: result.response, rows: dataArray(result.body) };
+    return { response: result.response, rows: searchItems(result.body) };
   }, (result) => result.response.ok && result.rows.some((row) => row && typeof row === 'object' && (row as { noteId?: unknown }).noteId === note.id), 20_000);
   expect(hybrid.response.status).toBe(200);
-
+  expect(hybrid.rows.some((row) => row && typeof row === 'object' && (row as { noteId?: unknown }).noteId === note.id)).toBe(true);
   const other = await signInSession(OTHER);
   const isolated = await apiJson(`/api/search?q=${encodeURIComponent(marker)}&mode=keyword`, other.access_token);
   expect(isolated.response.status).toBe(200);
-  expect(dataArray(isolated.body)).toEqual([]);
+  expect(searchItems(isolated.body)).toEqual([]);
 
   const env = await localEnv();
   expect(env.apiUrl).toContain('/functions/v1/qnotes-api');

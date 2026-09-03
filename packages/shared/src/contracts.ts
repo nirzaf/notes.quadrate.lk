@@ -14,13 +14,33 @@ export type BlockType =
   | 'quote'
   | 'checklist';
 
-export type SearchMode = 'keyword' | 'semantic' | 'hybrid';
+export type SearchMode = 'auto' | 'keyword' | 'semantic' | 'hybrid';
+export type ResolvedSearchMode = Exclude<SearchMode, 'auto'>;
 
 export type SearchSourceType =
+  | 'note_metadata'
   | 'note_chunk'
   | 'copy_block'
   | 'code_block'
   | 'attachment_chunk';
+
+export interface SearchFilters {
+  notebookIds?: UUID[];
+  tags?: string[];
+  sourceTypes?: SearchSourceType[];
+  languages?: string[];
+  updatedAfter?: ISODateTime;
+}
+
+export interface SearchRequest {
+  query: string;
+  mode: SearchMode;
+  limit: number;
+  maxPerNote: number;
+  filters: SearchFilters;
+  minimumConfidence?: number;
+  cursor?: string;
+}
 
 export type NoteSyncAction =
   | 'created'
@@ -196,9 +216,24 @@ export interface SyncPage {
   hasMore: boolean;
 }
 
+export interface SearchContext {
+  noteId: UUID;
+  noteVersion: number;
+  documentId: UUID;
+  uri: string;
+  title: string;
+  headingPath: string | null;
+  content: string;
+  previous: string[];
+  next: string[];
+  updatedAt: ISODateTime;
+  sourceType: SearchSourceType;
+}
 export interface SearchResult {
   id: UUID;
+  documentId?: UUID;
   noteId: UUID;
+  noteVersion?: number;
   noteSlug: string;
   noteTitle: string;
   sourceType: SearchSourceType;
@@ -214,8 +249,47 @@ export interface SearchResult {
   blockKey: string | null;
   language: string | null;
   attachmentId: UUID | null;
+  uri?: string;
+  tags?: string[];
+  notebookId?: UUID | null;
+  updatedAt?: ISODateTime;
+  matchReasons?: string[];
+  scores?: {
+    hybrid: number;
+    keywordRank: number | null;
+    semanticRank: number | null;
+  };
 }
 
+export interface SearchIndexMetadata {
+  model: string;
+  pendingDocuments: number;
+  failedDocuments: number;
+  oldestPendingAgeSeconds: number | null;
+  fresh: boolean;
+}
+
+export interface SearchTiming {
+  embeddingMs: number;
+  retrievalMs: number;
+  totalMs: number;
+}
+
+export type SearchDegradedReason = 'QUERY_EMBEDDING_UNAVAILABLE' | 'SEMANTIC_SEARCH_UNAVAILABLE' | 'LOCAL_FALLBACK';
+
+export interface SearchResponseMetadata {
+  queryId: UUID;
+  modeUsed: ResolvedSearchMode;
+  degraded: boolean;
+  degradedReason?: SearchDegradedReason;
+  timing: SearchTiming;
+}
+
+export interface SearchResponse extends SearchResponseMetadata {
+  items: SearchResult[];
+  index?: SearchIndexMetadata;
+  nextCursor?: string | null;
+}
 export interface Attachment {
   id: UUID;
   noteId: UUID;

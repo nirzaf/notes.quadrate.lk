@@ -2,10 +2,40 @@ import type { MarkdownChunk } from '@qnotes/shared';
 import { sha256Hex } from './hash.ts';
 import { plainTextFromMarkdown } from './parser.ts';
 
-function splitWords(value: string, size: number): string[] {
+export const MARKDOWN_CHUNK_MAX_TOKENS = 350;
+export const MARKDOWN_CHUNK_OVERLAP_TOKENS = 40;
+
+/** A deterministic approximation used because the Edge runtime has no tokenizer dependency. */
+export function estimateTokenCount(value: string): number {
+  return Math.max(0, Math.ceil(value.trim().length / 4));
+}
+
+function splitTokenAware(value: string, maxTokens: number, overlapTokens: number): string[] {
   const words = value.trim().split(/\s+/).filter(Boolean);
   const result: string[] = [];
-  for (let index = 0; index < words.length; index += size) result.push(words.slice(index, index + size).join(' '));
+  let start = 0;
+  while (start < words.length) {
+    let end = start;
+    let tokenCount = 0;
+    while (end < words.length) {
+      const next = words[end] ?? '';
+      const nextTokens = estimateTokenCount(next) + (end > start ? 1 : 0);
+      if (end > start && tokenCount + nextTokens > maxTokens) break;
+      tokenCount += nextTokens;
+      end += 1;
+    }
+    if (end === start) end += 1;
+    result.push(words.slice(start, end).join(' '));
+    if (end >= words.length) break;
+
+    let overlap = 0;
+    let overlapStart = end;
+    while (overlapStart > start && overlap < overlapTokens) {
+      overlapStart -= 1;
+      overlap += estimateTokenCount(words[overlapStart] ?? '') + 1;
+    }
+    start = Math.max(start + 1, overlapStart);
+  }
   return result;
 }
 
@@ -41,6 +71,7 @@ export async function chunkMarkdown(markdown: string, sourceTitle: string): Prom
   flushSection();
 
   const chunks: MarkdownChunk[] = [];
+  const keyOccurrences = new Map<string, number>();
   for (const section of sections) {
     const paragraphs = [] as string[];
     for (const rawParagraph of section.paragraphs) {
@@ -48,13 +79,17 @@ export async function chunkMarkdown(markdown: string, sourceTitle: string): Prom
       if (text) paragraphs.push(text);
     }
     let pending: string[] = [];
-    let pendingWords = 0;
     const emit = async (content: string) => {
       const trimmed = content.trim();
       if (!trimmed) return;
       const contentHash = await sha256Hex(trimmed);
+      const sectionIdentity = section.headingPath.join('\0') || 'root';
+      const sectionHash = await sha256Hex(sectionIdentity);
+      const baseKey = `section-${sectionHash.slice(0, 16)}-${contentHash.slice(0, 16)}`;
+      const occurrence = keyOccurrences.get(baseKey) ?? 0;
+      keyOccurrences.set(baseKey, occurrence + 1);
       chunks.push({
-        sourceKey: `section-${chunks.length}-${contentHash.slice(0, 12)}`,
+        sourceKey: occurrence ? `${baseKey}-${occurrence}` : baseKey,
         sourceTitle,
         headingPath: section.headingPath.length ? section.headingPath.join(' > ') : null,
         content: trimmed,
@@ -63,23 +98,22 @@ export async function chunkMarkdown(markdown: string, sourceTitle: string): Prom
       });
     };
     for (const paragraphText of paragraphs) {
-      const words = paragraphText.split(/\s+/).filter(Boolean);
-      if (words.length > 350) {
+      const paragraphTokens = estimateTokenCount(paragraphText);
+      if (paragraphTokens > MARKDOWN_CHUNK_MAX_TOKENS) {
         if (pending.length) {
           await emit(pending.join('\n\n'));
           pending = [];
-          pendingWords = 0;
         }
-        for (const part of splitWords(paragraphText, 350)) await emit(part);
+        for (const part of splitTokenAware(paragraphText, MARKDOWN_CHUNK_MAX_TOKENS, MARKDOWN_CHUNK_OVERLAP_TOKENS)) await emit(part);
         continue;
       }
-      if (pendingWords > 0 && pendingWords + words.length > 350) {
+      const combined = pending.length ? `${pending.join('\n\n')}\n\n${paragraphText}` : paragraphText;
+      const combinedTokens = estimateTokenCount(combined);
+      if (pending.length && combinedTokens > MARKDOWN_CHUNK_MAX_TOKENS) {
         await emit(pending.join('\n\n'));
         pending = [];
-        pendingWords = 0;
       }
       pending.push(paragraphText);
-      pendingWords += words.length;
     }
     if (pending.length) await emit(pending.join('\n\n'));
   }

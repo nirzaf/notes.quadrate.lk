@@ -1,5 +1,5 @@
 {
-  "name": "@qnotes/shared",
+  "name": "@qnotes/mcp-server",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,5 +10,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm build && node --test test/*.test.mjs"
   },
-  "dependencies": {}
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@qnotes/api-client": "workspace:*",
+    "@qnotes/shared": "workspace:*",
+    "zod": "^4.0.0"
+  }
 }

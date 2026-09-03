@@ -3,6 +3,7 @@ apps/*/dist/
 packages/*/dist/
 apps/web/.env.local
 supabase/functions/.env.test
+.env.local
 .env
 !.env.example
 .DS_Store

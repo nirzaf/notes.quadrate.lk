@@ -5,9 +5,10 @@ import { renderMarkdown } from './renderer.ts';
 
 export async function parseMarkdown(markdown: string): Promise<ParsedMarkdown> {
   const normalizedMarkdown = markdown.replace(/\r\n?/g, '\n');
-  const { blocks } = await parseBlocks(normalizedMarkdown);
+  const parsed = await parseBlocks(normalizedMarkdown);
+  const { blocks } = parsed;
   const plainText = await plainTextFromMarkdown(normalizedMarkdown);
-  const chunks = await chunkMarkdown(normalizedMarkdown, sourceTitleFromMarkdown(normalizedMarkdown));
+  const chunks = await chunkMarkdown(parsed.markdownWithoutBlocks, sourceTitleFromMarkdown(normalizedMarkdown));
   return { normalizedMarkdown, plainText, blocks, chunks };
 }
 

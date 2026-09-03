@@ -287,6 +287,7 @@ export type Database = {
           embedding: string | null
           embedding_error: string | null
           embedding_model: string | null
+          embedding_model_version: string | null
           embedding_status: string
           heading_path: string | null
           id: string
@@ -307,6 +308,7 @@ export type Database = {
           embedding?: string | null
           embedding_error?: string | null
           embedding_model?: string | null
+          embedding_model_version?: string | null
           embedding_status?: string
           heading_path?: string | null
           id?: string
@@ -327,6 +329,7 @@ export type Database = {
           embedding?: string | null
           embedding_error?: string | null
           embedding_model?: string | null
+          embedding_model_version?: string | null
           embedding_status?: string
           heading_path?: string | null
           id?: string
@@ -511,8 +514,12 @@ export type Database = {
         }
         Returns: Json
       }
+      qnotes_search_snippet: {
+        Args: { p_content: string; p_query: string }
+        Returns: string
+      }
       qnotes_semantic_search: {
-        Args: { p_embedding: string; p_limit: number; p_owner_id: string }
+        Args: { p_embedding: string; p_limit: number; p_owner_id: string; p_query: string }
         Returns: {
           attachment_id: string
           block_key: string
@@ -550,6 +557,10 @@ export type Database = {
           p_note_id: string
           p_owner_id: string
         }
+        Returns: undefined
+      }
+      qnotes_sync_note_metadata: {
+        Args: { p_note_id: string; p_owner_id: string }
         Returns: undefined
       }
       qnotes_update_note: {

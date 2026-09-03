@@ -82,9 +82,9 @@ export async function runCommand(args: string[], io: CommandIo, api?: QNotesClie
     const query = textFromArgs(args.slice(1));
     if (!query) usage('Usage: qnotes search "query"');
     const client = api ?? createClientFromEnvironment();
-    const mode = args.includes('--semantic') ? 'semantic' : args.includes('--hybrid') ? 'hybrid' : 'keyword';
-    const results = await client.search({ query, mode });
-    io.stdout(`${args.includes('--json') ? JSON.stringify(results, null, 2) : formatSearchResults(results)}\n`);
+    const mode = args.includes('--semantic') ? 'semantic' : args.includes('--hybrid') ? 'hybrid' : 'auto';
+    const response = await client.search({ query, mode });
+    io.stdout(`${args.includes('--json') ? JSON.stringify(response, null, 2) : formatSearchResults(response.items)}\n`);
     return;
   }
 

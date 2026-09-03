@@ -4,7 +4,11 @@ import type {
   CreateNotebookInput,
   CreateNoteInput,
   MoveNoteToNotebookInput,
+  ResolvedSearchMode,
+  SearchFilters,
   SearchMode,
+  SearchRequest,
+  SearchSourceType,
   UpdateNoteInput,
   UUID,
   VersionedNoteMutationInput,
@@ -139,8 +143,75 @@ export function validateSearchQuery(value: unknown): string {
 }
 
 export function validateSearchMode(value: unknown): SearchMode {
-  if (value === 'keyword' || value === 'semantic' || value === 'hybrid') return value;
-  throw new QNotesValidationError('mode must be keyword, semantic, or hybrid.');
+  if (value === 'auto' || value === 'keyword' || value === 'semantic' || value === 'hybrid') return value;
+  throw new QNotesValidationError('mode must be auto, keyword, semantic, or hybrid.');
+}
+
+const SEARCH_SOURCE_TYPES: SearchSourceType[] = ['note_metadata', 'note_chunk', 'copy_block', 'code_block', 'attachment_chunk'];
+
+function normalizeSearchFilters(value: unknown): SearchFilters {
+  if (value === undefined) return {};
+  if (!isRecord(value)) throw new QNotesValidationError('filters must be an object.');
+  const filters: SearchFilters = {};
+  if (value.notebookIds !== undefined) {
+    if (!Array.isArray(value.notebookIds) || value.notebookIds.length > 50) throw new QNotesValidationError('notebookIds must contain at most 50 UUIDs.');
+    filters.notebookIds = value.notebookIds.map((item) => requireUUID(item, 'notebookId'));
+  }
+  if (value.tags !== undefined) filters.tags = normalizeTags(value.tags, false);
+  if (value.sourceTypes !== undefined) {
+    if (!Array.isArray(value.sourceTypes) || value.sourceTypes.length > SEARCH_SOURCE_TYPES.length) throw new QNotesValidationError('sourceTypes contains too many values.');
+    const sourceTypes: SearchSourceType[] = [];
+    for (const item of value.sourceTypes) {
+      if (typeof item !== 'string' || !SEARCH_SOURCE_TYPES.includes(item as SearchSourceType)) throw new QNotesValidationError('sourceTypes contains an invalid value.');
+      if (!sourceTypes.includes(item as SearchSourceType)) sourceTypes.push(item as SearchSourceType);
+    }
+    filters.sourceTypes = sourceTypes;
+  }
+  if (value.languages !== undefined) {
+    if (!Array.isArray(value.languages) || value.languages.length > 50) throw new QNotesValidationError('languages must contain at most 50 values.');
+    const languages: string[] = [];
+    for (const item of value.languages) {
+      if (typeof item !== 'string') throw new QNotesValidationError('languages must be strings.');
+      const language = item.trim().toLowerCase();
+      if (!language || language.length > 40) throw new QNotesValidationError('languages contain an invalid value.');
+      if (!languages.includes(language)) languages.push(language);
+    }
+    filters.languages = languages;
+  }
+  if (value.updatedAfter !== undefined) {
+    if (typeof value.updatedAfter !== 'string' || Number.isNaN(Date.parse(value.updatedAfter))) throw new QNotesValidationError('updatedAfter must be an ISO date.');
+    filters.updatedAfter = value.updatedAfter;
+  }
+  return filters;
+}
+
+export function validateSearchRequest(value: unknown): SearchRequest {
+  if (!isRecord(value)) throw new QNotesValidationError('Request body must be an object.');
+  const request: SearchRequest = {
+    query: validateSearchQuery(value.query),
+    mode: validateSearchMode(value.mode ?? 'auto'),
+    limit: validateLimit(value.limit, MAX_SEARCH_LIMIT, DEFAULT_SEARCH_LIMIT),
+    maxPerNote: validateLimit(value.maxPerNote, 2, 2),
+    filters: normalizeSearchFilters(value.filters),
+  };
+  if (value.minimumConfidence !== undefined) {
+    if (typeof value.minimumConfidence !== 'number' || !Number.isFinite(value.minimumConfidence) || value.minimumConfidence < 0 || value.minimumConfidence > 1) throw new QNotesValidationError('minimumConfidence must be a number from 0 to 1.');
+    request.minimumConfidence = value.minimumConfidence;
+  }
+  if (value.cursor !== undefined) {
+    if (typeof value.cursor !== 'string' || !value.cursor.trim() || value.cursor.length > 500) throw new QNotesValidationError('cursor must be a non-empty string of at most 500 characters.');
+    request.cursor = value.cursor;
+  }
+  return request;
+}
+
+const SEARCH_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/$@-]{0,79}$/;
+const QUOTED_SEARCH_PATTERN = /^(?:"[^"\n]{1,500}"|'[^'\n]{1,500}')$/;
+
+export function resolveAutoSearchMode(value: string): ResolvedSearchMode {
+  const query = value.trim();
+  if (UUID_PATTERN.test(query) || SEARCH_IDENTIFIER_PATTERN.test(query) || QUOTED_SEARCH_PATTERN.test(query)) return 'keyword';
+  return 'hybrid';
 }
 
 export function validateLimit(value: unknown, max: number, fallback: number): number {

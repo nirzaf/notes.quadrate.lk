@@ -52,3 +52,37 @@ test('supports notebook listing, creation, and versioned note moves', async () =
   assert.equal(calls[2].url, 'http://example.test/api/notes/note-1/notebook');
   assert.deepEqual(JSON.parse(calls[2].init.body), { notebookId: 'n-1', expectedVersion: 1, deviceId: 'device-1', mutationId: 'mutation-1' });
 });
+
+test('posts structured search requests and retrieves bounded document context', async () => {
+  const calls = [];
+  const client = new QNotesClient({ baseUrl: 'http://example.test', getAccessToken: () => 'read-token', fetchImplementation: async (url, init) => {
+    calls.push({ url, init });
+    return url.endsWith('/context')
+      ? jsonResponse({ data: { noteId: 'note-1', noteVersion: 3, documentId: 'doc-1', uri: 'qnotes://notes/note-1/documents/doc-1', title: 'Rollback', headingPath: null, content: 'exact', previous: [], next: [], updatedAt: '2026-01-01T00:00:00Z', sourceType: 'note_chunk' } })
+      : jsonResponse({ data: { items: [], queryId: 'query-1', modeUsed: 'keyword', degraded: false, timing: { embeddingMs: 0, retrievalMs: 1, totalMs: 1 } } });
+  } });
+  await client.searchPost({ query: 'rollback', mode: 'auto', limit: 5, maxPerNote: 2, filters: { tags: ['ops'] }, minimumConfidence: 0.45 });
+  await client.readNoteContext('doc-1', { before: 1, after: 1, maxTokens: 1800 });
+  assert.equal(calls[0].url, 'http://example.test/api/search');
+  assert.equal(calls[0].init.method, 'POST');
+  assert.deepEqual(JSON.parse(calls[0].init.body), { query: 'rollback', mode: 'auto', limit: 5, maxPerNote: 2, filters: { tags: ['ops'] }, minimumConfidence: 0.45 });
+  assert.equal(calls[1].url, 'http://example.test/api/search/documents/doc-1/context?before=1&after=1&maxTokens=1800');
+  assert.equal(calls[1].init.headers.get('Authorization'), 'Bearer read-token');
+});
+
+test('preserves search items and response metadata inside the success data envelope', async () => {
+  const response = {
+    items: [{ id: 'document-1', noteId: 'note-1', noteTitle: 'Deployment', snippet: 'rollback' }],
+    queryId: '33333333-3333-4333-8333-333333333333',
+    modeUsed: 'keyword',
+    degraded: true,
+    degradedReason: 'QUERY_EMBEDDING_UNAVAILABLE',
+    timing: { embeddingMs: 12, retrievalMs: 4, totalMs: 16 },
+  };
+  const client = new QNotesClient({
+    baseUrl: 'http://example.test',
+    getAccessToken: () => null,
+    fetchImplementation: async () => jsonResponse({ data: response }),
+  });
+  assert.deepEqual(await client.search({ query: 'rollback', mode: 'auto' }), response);
+});

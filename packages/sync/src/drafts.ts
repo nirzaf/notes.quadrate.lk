@@ -1,4 +1,4 @@
-import type { ISODateTime, UUID } from '@qnotes/shared';
+import type { ISODateTime, NoteSummary, UUID } from '@qnotes/shared';
 
 export interface NoteDraft {
   noteId: UUID;
@@ -8,10 +8,18 @@ export interface NoteDraft {
   updatedAt: ISODateTime;
 }
 
+export interface SearchSelection {
+  queryId: UUID;
+  documentId: UUID;
+  selectedAt: ISODateTime;
+}
+
 export interface DraftStore {
   get(noteId: UUID): Promise<NoteDraft | null>;
   put(draft: NoteDraft): Promise<void>;
   delete(noteId: UUID): Promise<void>;
+  listRecent(limit?: number): Promise<NoteSummary[]>;
+  putSearchSelection(selection: SearchSelection): Promise<void>;
 }
 
 type SyncRecord = { key: string; value: string };
@@ -28,12 +36,13 @@ export class IndexedDbDraftStore implements DraftStore {
     if (this.database) return this.database;
     if (typeof indexedDB === 'undefined') return null;
     this.database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open(this.databaseName, 1);
+      const request = indexedDB.open(this.databaseName, 2);
       request.onupgradeneeded = () => {
         const database = request.result;
         if (!database.objectStoreNames.contains('drafts')) database.createObjectStore('drafts', { keyPath: 'noteId' });
         if (!database.objectStoreNames.contains('sync')) database.createObjectStore('sync', { keyPath: 'key' });
         if (!database.objectStoreNames.contains('recentNotes')) database.createObjectStore('recentNotes', { keyPath: 'noteId' });
+        if (!database.objectStoreNames.contains('searchSelections')) database.createObjectStore('searchSelections', { autoIncrement: true });
       };
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error ?? new Error('Unable to open qnotes IndexedDB.'));
@@ -110,10 +119,32 @@ export class IndexedDbDraftStore implements DraftStore {
       request.onerror = () => reject(request.error ?? new Error('Unable to remove cached note.'));
     });
   }
+
+  async listRecent(limit = 500): Promise<NoteSummary[]> {
+    const database = await this.open();
+    if (!database) return [];
+    return new Promise((resolve, reject) => {
+      const request = database.transaction('recentNotes', 'readonly').objectStore('recentNotes').getAll();
+      request.onsuccess = () => resolve((request.result as NoteSummary[]).sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)).slice(0, limit));
+      request.onerror = () => reject(request.error ?? new Error('Unable to list cached notes.'));
+    });
+  }
+
+  async putSearchSelection(selection: SearchSelection): Promise<void> {
+    const database = await this.open();
+    if (!database) return;
+    await new Promise<void>((resolve, reject) => {
+      const request = database.transaction('searchSelections', 'readwrite').objectStore('searchSelections').add(selection);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error ?? new Error('Unable to save search selection.'));
+    });
+  }
 }
 
 export class MemoryDraftStore implements DraftStore {
   private readonly drafts = new Map<UUID, NoteDraft>();
+  private readonly recent = new Map<UUID, NoteSummary>();
+  private readonly selections: SearchSelection[] = [];
 
   async get(noteId: UUID): Promise<NoteDraft | null> {
     return this.drafts.get(noteId) ?? null;
@@ -125,5 +156,13 @@ export class MemoryDraftStore implements DraftStore {
 
   async delete(noteId: UUID): Promise<void> {
     this.drafts.delete(noteId);
+  }
+
+  async listRecent(limit = 500): Promise<NoteSummary[]> {
+    return [...this.recent.values()].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)).slice(0, limit);
+  }
+
+  async putSearchSelection(selection: SearchSelection): Promise<void> {
+    this.selections.push(selection);
   }
 }

@@ -9,8 +9,10 @@ import type {
   Notebook,
   NoteBlock,
   NoteSummary,
+  SearchContext,
   SearchMode,
-  SearchResult,
+  SearchRequest,
+  SearchResponse,
   SyncPage,
   UpdateNoteInput,
   UUID,
@@ -33,9 +35,15 @@ export interface ListNotesParams {
 
 export interface SearchParams {
   query: string;
-  mode: SearchMode;
+  mode?: SearchMode;
   limit?: number;
   signal?: AbortSignal;
+}
+
+export interface NoteContextParams {
+  before?: number;
+  after?: number;
+  maxTokens?: number;
 }
 
 type Success<T> = { data: T };
@@ -139,8 +147,16 @@ export class QNotesClient {
     return this.request(`/notes/${encodeURIComponent(noteRef)}/blocks/${encodeURIComponent(blockKey)}`);
   }
 
-  search(params: SearchParams): Promise<SearchResult[]> {
+  search(params: SearchParams): Promise<SearchResponse> {
     return this.request(`/search${queryString({ q: params.query, mode: params.mode, limit: params.limit })}`, params.signal ? { signal: params.signal } : {});
+  }
+
+  searchPost(input: SearchRequest): Promise<SearchResponse> {
+    return this.request('/search', { method: 'POST', body: JSON.stringify(input) });
+  }
+
+  readNoteContext(documentId: UUID, params: NoteContextParams = {}): Promise<SearchContext> {
+    return this.request(`/search/documents/${encodeURIComponent(documentId)}/context${queryString({ before: params.before ?? 1, after: params.after ?? 1, maxTokens: params.maxTokens ?? 1800 })}`);
   }
 
   sync(cursor?: string, limit?: number): Promise<SyncPage> {

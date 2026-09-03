@@ -55,6 +55,12 @@ test('extracts ordinary fenced code with stable occurrence ids', async () => {
   assert.notEqual(first.blocks[0]?.blockKey, first.blocks[1]?.blockKey);
 });
 
+test('does not duplicate dedicated blocks inside note chunks', async () => {
+  const parsed = await parseMarkdown('# Note\n\nordinary text.\n\n:::copy{id="copy"}\ncopy-only text\n:::\n\n```bash\necho code-only\n```');
+  assert.equal(parsed.blocks.length, 2);
+  assert.doesNotMatch(parsed.chunks.map((chunk) => chunk.content).join('\n'), /copy-only text|echo code-only/);
+});
+
 test('plain text includes each content kind once without markdown punctuation', async () => {
   const parsed = await parseMarkdown('# Heading\n\nA **paragraph**.\n\n- item\n\n:::copy{id="copy"}\ncopy text\n:::\n\n```txt\ncode text\n```');
   assert.match(parsed.plainText, /Heading/);

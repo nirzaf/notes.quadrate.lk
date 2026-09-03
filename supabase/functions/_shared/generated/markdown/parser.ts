@@ -83,6 +83,7 @@ function contentHashInput(blockType: BlockType, language: string | null, content
 export type ParsedSource = {
   blocks: ParsedBlock[];
   markdownWithoutNamedBlocks: string;
+  markdownWithoutBlocks: string;
 };
 
 export async function parseBlocks(markdown: string): Promise<ParsedSource> {
@@ -92,6 +93,7 @@ export async function parseBlocks(markdown: string): Promise<ParsedSource> {
   const seenExplicit = new Set<string>();
   const occurrences = new Map<string, number>();
   const keptLines: string[] = [];
+  const searchLines: string[] = [];
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index] ?? '';
@@ -128,6 +130,7 @@ export async function parseBlocks(markdown: string): Promise<ParsedSource> {
         contentHash: await sha256Hex(contentHashInput(blockType as BlockType, language || null, content)),
       });
       keptLines.push('');
+      searchLines.push('');
       index = closeIndex;
       continue;
     }
@@ -161,14 +164,20 @@ export async function parseBlocks(markdown: string): Promise<ParsedSource> {
         contentHash: await sha256Hex(contentHashInput('code', language || null, content)),
       });
       keptLines.push(line, ...contentLines, lines[closeIndex] ?? fence);
+      searchLines.push('');
       index = closeIndex;
       continue;
     }
 
     keptLines.push(line);
+    searchLines.push(line);
   }
 
-  return { blocks, markdownWithoutNamedBlocks: keptLines.join('\n') };
+  return {
+    blocks,
+    markdownWithoutNamedBlocks: keptLines.join('\n'),
+    markdownWithoutBlocks: searchLines.join('\n'),
+  };
 }
 
 export function sourceTitleFromMarkdown(markdown: string): string {

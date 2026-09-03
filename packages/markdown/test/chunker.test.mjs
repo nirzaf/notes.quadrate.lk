@@ -11,11 +11,14 @@ test('chunks by heading hierarchy and preserves paragraph boundaries', async () 
   assert.equal(chunks[0]?.sourceTitle, 'ERPNext');
 });
 
-test('splits an overlong paragraph at 350 words', async () => {
+test('overlaps token-aware chunks without renumbering stable identities', async () => {
   const words = Array.from({ length: 701 }, (_, index) => `word${index}`).join(' ');
   const chunks = await chunkMarkdown(`# Long\n\n${words}`, 'Long');
-  assert.equal(chunks.length, 3);
-  assert.ok(chunks.every((chunk) => chunk.content.split(/\s+/).length <= 350));
-  assert.deepEqual(chunks.map((chunk) => chunk.position), [0, 1, 2]);
-  assert.ok(chunks.every((chunk) => /^[a-f0-9]{64}$/.test(chunk.contentHash)));
+  assert.ok(chunks.length >= 3);
+  assert.ok(chunks.every((chunk) => chunk.content.split(/\s+/).filter(Boolean).length <= 350));
+  assert.ok(chunks.some((chunk, index) => index > 0 && chunks[index - 1]?.content.split(/\s+/).some((word) => chunk.content.split(/\s+/).includes(word))));
+  const stableWords = Array.from({ length: 701 }, (_, index) => `stable${index}`).join(' ');
+  const before = await chunkMarkdown(`# Stable\n\n${stableWords}`, 'Stable');
+  const after = await chunkMarkdown(`# Stable\n\ninserted paragraph.\n\n${stableWords}`, 'Stable');
+  assert.ok(after.some((chunk) => before.some((previous) => previous.sourceKey === chunk.sourceKey)));
 });

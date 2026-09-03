@@ -91,9 +91,9 @@ export async function listNotes(context: Context): Promise<Response> {
   if (query.tag) builder = builder.contains('tags', [query.tag.trim().toLowerCase()]);
   if (query.cursor) {
     const cursor = (await import('../_shared/database.ts')).decodeCursor(query.cursor);
-    builder = builder.or(`updated_at.gt.${cursor.updatedAt},and(updated_at.eq.${cursor.updatedAt},id.gt.${cursor.id})`);
+    builder = builder.or(`updated_at.lt.${cursor.updatedAt},and(updated_at.eq.${cursor.updatedAt},id.lt.${cursor.id})`);
   }
-  const { data, error } = await builder.order('updated_at', { ascending: true }).order('id', { ascending: true }).limit(limit + 1);
+  const { data, error } = await builder.order('updated_at', { ascending: false }).order('id', { ascending: false }).limit(limit + 1);
   if (error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to list notes.');
   const rows = Array.isArray(data) ? data as Record<string, unknown>[] : [];
   const pageRows = rows.slice(0, limit);

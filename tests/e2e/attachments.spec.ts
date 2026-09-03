@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { test, expect } from './test-fixtures';
 import { createClient } from '@supabase/supabase-js';
-import { apiJson, createNoteApi, invokeWorker, listAttachmentsApi, localEnv, OTHER, poll, signInSession } from './helpers';
+import { apiJson, createNoteApi, invokeWorker, listAttachmentsApi, localEnv, OTHER, poll, searchItems, signInSession } from './helpers';
 
 const marker = 'Quadrate attachment search marker 8241';
 
@@ -24,7 +24,7 @@ async function uploadAndFinalize(token: string, noteId: string, fileName: string
   const data = envelope(requested.body) as unknown as UploadData;
   const env = await localEnv();
   const storage = createClient(env.supabaseUrl, env.publishableKey, { auth: { autoRefreshToken: false, persistSession: false } });
-  const uploaded = await storage.storage.from('note-attachments').uploadToSignedUrl(data.path, data.token, new Blob([bytes], { type: mimeType }));
+  const uploaded = await storage.storage.from('note-attachments').uploadToSignedUrl(data.path, data.token, new Blob([bytes.slice().buffer as ArrayBuffer], { type: mimeType }));
   if (uploaded.error) throw uploaded.error;
   const finalized = await apiJson(`/api/attachments/${data.attachment.id}/finalize`, token, { method: 'POST' });
   if (!finalized.response.ok) throw new Error(JSON.stringify(finalized.body));
@@ -48,10 +48,11 @@ test('uploads private text and PDF attachments, indexes them, and rejects image 
   await waitForAttachment(session.access_token, note.id, textAttachmentId, 'ready');
   const textSearch = await poll(async () => {
     const result = await apiJson('/api/search?q=8241&mode=keyword', session.access_token);
-    const rows = result.body && typeof result.body === 'object' && 'data' in result.body ? (result.body as { data?: unknown }).data : [];
-    return { response: result.response, rows: Array.isArray(rows) ? rows : [] };
+    const rows = searchItems(result.body);
+    return { response: result.response, rows };
   }, (result) => result.response.ok && result.rows.some((row) => row && typeof row === 'object' && (row as { attachmentId?: unknown }).attachmentId === textAttachmentId), 20_000);
   expect(textSearch.response.status).toBe(200);
+  expect(textSearch.rows.some((row) => row && typeof row === 'object' && (row as { attachmentId?: unknown }).attachmentId === textAttachmentId)).toBe(true);
 
   const pdfAttachmentId = await uploadAndFinalize(session.access_token, note.id, 'sample.pdf', 'application/pdf', pdf);
   await waitForAttachment(session.access_token, note.id, pdfAttachmentId, 'ready');
