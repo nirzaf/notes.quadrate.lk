@@ -9,7 +9,7 @@ The repository is a pnpm monorepo. The web app is a Vite/React PWA, the API is a
 - Email/password sign-in and self-service account creation through Supabase Auth.
 - A Markdown editor with Edit and Preview views, 800 ms quiet-period autosave, copy-as-Markdown/plain text/rendered content, and one-click copyable blocks.
 - Personal notebooks. The sidebar and home page can show All notes, Unfiled notes, or one named notebook. Notes can be moved from the note editor.
-- Progressive local-first search in the web app, with title/body relevance, structured notebook/tag/source/date filters, and results from copyable blocks and extracted attachment text. The API additionally supports semantic and hybrid search with opaque request-bound cursors.
+- Progressive local-first search in the web app, with recent local title/tag matches followed by server-side title/body relevance, structured notebook/tag/source/date filters, and results from copyable blocks and extracted attachment text. The API additionally supports semantic and hybrid search with opaque request-bound cursors.
 - Private attachments stored in Supabase Storage. Plain text, Markdown, and text-bearing PDFs are indexed asynchronously; PNG, JPEG, and WebP files are stored but report that image OCR is unsupported.
 - Versioned mutations, private Realtime Broadcast invalidation, reconnect recovery, IndexedDB draft persistence, and a conflict resolver for concurrent edits.
 - Personal API tokens with least-privilege scopes for scripts, agents, backups, and the CLI.
@@ -84,12 +84,7 @@ pnpm run test:mcp
 
 The real search evaluator lives under `tests/search-evaluation-fixtures.json` and `scripts/evaluate-search.mjs`. Run it against a local API with `QNOTES_URL` and a scoped token; add `--seed` to create its stable dedupe-key corpus. An optional `--results` mode calculates offline metrics but is not product performance. The local-only benchmark uses `scripts/seed-search-benchmark.mjs` and `scripts/search-benchmark.mjs`; every run requires `--local-benchmark`, uses the dedicated local benchmark owner, verifies actual row counts, and reports repeated keyword/semantic/hybrid latency and ANN metadata. Query-plan collection uses `scripts/search-query-plans.sql` against a representative database.
 
-`local:env` reads the local Supabase status without printing keys and writes ignored files at `apps/web/.env.local`, `supabase/functions/.env.test`, and `.tmp/local-env.json`. `seed:test-users` is deliberately restricted to a local Supabase URL and creates the E2E accounts used by the test suite:
-
-```text
-owner@qnotes.local / Qnotes-Test-Owner-2026!
-other@qnotes.local / Qnotes-Test-Other-2026!
-```
+`local:env` reads the local Supabase status without printing keys and writes ignored files at `apps/web/.env.local`, `supabase/functions/.env.test`, and `.tmp/local-env.json`. `seed:test-users` is deliberately restricted to a local Supabase URL and creates the E2E accounts used by the test suite. The test suite reads its local-only credentials from `tests/e2e/helpers.ts`; do not reuse them outside local testing.
 
 Run the web app with:
 
@@ -168,19 +163,22 @@ Autosave-level synchronization deliberately stops short of character-level colla
 Create a scoped personal token at `/settings/tokens`, then configure a client with the Edge Function root (without `/api`):
 
 ```bash
+pnpm --filter @qnotes/api-client build
+pnpm --filter @qnotes/cli build
+
 export QNOTES_URL=http://127.0.0.1:54321/functions/v1/qnotes-api
 export QNOTES_TOKEN=qnt_your_scoped_token
 
-qnotes search "ERPNext docker" --hybrid
-qnotes get erpnext-production --raw
-qnotes blocks erpnext-production
-qnotes block get erpnext-production production-deploy
-qnotes notebooks
-qnotes notebook create "Operations"
-qnotes notebook move erpnext-production <notebook-id>
-qnotes capture "Remember to rotate the staging key"
-qnotes append erpnext-production "Confirm the release"
-qnotes export --workspace --output notes-backup.zip --force
+pnpm --filter @qnotes/cli exec node dist/index.js search "ERPNext docker" --hybrid
+pnpm --filter @qnotes/cli exec node dist/index.js get erpnext-production --raw
+pnpm --filter @qnotes/cli exec node dist/index.js blocks erpnext-production
+pnpm --filter @qnotes/cli exec node dist/index.js block get erpnext-production production-deploy
+pnpm --filter @qnotes/cli exec node dist/index.js notebooks
+pnpm --filter @qnotes/cli exec node dist/index.js notebook create "Operations"
+pnpm --filter @qnotes/cli exec node dist/index.js notebook move erpnext-production <notebook-id>
+pnpm --filter @qnotes/cli exec node dist/index.js capture "Remember to rotate the staging key"
+pnpm --filter @qnotes/cli exec node dist/index.js append erpnext-production "Confirm the release"
+pnpm --filter @qnotes/cli exec node dist/index.js export --workspace --output notes-backup.zip --force
 ```
 
 The CLI uses native `fetch`, never connects directly to PostgreSQL, and does not automatically retry failed requests. Mutation requests carry UUID `deviceId`, UUID `mutationId`, and (for updates) `expectedVersion`. For complete REST and JavaScript-client examples, read [API_ACCESS_GUIDE.md](API_ACCESS_GUIDE.md).
