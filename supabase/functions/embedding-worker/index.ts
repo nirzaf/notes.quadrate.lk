@@ -21,6 +21,7 @@ async function processMessage(message: { message_id: number; read_count: number;
     return 'failed';
   }
   const job = message.message;
+  let failureInputHash: string | null = null;
   try {
     const { data: document, error } = await appDbClient
       .from('search_documents')
@@ -33,7 +34,12 @@ async function processMessage(message: { message_id: number; read_count: number;
       await deleteQueueMessage(queueName, message.message_id);
       return 'skipped';
     }
+    if (job.embeddingModelVersion && job.embeddingModelVersion !== EMBEDDING_MODEL_VERSION) {
+      await deleteQueueMessage(queueName, message.message_id);
+      return 'skipped';
+    }
     const expectedInputHash = await embeddingInputHash(document);
+    failureInputHash = expectedInputHash;
     if (job.embeddingInputHash && job.embeddingInputHash !== expectedInputHash) {
       await deleteQueueMessage(queueName, message.message_id);
       return 'skipped';
@@ -61,7 +67,7 @@ async function processMessage(message: { message_id: number; read_count: number;
       await deleteQueueMessage(queueName, message.message_id);
       return 'skipped';
     }
-    const { error: updateError } = await appDbClient
+    const { data: updated, error: updateError } = await appDbClient
       .from('search_documents')
       .update({
         embedding: vector,
@@ -75,20 +81,32 @@ async function processMessage(message: { message_id: number; read_count: number;
       .eq('id', job.searchDocumentId)
       .eq('owner_id', job.ownerId)
       .eq('content_hash', job.contentHash)
-      .eq('embedding_input_hash', expectedInputHash);
+      .eq('embedding_input_hash', expectedInputHash)
+      .in('embedding_status', ['pending', 'failed'])
+      .eq('embedding_model', EMBEDDING_MODEL)
+      .eq('embedding_model_version', EMBEDDING_MODEL_VERSION)
+      .select('id')
+      .maybeSingle();
     if (updateError) throw updateError;
     await deleteQueueMessage(queueName, message.message_id);
-    return 'completed';
+    return updated ? 'completed' : 'skipped';
   } catch {
     if (message.read_count >= 5) {
-      await appDbClient
+      const failed = await appDbClient
         .from('search_documents')
         .update({ embedding_status: 'failed', embedding_error: 'EMBEDDING_FAILED' })
         .eq('id', job.searchDocumentId)
         .eq('owner_id', job.ownerId)
-        .eq('content_hash', job.contentHash);
+        .eq('content_hash', job.contentHash)
+        .eq('embedding_input_hash', failureInputHash ?? job.embeddingInputHash ?? '')
+        .eq('embedding_model', EMBEDDING_MODEL)
+        .eq('embedding_model_version', EMBEDDING_MODEL_VERSION)
+        .eq('embedding_status', 'pending')
+        .select('id')
+        .maybeSingle();
+      if (failed.error) throw failed.error;
       await archiveQueueMessage(queueName, message.message_id);
-      return 'failed';
+      return failed.data ? 'failed' : 'skipped';
     }
     return 'retried';
   }

@@ -34,10 +34,11 @@ function noteFromRpc(value: unknown): ReturnType<typeof noteFromRow> {
 function mapMutationResult(data: unknown): NoteResult {
   const result = record(data);
   const status = result.status;
-  if (status === 'ok' || status === 'idempotent' || status === 'dedupe_existing') return { note: noteFromRpc(result.note), blocks: Array.isArray(result.blocks) ? result.blocks : [] };
+  if (status === 'ok' || status === 'idempotent' || status === 'dedupe_existing') return { note: noteFromRpc(result.note), blocks: Array.isArray(result.blocks) ? result.blocks : [], status: String(status) };
   if (status === 'not_found') throw new ApiError(404, 'NOTE_NOT_FOUND', 'The note was not found.');
   if (status === 'notebook_not_found') throw new ApiError(404, 'NOTEBOOK_NOT_FOUND', 'The notebook was not found.');
   if (status === 'slug_conflict') throw new ApiError(409, 'NOTE_SLUG_CONFLICT', 'An active note already uses that slug.');
+  if (status === 'dedupe_conflict') throw new ApiError(409, 'NOTE_DEDUPE_CONFLICT', 'An active note already uses that dedupe key.');
   if (status === 'mutation_reuse_conflict') throw new ApiError(409, 'MUTATION_REUSE_CONFLICT', 'The mutation ID was already used for a different request.');
   if (status === 'version_conflict') throw new ApiError(409, 'NOTE_VERSION_CONFLICT', 'The note was changed on another device.', { currentVersion: result.currentVersion, currentNote: result.currentNote });
   throw new ApiError(500, 'INTERNAL_ERROR', 'The note mutation failed.');
@@ -46,6 +47,7 @@ function mapMutationResult(data: unknown): NoteResult {
 interface NoteResult {
   note: ReturnType<typeof noteFromRow>;
   blocks: unknown[];
+  status: string;
 }
 
 function blockDocuments(parsed: Awaited<ReturnType<typeof parseMarkdown>>, title: string) {
@@ -114,16 +116,29 @@ export async function createNote(context: Context): Promise<Response> {
   requireScope(auth, 'notes:write');
   const input = validateCreateNoteInput(await context.req.json());
   const noteId = crypto.randomUUID();
-  const slug = input.slug ?? deriveSlug(input.title, noteId);
+  const slug = input.slug ?? deriveSlug(input.title);
   const parsed = await parsedContent(input.contentMarkdown ?? '', input.title);
-  const normalizedBody = { title: input.title, slug, contentMarkdown: parsed.parsed.normalizedMarkdown, tags: input.tags ?? [], notebookId: input.notebookId ?? null, dedupeKey: input.dedupeKey ?? null, deviceId: input.deviceId, mutationId: input.mutationId };
-  const hash = await requestHash({ userId: auth.userId, operation: 'created', noteId, expectedVersion: null, body: normalizedBody });
+  const normalizedBody = {
+    title: input.title,
+    requestedSlug: input.slug ?? null,
+    contentMarkdown: parsed.parsed.normalizedMarkdown,
+    tags: input.tags ?? [],
+    notebookId: input.notebookId ?? null,
+    dedupeKey: input.dedupeKey ?? null,
+    deviceId: input.deviceId,
+    mutationId: input.mutationId,
+  };
+  const hash = await requestHash({ userId: auth.userId, operation: 'created', body: normalizedBody });
   const result = assertSupabase(await serviceClient.rpc('qnotes_create_note', {
     p_owner_id: auth.userId, p_note_id: noteId, p_slug: slug, p_title: input.title, p_content_markdown: parsed.parsed.normalizedMarkdown,
     p_content_plain: parsed.parsed.plainText, p_tags: input.tags ?? [], p_device_id: input.deviceId, p_mutation_id: input.mutationId,
     p_request_hash: hash, p_blocks: parsed.blocks, p_documents: parsed.documents, p_notebook_id: input.notebookId ?? null, p_dedupe_key: input.dedupeKey ?? null,
   }));
-  return dataBody(context, mapMutationResult(result).note, 201);
+  const mapped = mapMutationResult(result);
+  const outcome = mapped.status === 'ok' ? 'created' : mapped.status === 'idempotent' ? 'idempotent' : 'deduplicated';
+  const response = dataBody(context, mapped.note, outcome === 'created' ? 201 : 200);
+  response.headers.set('x-qnotes-create-outcome', outcome);
+  return response;
 }
 
 export async function updateNote(context: Context): Promise<Response> {

@@ -10,6 +10,7 @@
     "test:unit": "pnpm --filter @qnotes/shared test && pnpm --filter @qnotes/markdown test && pnpm --filter @qnotes/sync test && pnpm --filter @qnotes/api-client test && pnpm --filter @qnotes/cli test && pnpm --filter @qnotes/mcp-server test",
     "test:mcp": "pnpm --filter @qnotes/mcp-server test",
     "evaluate:search": "node scripts/evaluate-search.mjs",
+    "benchmark:seed": "node scripts/seed-search-benchmark.mjs",
     "benchmark:search": "node scripts/search-benchmark.mjs",
     "test:e2e": "playwright test",
     "local:env": "node scripts/write-local-env.mjs",

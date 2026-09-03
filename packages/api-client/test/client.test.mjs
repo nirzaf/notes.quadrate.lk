@@ -27,6 +27,20 @@ test('parses error envelopes and keeps mutation requests single-shot', async () 
   assert.equal(calls, 1);
 });
 
+test('exposes create outcomes while preserving the note-only create API', async () => {
+  const calls = [];
+  const client = new QNotesClient({ baseUrl: 'http://example.test', getAccessToken: () => null, fetchImplementation: async (url, init) => {
+    calls.push({ url, init });
+    return jsonResponse({ data: { id: 'note-1', title: 'Captured' } }, 200, { 'content-type': 'application/json', 'x-qnotes-create-outcome': 'deduplicated' });
+  } });
+  const detailed = await client.createNoteDetailed({ title: 'Captured', contentMarkdown: '', deviceId: 'device-1', mutationId: 'mutation-1' });
+  assert.equal(detailed.note.id, 'note-1');
+  assert.equal(detailed.outcome, 'deduplicated');
+  const note = await client.createNote({ title: 'Captured', contentMarkdown: '', deviceId: 'device-1', mutationId: 'mutation-2' });
+  assert.equal(note.id, 'note-1');
+  assert.equal(calls.length, 2);
+});
+
 test('returns successful binary exports without JSON conversion', async () => {
   const client = new QNotesClient({ baseUrl: 'http://example.test', getAccessToken: () => 'token', fetchImplementation: async () => new Response(new Uint8Array([80, 75, 3, 4]), { headers: { 'content-type': 'application/zip' } }) });
   const response = await client.exportWorkspace();
@@ -61,10 +75,12 @@ test('posts structured search requests and retrieves bounded document context', 
       ? jsonResponse({ data: { noteId: 'note-1', noteVersion: 3, documentId: 'doc-1', uri: 'qnotes://notes/note-1/documents/doc-1', title: 'Rollback', headingPath: null, content: 'exact', previous: [], next: [], updatedAt: '2026-01-01T00:00:00Z', sourceType: 'note_chunk' } })
       : jsonResponse({ data: { items: [], queryId: 'query-1', modeUsed: 'keyword', degraded: false, timing: { embeddingMs: 0, retrievalMs: 1, totalMs: 1 } } });
   } });
-  await client.searchPost({ query: 'rollback', mode: 'auto', limit: 5, maxPerNote: 2, filters: { tags: ['ops'] }, minimumConfidence: 0.45 });
+  const controller = new AbortController();
+  await client.searchPost({ query: 'rollback', mode: 'auto', limit: 5, maxPerNote: 2, filters: { tags: ['ops'] }, minimumConfidence: 0.45 }, { signal: controller.signal });
   await client.readNoteContext('doc-1', { before: 1, after: 1, maxTokens: 1800 });
   assert.equal(calls[0].url, 'http://example.test/api/search');
   assert.equal(calls[0].init.method, 'POST');
+  assert.equal(calls[0].init.signal, controller.signal);
   assert.deepEqual(JSON.parse(calls[0].init.body), { query: 'rollback', mode: 'auto', limit: 5, maxPerNote: 2, filters: { tags: ['ops'] }, minimumConfidence: 0.45 });
   assert.equal(calls[1].url, 'http://example.test/api/search/documents/doc-1/context?before=1&after=1&maxTokens=1800');
   assert.equal(calls[1].init.headers.get('Authorization'), 'Bearer read-token');

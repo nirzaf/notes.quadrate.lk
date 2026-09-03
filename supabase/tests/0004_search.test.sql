@@ -18,7 +18,13 @@ select ok((select count(*) > 0 from public.qnotes_keyword_search((select id from
 select is((public.qnotes_create_note((select id from auth.users where email = 'other@qnotes.local'), '44444444-4444-4444-8444-444444444447', 'search-owner-b', 'Search Owner B', 'Quadrate attachment search marker 8241', 'Quadrate attachment search marker 8241', '{}', '44444444-4444-4444-8444-444444444448', '44444444-4444-4444-8444-444444444449', 'search-hash-b', '[]'::jsonb, '[{"sourceType":"note_chunk","sourceKey":"search-note-b","sourceTitle":"Search Owner B","headingPath":null,"content":"Quadrate attachment search marker 8241","contentHash":"search-note-b-hash","position":0}]'::jsonb)->>'status'), 'ok', 'Owner B search fixture note is committed');
 select ok((select not exists (select 1 from public.qnotes_keyword_search((select id from auth.users where email = 'owner@qnotes.local'), '8241', 20) where note_id <> '44444444-4444-4444-8444-444444444444')), 'search never returns another owner record');
 
-update notesdb.search_documents set embedding = ('[' || repeat('0,', 383) || '0]')::extensions.vector, embedding_status = 'ready', embedding_model = 'gte-small', embedding_model_version = 'v1' where note_id = '44444444-4444-4444-8444-444444444444';
+update notesdb.search_documents
+set embedding = ('[' || repeat('0,', 383) || '0]')::extensions.vector,
+    embedding_status = 'ready',
+    embedding_model = 'gte-small',
+    embedding_model_version = 'v2',
+    embedding_input_hash = public.qnotes_embedding_input_hash(source_title, heading_path, content)
+where note_id = '44444444-4444-4444-8444-444444444444';
 select ok((select count(*) > 0 from public.qnotes_semantic_search((select id from auth.users where email = 'owner@qnotes.local'), '8241', ('[' || repeat('0,', 383) || '0]')::extensions.vector, 20)), 'semantic search returns deterministic fake embeddings');
 select ok((select count(*) > 0 from public.qnotes_hybrid_search((select id from auth.users where email = 'owner@qnotes.local'), '8241', ('[' || repeat('0,', 383) || '0]')::extensions.vector, 20, 60)), 'hybrid search combines keyword and semantic results');
 select ok((select max(note_count) <= 2 from (select note_id, count(*)::integer as note_count from public.qnotes_hybrid_search((select id from auth.users where email = 'owner@qnotes.local'), '8241', ('[' || repeat('0,', 383) || '0]')::extensions.vector, 20, 60) group by note_id) grouped), 'hybrid search returns at most two results per note');

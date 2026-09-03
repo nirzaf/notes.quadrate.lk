@@ -1,12 +1,42 @@
 {
-  "queries": [
-    { "id": "rollback", "relevant": ["doc-rollback", "doc-runbook"], "graded": { "doc-rollback": 3, "doc-runbook": 2, "doc-history": 1 } },
-    { "id": "token rotation", "relevant": ["doc-token"], "graded": { "doc-token": 3, "doc-auth": 1 } },
-    { "id": "unicorn database incident", "relevant": [], "expectedNoResult": true, "graded": {} }
+  "notebook": "Hermes Evaluation",
+  "corpus": [
+    { "key": "erpnext-rollback", "title": "ERPNext Production Rollback", "slug": "erpnext-production-rollback", "tags": ["operations", "release"], "notebook": "Operations", "contentMarkdown": "# ERPNext Production Rollback\n\nHow do I roll back ERPNext production safely? Check the backup, stop the release, and restore the previous image." },
+    { "key": "deployment-runbook", "title": "ERPNext Deployment Runbook", "slug": "erpnext-deployment-runbook", "tags": ["operations"], "notebook": "Operations", "contentMarkdown": "# Deployment Runbook\n\nThe revert procedure for an ERPNext production deployment starts with a health check and a database backup." },
+    { "key": "token-rotation", "title": "Token Rotation Checklist", "slug": "token-rotation-checklist", "tags": ["security"], "contentMarkdown": "# Token Rotation\n\nRotate the service token, update the secret store, and revoke the previous credential." },
+    { "key": "incident-history", "title": "Release Incident History", "slug": "release-incident-history", "tags": ["incident"], "notebook": "Operations", "contentMarkdown": "# Incident History\n\nThe deep rollback marker appears in the incident appendix after the ERPNext deployment timeline." },
+    { "key": "rollback-command", "title": "Reusable Rollback Commands", "slug": "reusable-rollback-commands", "tags": ["operations"], "notebook": "Operations", "contentMarkdown": "# Reusable Commands\n\n:::copy{id=\"production-rollback-command\" title=\"Production rollback command\" lang=\"bash\" type=\"command\"}\ndocker compose rollback erpnext\n:::" },
+    { "key": "kubernetes-rollback", "title": "Kubernetes Release Recovery", "slug": "kubernetes-release-recovery", "tags": ["operations"], "contentMarkdown": "# Kubernetes Recovery\n\n```bash\nkubectl rollout undo deployment/erpnext\n```" },
+    { "key": "embedding-identifier", "title": "Embedding Worker Configuration", "slug": "embedding-worker-configuration", "tags": ["engineering"], "contentMarkdown": "# Embedding Worker\n\nThe code identifier is `EMBEDDING_MODEL_VERSION = v2` and the worker skips stale messages." },
+    { "key": "shell-commands", "title": "Docker Operations", "slug": "docker-operations", "tags": ["operations"], "contentMarkdown": "# Docker Operations\n\nRun the shell command `docker compose up -d qnotes-api` after checking the environment." },
+    { "key": "sql-diagnostics", "title": "Search SQL Diagnostics", "slug": "search-sql-diagnostics", "tags": ["engineering"], "contentMarkdown": "# SQL Diagnostics\n\nUse `select * from public.qnotes_search_freshness(owner_id);` to inspect the search queue." },
+    { "key": "tag-filter", "title": "Incident Tagged Note", "slug": "incident-tagged-note", "tags": ["incident", "operations"], "contentMarkdown": "# Tagged Incident\n\nThis note is the only seeded document for the incident-filter query." },
+    { "key": "unfiled-note", "title": "Unfiled Release Thought", "slug": "unfiled-release-thought", "tags": ["scratch"], "contentMarkdown": "# Unfiled\n\nThis release note intentionally remains outside every notebook." },
+    { "key": "competing-one", "title": "Similar Rollback Note One", "slug": "similar-rollback-one", "tags": ["archive"], "notebook": "Operations", "contentMarkdown": "# Similar Rollback\n\nA similar rollback discussion competes with the main production runbook." },
+    { "key": "competing-two", "title": "Similar Rollback Note Two", "slug": "similar-rollback-two", "tags": ["archive"], "notebook": "Operations", "contentMarkdown": "# Similar Rollback\n\nAnother competing note mentions reverting a deployment but is less authoritative." },
+    { "key": "attachment-page", "title": "Attachment Provenance", "slug": "attachment-provenance", "tags": ["operations"], "notebook": "Operations", "contentMarkdown": "# Attachment Provenance\n\nThe attached release PDF contains the attachment search marker 8241 on page one.", "attachment": { "fileName": "release-provenance.pdf", "mimeType": "application/pdf", "fixturePath": "tests/e2e/fixtures/sample.pdf" } },
+    { "key": "deleted-note", "title": "Deleted Evaluation Note", "slug": "deleted-evaluation-note", "tags": ["evaluation"], "contentMarkdown": "# Deleted\n\nThis deleted evaluation marker must never be returned." }
   ],
-  "predictions": {
-    "rollback": ["doc-rollback", "doc-history", "doc-runbook"],
-    "token rotation": ["doc-token", "doc-auth"],
-    "unicorn database incident": []
-  }
+  "queries": [
+    { "id": "exact-title", "query": "ERPNext Production Rollback", "mode": "keyword", "relevant": ["erpnext-rollback"], "graded": { "erpnext-rollback": 3 } },
+    { "id": "exact-slug", "query": "erpnext-production-rollback", "mode": "keyword", "relevant": ["erpnext-rollback"], "graded": { "erpnext-rollback": 3 } },
+    { "id": "partial-title", "query": "Deployment Runbook", "mode": "keyword", "relevant": ["deployment-runbook"], "graded": { "deployment-runbook": 3, "erpnext-rollback": 1 } },
+    { "id": "misspelled-title", "query": "ErpNxt production rollbak", "mode": "keyword", "relevant": ["erpnext-rollback"], "graded": { "erpnext-rollback": 3 } },
+    { "id": "natural-language", "query": "How do I roll back ERPNext production?", "mode": "hybrid", "relevant": ["erpnext-rollback", "deployment-runbook"], "graded": { "erpnext-rollback": 3, "deployment-runbook": 2 } },
+    { "id": "synonym", "query": "revert the ERPNext release", "mode": "hybrid", "relevant": ["deployment-runbook", "erpnext-rollback"], "graded": { "deployment-runbook": 3, "erpnext-rollback": 2 } },
+    { "id": "deep-section", "query": "deep rollback marker", "mode": "keyword", "relevant": ["incident-history"], "graded": { "incident-history": 3 } },
+    { "id": "named-copy", "query": "production-rollback-command", "mode": "keyword", "filters": { "sourceTypes": ["copy_block"] }, "relevant": ["rollback-command"], "graded": { "rollback-command": 3 } },
+    { "id": "fenced-code", "query": "kubectl rollout undo", "mode": "keyword", "filters": { "sourceTypes": ["code_block"], "languages": ["bash"] }, "relevant": ["kubernetes-rollback"], "graded": { "kubernetes-rollback": 3 } },
+    { "id": "code-identifier", "query": "EMBEDDING_MODEL_VERSION", "mode": "keyword", "relevant": ["embedding-identifier"], "graded": { "embedding-identifier": 3 } },
+    { "id": "shell-command", "query": "docker compose up -d", "mode": "keyword", "relevant": ["shell-commands"], "graded": { "shell-commands": 3 } },
+    { "id": "sql-text", "query": "qnotes_search_freshness", "mode": "keyword", "relevant": ["sql-diagnostics"], "graded": { "sql-diagnostics": 3 } },
+    { "id": "tag-filter", "query": "only seeded document", "mode": "keyword", "filters": { "tags": ["incident"] }, "relevant": ["tag-filter"], "graded": { "tag-filter": 3 } },
+    { "id": "notebook-filter", "query": "release", "mode": "keyword", "filters": { "notebookIds": ["$Operations"] }, "relevant": ["erpnext-rollback", "deployment-runbook", "incident-history", "attachment-page"], "graded": { "erpnext-rollback": 3, "deployment-runbook": 2, "incident-history": 1, "attachment-page": 1 } },
+    { "id": "unfiled-filter", "query": "release note", "mode": "keyword", "filters": { "unfiled": true }, "relevant": ["unfiled-note"], "graded": { "unfiled-note": 3 } },
+    { "id": "attachment-page-text", "query": "attachment search marker 8241", "mode": "keyword", "filters": { "sourceTypes": ["attachment_chunk"] }, "relevant": ["attachment-page"], "graded": { "attachment-page": 3 } },
+    { "id": "similar-competing", "query": "similar rollback", "mode": "keyword", "relevant": ["competing-one", "competing-two", "erpnext-rollback"], "graded": { "erpnext-rollback": 3, "competing-one": 2, "competing-two": 1 } },
+    { "id": "deleted-excluded", "query": "deleted evaluation marker", "mode": "keyword", "relevant": [], "expectedNoResult": true, "graded": {} },
+    { "id": "cross-owner-isolation", "query": "owner isolation marker", "mode": "keyword", "relevant": [], "expectedNoResult": true, "graded": {} },
+    { "id": "no-relevant-result", "query": "unicorn database incident", "mode": "keyword", "relevant": [], "expectedNoResult": true, "graded": {} }
+  ]
 }

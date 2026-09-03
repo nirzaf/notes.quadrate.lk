@@ -5,6 +5,8 @@ import { extractAttachment, attachmentParagraphs } from './extract.ts';
 
 const queueName = 'attachment-processing';
 const WORKER_CONCURRENCY = 3;
+const BATCH_SIZE = 5;
+const MAX_BATCHES_PER_REQUEST = 4;
 
 function validMessage(value: unknown): value is { attachmentId: string; ownerId: string } {
   return !!value && typeof value === 'object'
@@ -99,8 +101,12 @@ async function processBounded(messages: Array<{ message_id: number; read_count: 
 
 async function processRequest(request: Request): Promise<Response> {
   if (request.headers.get('x-qnotes-worker-secret') !== Deno.env.get('QNOTES_INTERNAL_WORKER_SECRET')) return Response.json({ error: 'unauthorized' }, { status: 401 });
-  const messages = await readQueue(queueName, 120, 5);
-  const outcomes = await processBounded(messages);
+  const outcomes: AttachmentOutcome[] = [];
+  for (let batch = 0; batch < MAX_BATCHES_PER_REQUEST; batch += 1) {
+    const messages = await readQueue(queueName, 120, BATCH_SIZE);
+    if (!messages.length) break;
+    outcomes.push(...await processBounded(messages));
+  }
   const count = (outcome: AttachmentOutcome) => outcomes.filter((item) => item === outcome).length;
   return Response.json({ data: { completed: count('completed'), skipped: count('skipped'), retried: count('retried'), failed: count('failed') } });
 }

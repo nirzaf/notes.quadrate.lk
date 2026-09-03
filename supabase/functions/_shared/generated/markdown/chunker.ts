@@ -10,7 +10,14 @@ export function estimateTokenCount(value: string): number {
   return Math.max(0, Math.ceil(value.trim().length / 4));
 }
 
-export function splitTokenAware(value: string, maxTokens: number, overlapTokens: number): string[] {
+function splitOversizedToken(value: string, maxTokens: number): string[] {
+  const maxCharacters = Math.max(1, maxTokens * 4);
+  const result: string[] = [];
+  for (let start = 0; start < value.length; start += maxCharacters) result.push(value.slice(start, start + maxCharacters));
+  return result;
+}
+
+function splitByWords(value: string, maxTokens: number, overlapTokens: number): string[] {
   const words = value.trim().split(/\s+/).filter(Boolean);
   const result: string[] = [];
   let start = 0;
@@ -21,10 +28,15 @@ export function splitTokenAware(value: string, maxTokens: number, overlapTokens:
       const next = words[end] ?? '';
       const nextTokens = estimateTokenCount(next) + (end > start ? 1 : 0);
       if (end > start && tokenCount + nextTokens > maxTokens) break;
+      if (end === start && estimateTokenCount(next) > maxTokens) break;
       tokenCount += nextTokens;
       end += 1;
     }
-    if (end === start) end += 1;
+    if (end === start) {
+      result.push(...splitOversizedToken(words[start] ?? '', maxTokens));
+      start += 1;
+      continue;
+    }
     result.push(words.slice(start, end).join(' '));
     if (end >= words.length) break;
 
@@ -36,6 +48,50 @@ export function splitTokenAware(value: string, maxTokens: number, overlapTokens:
     }
     start = Math.max(start + 1, overlapStart);
   }
+  return result;
+}
+
+function sentenceParts(value: string): string[] {
+  return value.match(/[^.!?]+(?:[.!?]+(?=\s|$)|$)/g)?.map((part) => part.trim()).filter(Boolean) ?? [];
+}
+
+function overlapTail(value: string, overlapTokens: number): string {
+  const words = value.trim().split(/\s+/).filter(Boolean);
+  let count = 0;
+  let start = words.length;
+  while (start > 0 && count < overlapTokens) {
+    start -= 1;
+    count += estimateTokenCount(words[start] ?? '') + 1;
+  }
+  return words.slice(start).join(' ');
+}
+
+export function splitTokenAware(value: string, maxTokens: number, overlapTokens: number): string[] {
+  const normalized = value.trim();
+  if (!normalized) return [];
+  const sentences = sentenceParts(normalized);
+  if (sentences.length < 2) return splitByWords(normalized, maxTokens, overlapTokens);
+
+  const result: string[] = [];
+  let current = '';
+  for (const sentence of sentences) {
+    if (estimateTokenCount(sentence) > maxTokens) {
+      if (current) result.push(current);
+      current = '';
+      result.push(...splitByWords(sentence, maxTokens, overlapTokens));
+      continue;
+    }
+    const combined = current ? `${current} ${sentence}` : sentence;
+    if (current && estimateTokenCount(combined) > maxTokens) {
+      result.push(current);
+      const overlap = overlapTail(current, overlapTokens);
+      const overlapped = overlap ? `${overlap} ${sentence}` : sentence;
+      current = estimateTokenCount(overlapped) <= maxTokens ? overlapped : sentence;
+    } else {
+      current = combined;
+    }
+  }
+  if (current) result.push(current);
   return result;
 }
 
@@ -83,6 +139,7 @@ export async function chunkMarkdown(markdown: string, sourceTitle: string): Prom
       if (text) paragraphs.push(text);
     }
     let pending: string[] = [];
+    let lastEmittedContent = '';
     const emit = async (content: string) => {
       const trimmed = content.trim();
       if (!trimmed) return;
@@ -100,6 +157,7 @@ export async function chunkMarkdown(markdown: string, sourceTitle: string): Prom
         position: chunks.length,
         contentHash,
       });
+      lastEmittedContent = trimmed;
     };
     for (const paragraphText of paragraphs) {
       const paragraphTokens = estimateTokenCount(paragraphText);
@@ -117,7 +175,9 @@ export async function chunkMarkdown(markdown: string, sourceTitle: string): Prom
         await emit(pending.join('\n\n'));
         pending = [];
       }
-      pending.push(paragraphText);
+      const overlap = pending.length === 0 ? overlapTail(lastEmittedContent, MARKDOWN_CHUNK_OVERLAP_TOKENS) : '';
+      const overlappedParagraph = overlap ? `${overlap}\n\n${paragraphText}` : paragraphText;
+      pending.push(estimateTokenCount(overlappedParagraph) <= MARKDOWN_CHUNK_MAX_TOKENS ? overlappedParagraph : paragraphText);
     }
     if (pending.length) await emit(pending.join('\n\n'));
   }

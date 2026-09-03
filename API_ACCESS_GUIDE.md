@@ -221,7 +221,7 @@ curl -fsS -X POST \
   }'
 ```
 
-The structured success response is `{ data: { queryId, modeUsed, degraded, degradedReason?, timing, index, items, nextCursor } }`. Each item includes `documentId`, `noteId`, `noteVersion`, a stable `qnotes://notes/{noteId}/documents/{documentId}` URI, title, heading path, source type/language, snippet, tags, notebook, updated time, match reasons, and normalized/raw scores. `index` reports the embedding model, pending/failed document counts, oldest queued age, and freshness. `nextCursor` is opaque and bound to the query, resolved mode, filters, per-note cap, and score threshold; pass it unchanged in the next POST body. `minimumRelativeScore` is a page-relative ranking threshold and is not calibrated confidence. `minimumConfidence` remains accepted as a deprecated request alias. Explicit semantic retrieval falls back to keyword results with `degraded: true` when embeddings or semantic retrieval are unavailable.
+The structured success response is `{ data: { queryId, modeUsed, degraded, degradedReason?, timing, index, items, nextCursor } }`. Each item includes `documentId`, `noteId`, `noteVersion`, a stable `qnotes://notes/{noteId}/documents/{documentId}` URI, title, heading path, source type/language, snippet, tags, notebook, updated time, match reasons, and normalized/raw scores. `index` reports the embedding model, pending/failed document counts, oldest queued age, and freshness. `nextCursor` is opaque and bound to the query, resolved mode, filters, per-note cap, and score threshold; pass it unchanged in the next POST body. The server consumes only returned page rows, so the lookahead row is returned on the next page. `minimumRelativeScore` is a page-relative ranking threshold and is not calibrated confidence. `minimumConfidence` remains accepted as a deprecated request alias. Explicit semantic or hybrid retrieval falls back to keyword results with `degraded: true` when embeddings or semantic retrieval are unavailable; degraded responses intentionally return `nextCursor: null` so a later page cannot silently change ranking mode.
 
 Read one exact document with bounded neighboring context:
 
@@ -236,7 +236,7 @@ The context response contains `noteId`, `noteVersion`, `documentId`, stable URI,
 
 ### Create, update, and organize notes
 
-Create a note with `notes:write`. `slug`, `contentMarkdown`, `tags`, `notebookId`, and `dedupeKey` are optional; omitted values default to a derived slug, an empty body, an unfiled note, and no dedupe key:
+Create a note with `notes:write`. `slug`, `contentMarkdown`, `tags`, `notebookId`, and `dedupeKey` are optional; omitted values default to a deterministic derived slug, an empty body, an unfiled note, and no dedupe key:
 
 ```bash
 curl -fsS -X POST \
@@ -253,6 +253,8 @@ curl -fsS -X POST \
     "mutationId": "22222222-2222-4222-8222-222222222222"
   }'
 ```
+
+The create response keeps the note in `data` and includes `x-qnotes-create-outcome: created | idempotent | deduplicated`. A newly created note returns HTTP 201; an idempotent mutation retry or dedupe-key match returns HTTP 200. An active restore conflict on a reused dedupe key returns `409 NOTE_DEDUPE_CONFLICT`.
 
 Update replaces the complete title, slug, and Markdown body. `tags` is optional; when omitted, the current tag list is preserved. First read the note and use its current `version`:
 
@@ -479,7 +481,7 @@ console.log(response.items);
 console.log(response.timing);
 ```
 
-The client exposes `listNotes`, `listNotebooks`, `createNotebook`, `getNote`, `createNote`, `updateNote`, `moveNoteToNotebook`, `deleteNote`, `restoreNote`, `listBlocks`, `getBlock`, `search`, `searchPost`, `readNoteContext`, `sync`, `listAttachments`, `requestAttachmentUpload`, `finalizeAttachment`, `getAttachmentDownloadUrl`, `deleteAttachment`, `listTokens`, `createToken`, `revokeToken`, `exportNote`, and `exportWorkspace`. Export methods return the raw `Response`; attachment upload still requires uploading the bytes to Supabase Storage with the signed path/token returned by `requestAttachmentUpload`.
+The client exposes `listNotes`, `listNotebooks`, `createNotebook`, `getNote`, `createNote`, `createNoteDetailed`, `updateNote`, `moveNoteToNotebook`, `deleteNote`, `restoreNote`, `listBlocks`, `getBlock`, `search`, `searchPost`, `readNoteContext`, `sync`, `listAttachments`, `requestAttachmentUpload`, `finalizeAttachment`, `getAttachmentDownloadUrl`, `deleteAttachment`, `listTokens`, `createToken`, `revokeToken`, `exportNote`, and `exportWorkspace`. `createNote` remains the note-only API; `createNoteDetailed` additionally returns the `created`, `idempotent`, or `deduplicated` outcome. Export methods return the raw `Response`; attachment upload still requires uploading the bytes to Supabase Storage with the signed path/token returned by `requestAttachmentUpload`.
 
 ## Native MCP server
 
@@ -496,7 +498,7 @@ The default read profile exposes only `search_notes`, `read_note_context`, and `
 - `qnotes://notes/{noteId}/documents/{documentId}`
 - `qnotes://notes/{noteId}/blocks/{blockKey}`
 
-Use a separate write profile and token for `capture_note`, `append_note`, and `update_note`. The server generates one stable device ID per process and fresh mutation IDs internally; callers never need to put mutation IDs or tokens in tool arguments. `capture_note` accepts optional `notebookId` and `dedupeKey`, `append_note` preserves Markdown boundaries, and `update_note` preserves tags when `tags` is omitted. Updates still require the expected note version.
+Use a separate write profile and token for `capture_note`, `append_note`, and `update_note`. The server generates one stable device ID per process and fresh mutation IDs internally; callers never need to put mutation IDs or tokens in tool arguments. `capture_note` accepts optional `notebookId` and `dedupeKey` and returns `{ note, outcome }`, where the outcome distinguishes creation, an idempotent retry, and a deduplicated existing note. `append_note` preserves Markdown boundaries but repeated calls append repeatedly; it is not claimed to be idempotent. `update_note` preserves tags when `tags` is omitted. Updates still require the expected note version.
 
 ```yaml
 mcp_servers:
@@ -581,6 +583,7 @@ All routes except health require a bearer credential. Personal tokens must have 
 - `404 NOTE_NOT_FOUND`, `NOTEBOOK_NOT_FOUND`, or `ATTACHMENT_NOT_FOUND`: the resource is missing or belongs to another owner.
 - `409 NOTE_VERSION_CONFLICT`: re-read the note and retry intentionally with its current version and a new mutation ID.
 - `409 NOTE_SLUG_CONFLICT`: choose a slug not used by another active note.
+- `409 NOTE_DEDUPE_CONFLICT`: another active note already uses the dedupe key of a note being restored.
 - `409 NOTEBOOK_NAME_CONFLICT`: choose a notebook name not used by another notebook for the owner.
 - `409 MUTATION_REUSE_CONFLICT`: do not reuse a mutation ID for a different request.
 - `413 ATTACHMENT_TOO_LARGE` or `EXPORT_TOO_LARGE`: reduce the payload or raise the corresponding server-side limit.

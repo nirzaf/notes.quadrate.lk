@@ -20,6 +20,13 @@ import type {
 } from '@qnotes/shared';
 import { QNotesHttpError } from './http-error.js';
 
+export type CreateNoteOutcome = 'created' | 'idempotent' | 'deduplicated';
+
+export interface CreateNoteResult {
+  note: Note;
+  outcome: CreateNoteOutcome;
+}
+
 export interface QNotesClientOptions {
   baseUrl: string;
   getAccessToken: () => string | null | Promise<string | null>;
@@ -73,7 +80,7 @@ export class QNotesClient {
     this.fetchImplementation = options.fetchImplementation ?? globalThis.fetch.bind(globalThis);
   }
 
-  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  private async requestWithResponse<T>(path: string, init: RequestInit = {}): Promise<{ data: T; response: Response }> {
     const headers = new Headers(init.headers);
     headers.set('Accept', 'application/json');
     if (init.body !== undefined && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
@@ -90,7 +97,11 @@ export class QNotesClient {
     }
     const body: unknown = await response.json();
     if (typeof body !== 'object' || body === null || !('data' in body)) throw new Error('QNotes API returned an invalid success envelope.');
-    return (body as Success<T>).data;
+    return { data: (body as Success<T>).data, response };
+  }
+
+  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    return (await this.requestWithResponse<T>(path, init)).data;
   }
 
   private async binary(path: string): Promise<Response> {
@@ -126,6 +137,13 @@ export class QNotesClient {
 
   createNote(input: CreateNoteInput): Promise<Note> {
     return this.request('/notes', { method: 'POST', body: JSON.stringify(input) });
+  }
+
+  async createNoteDetailed(input: CreateNoteInput): Promise<CreateNoteResult> {
+    const result = await this.requestWithResponse<Note>('/notes', { method: 'POST', body: JSON.stringify(input) });
+    const outcome = result.response.headers.get('x-qnotes-create-outcome');
+    if (outcome === 'created' || outcome === 'idempotent' || outcome === 'deduplicated') return { note: result.data, outcome };
+    return { note: result.data, outcome: result.response.status === 201 ? 'created' : 'idempotent' };
   }
 
   updateNote(noteId: UUID, input: UpdateNoteInput): Promise<Note> {

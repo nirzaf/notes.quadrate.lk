@@ -10,14 +10,14 @@ test('filters notes by title and partial body matches, then covers semantic, hyb
   await signInPage(page);
   const search = page.getByRole('textbox', { name: 'Search notes' });
   await search.fill(marker);
-  const matchingNotes = page.locator('section.q-card').filter({ has: page.getByRole('heading', { name: 'Matching notes' }) }).locator('.q-note-item');
-  const keywordNote = matchingNotes.filter({ hasText: note.title }).first();
+  const matchingResults = page.getByRole('list', { name: 'Matched search results' });
+  const keywordNote = matchingResults.getByRole('listitem').filter({ hasText: note.title }).first();
   await expect(keywordNote).toBeVisible({ timeout: 15_000 });
   await expect(keywordNote).toContainText(marker);
   await expect(page.locator('.q-result')).toHaveCount(0);
 
   await search.fill(bodyMarker.slice(0, -4));
-  const bodyNote = matchingNotes.filter({ hasText: note.title }).first();
+  const bodyNote = matchingResults.getByRole('listitem').filter({ hasText: note.title }).first();
   await expect(bodyNote).toBeVisible({ timeout: 15_000 });
   await expect(bodyNote).toContainText(bodyMarker);
 

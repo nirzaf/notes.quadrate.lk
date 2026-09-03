@@ -59,11 +59,14 @@ function localSearchResponse(notes: Awaited<ReturnType<typeof searchRecentNotes>
 }
 
 async function localMatches(query: string, filters: SearchFilters): Promise<Awaited<ReturnType<typeof searchRecentNotes>>> {
+  if (filters.languages?.length || filters.sourceTypes?.some((sourceType) => sourceType === 'code_block' || sourceType === 'copy_block' || sourceType === 'attachment_chunk')) return [];
   const notes = await searchRecentNotes(query);
+  const updatedAfter = filters.updatedAfter ? Date.parse(filters.updatedAfter) : NaN;
   return notes.filter((note) => {
     if (filters.notebookIds?.length && !filters.notebookIds.includes(note.notebookId ?? '')) return false;
     if (filters.unfiled && note.notebookId) return false;
     if (filters.tags?.length && !filters.tags.every((tag) => note.tags.includes(tag))) return false;
+    if (Number.isFinite(updatedAfter) && Date.parse(note.updatedAt) <= updatedAfter) return false;
     return true;
   });
 }
@@ -71,6 +74,10 @@ async function localMatches(query: string, filters: SearchFilters): Promise<Awai
 function isTransientSearchError(error: unknown): boolean {
   if (error instanceof QNotesHttpError) return error.status >= 500;
   return error instanceof TypeError || (error instanceof DOMException && error.name === 'NetworkError');
+}
+
+function isAbortError(error: unknown): boolean {
+  return (error instanceof DOMException && error.name === 'AbortError') || (error instanceof Error && error.name === 'AbortError');
 }
 
 export function SearchPanel({ onSearchStateChange, notebookId = null, unfiled = false, availableTags = [], onResultSelect }: SearchPanelProps): JSX.Element {
@@ -106,21 +113,21 @@ export function SearchPanel({ onSearchStateChange, notebookId = null, unfiled = 
   const [localResponse, setLocalResponse] = useState<SearchResponse | null>(null);
   useEffect(() => {
     let active = true;
-    if (!debounced) {
+    if (!query.trim()) {
       setLocalResponse(null);
       return () => { active = false; };
     }
-    void localMatches(debounced, filters).then((notes) => {
+    void localMatches(query, filters).then((notes) => {
       if (!active) return;
       setLocalResponse(localSearchResponse(notes));
     });
     return () => { active = false; };
-  }, [debounced, filters]);
+  }, [filters, query]);
   const result = useQuery({
     queryKey: ['search', debounced, filters, useLocalFallback],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       try {
-        return await api.searchPost({ query: debounced, mode: 'auto', limit: 20, maxPerNote: 2, filters });
+        return await api.searchPost({ query: debounced, mode: 'auto', limit: 20, maxPerNote: 2, filters }, { signal });
       } catch (error: unknown) {
         if (!useLocalFallback || !isTransientSearchError(error)) throw error;
         return localSearchResponse(await localMatches(debounced, filters));
@@ -129,11 +136,13 @@ export function SearchPanel({ onSearchStateChange, notebookId = null, unfiled = 
     enabled: Boolean(debounced),
     staleTime: 30_000,
   });
-  const displayResponse = result.error
-    ? (useLocalFallback && isTransientSearchError(result.error) ? localResponse : null)
-    : result.isFetching
-      ? (useLocalFallback ? localResponse : null)
-      : result.data ?? null;
+  const displayResponse = query.trim() !== debounced
+    ? (useLocalFallback ? localResponse : null)
+    : result.error
+      ? (isAbortError(result.error) ? null : useLocalFallback && isTransientSearchError(result.error) ? localResponse : null)
+      : result.isFetching
+        ? (useLocalFallback ? localResponse : null)
+        : result.data ?? (useLocalFallback ? localResponse : null);
   useEffect(() => {
     onSearchStateChange?.({
       query: debounced,
@@ -149,5 +158,5 @@ export function SearchPanel({ onSearchStateChange, notebookId = null, unfiled = 
     if (displayResponse) void rememberSearchSelection({ queryId: displayResponse.queryId, documentId: item.documentId ?? item.id, selectedAt: new Date().toISOString() });
     onResultSelect?.(item);
   };
-  return <section aria-label="Search notes"><form className="q-search-large q-mobile-search" onSubmit={submit}><Search size={19} aria-hidden="true" /><input ref={inputRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your notes, blocks, and attachments…" aria-label="Search notes" /><span className="q-search-kbd">⌘K</span></form><div className="q-search-options"><label><span className="q-label">Tag</span><select aria-label="Filter search by tag" value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}><option value="">All tags</option>{tags.map((tag) => <option value={tag} key={tag}>{tag}</option>)}</select></label><label><span className="q-label">Source</span><select aria-label="Filter search by source" value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value as SearchSourceType | '')}><option value="">All sources</option><option value="note_chunk">Note text</option><option value="code_block">Code</option><option value="copy_block">Copy blocks</option><option value="attachment_chunk">Attachments</option></select></label><label className="q-search-local"><input type="checkbox" checked={useLocalFallback} onChange={(event) => setUseLocalFallback(event.target.checked)} />Use recent local title/tag fallback</label></div>{debounced && <p className="q-search-status" role="status">{result.isFetching ? displayResponse ? 'Showing recent local matches while searching…' : 'Searching notes…' : result.error ? 'Search is unavailable right now.' : matchingNoteCount ? `${matchingNoteCount} matching ${matchingNoteCount === 1 ? 'note' : 'notes'}` : `No notes match “${debounced}”. Try a shorter phrase.`}</p>}{debounced && displayResponse && displayResponse.items.length > 0 && <ul className="q-search-results" aria-label="Matched search results">{displayResponse.items.map((item) => <li key={`${item.id}:${item.sourceKey}`}><button type="button" onClick={() => selectResult(item)}><strong>{item.noteTitle}</strong><span>{item.headingPath ? `${item.headingPath} · ` : ''}{item.sourceType}</span><small>{item.snippet}</small></button></li>)}</ul>}</section>;
+  return <section aria-label="Search notes"><form className="q-search-large q-mobile-search" onSubmit={submit}><Search size={19} aria-hidden="true" /><input ref={inputRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your notes, blocks, and attachments…" aria-label="Search notes" /><span className="q-search-kbd">⌘K</span></form><div className="q-search-options"><label><span className="q-label">Tag</span><select aria-label="Filter search by tag" value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}><option value="">All tags</option>{tags.map((tag) => <option value={tag} key={tag}>{tag}</option>)}</select></label><label><span className="q-label">Source</span><select aria-label="Filter search by source" value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value as SearchSourceType | '')}><option value="">All sources</option><option value="note_chunk">Note text</option><option value="code_block">Code</option><option value="copy_block">Copy blocks</option><option value="attachment_chunk">Attachments</option></select></label><label className="q-search-local"><input type="checkbox" checked={useLocalFallback} onChange={(event) => setUseLocalFallback(event.target.checked)} />Use recent local title/tag fallback</label></div>{debounced && !isAbortError(result.error) && <p className="q-search-status" role="status">{result.isFetching ? displayResponse ? 'Showing recent local matches while searching…' : 'Searching notes…' : result.error ? 'Search is unavailable right now.' : matchingNoteCount ? `${matchingNoteCount} matching ${matchingNoteCount === 1 ? 'note' : 'notes'}` : `No notes match “${debounced}”. Try a shorter phrase.`}</p>}{debounced && displayResponse && displayResponse.items.length > 0 && <ul className="q-search-results" aria-label="Matched search results">{displayResponse.items.map((item) => <li key={`${item.id}:${item.sourceKey}`}><button type="button" onClick={() => selectResult(item)}><strong>{item.noteTitle}</strong><span>{item.headingPath ? `${item.headingPath} · ` : ''}{item.sourceType}</span><small>{item.snippet}</small></button></li>)}</ul>}</section>;
 }

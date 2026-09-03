@@ -1,6 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chunkMarkdown } from '../dist/index.js';
+import { chunkMarkdown, chunkText, estimateTokenCount } from '../dist/index.js';
+
+test('splits an unbroken token to the deterministic token budget', () => {
+  const chunks = chunkText('x'.repeat(5000), 10, 0);
+  assert.ok(chunks.length > 1);
+  assert.ok(chunks.every((chunk) => estimateTokenCount(chunk) <= 10));
+});
+
+test('prefers sentence boundaries before word boundaries', () => {
+  const chunks = chunkText('First sentence. Second sentence.', 4, 0);
+  assert.deepEqual(chunks, ['First sentence.', 'Second sentence.']);
+});
 
 test('chunks by heading hierarchy and preserves paragraph boundaries', async () => {
   const chunks = await chunkMarkdown('# ERPNext\n\n## Docker deployment\n\nfirst paragraph.\n\nsecond paragraph.', 'ERPNext');

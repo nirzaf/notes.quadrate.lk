@@ -21,7 +21,7 @@ The repository ships a native stdio MCP server in `packages/mcp-server`. See [AP
 
 Open `/login` to sign in or create an account. Authenticated users land on the private notes workspace at `/`.
 
-The home page provides a paginated recent-notes view, a search field, and a notebook filter. Search accepts a query after a short debounce, shows matching recent local snapshots while the API request is in flight, and can also be focused with `Ctrl-K` or `⌘K`. Selecting a notebook filters both the home list and the sidebar; `Unfiled` means notes whose `notebookId` is `null` and is sent as an explicit search filter. The API selects keyword, semantic, or hybrid retrieval through `auto` mode.
+The home page provides a paginated recent-notes view, a search field, and a notebook filter. Search shows matching recent local snapshots immediately while the API request waits for 200 ms of quiet time, then replaces them with direct ranked API result cards; a result remains navigable even when its note is outside the loaded recent-note pages. Unsupported local source/language filters wait for the server rather than showing incorrect metadata matches. Search can also be focused with `Ctrl-K` or `⌘K`. Selecting a notebook filters both the home list and the sidebar; `Unfiled` means notes whose `notebookId` is `null` and is sent as an explicit search filter. The API selects keyword, semantic, or hybrid retrieval through `auto` mode.
 
 Use the `+` action in the Notebooks section to create a notebook. Names are trimmed, limited to 80 characters, and unique per owner. Open a note and use its notebook selector to move it to a notebook or back to Unfiled. The selector is disabled while an edit is waiting to be saved.
 
@@ -82,7 +82,7 @@ pnpm run test:unit
 pnpm run test:mcp
 ```
 
-Search evaluation fixtures and a deterministic evaluator live under `tests/search-evaluation-fixtures.json` and `scripts/evaluate-search.mjs`. Run `pnpm run evaluate:search`, or pass `--results` with a JSON map of query IDs to ranked document IDs. `scripts/search-benchmark.mjs` measures p50/p95 API latency for representative 1k, 10k, and 100k corpus labels; run it with `QNOTES_URL` and a scoped `QNOTES_TOKEN`. Query-plan collection uses `scripts/search-query-plans.sql` against a representative database.
+The real search evaluator lives under `tests/search-evaluation-fixtures.json` and `scripts/evaluate-search.mjs`. Run it against a local API with `QNOTES_URL` and a scoped token; add `--seed` to create its stable dedupe-key corpus. An optional `--results` mode calculates offline metrics but is not product performance. The local-only benchmark uses `scripts/seed-search-benchmark.mjs` and `scripts/search-benchmark.mjs`; every run requires `--local-benchmark`, uses the dedicated local benchmark owner, verifies actual row counts, and reports repeated keyword/semantic/hybrid latency and ANN metadata. Query-plan collection uses `scripts/search-query-plans.sql` against a representative database.
 
 `local:env` reads the local Supabase status without printing keys and writes ignored files at `apps/web/.env.local`, `supabase/functions/.env.test`, and `.tmp/local-env.json`. `seed:test-users` is deliberately restricted to a local Supabase URL and creates the E2E accounts used by the test suite:
 
@@ -142,7 +142,7 @@ pnpm exec supabase functions deploy qnotes-api embedding-worker attachment-worke
   --import-map supabase/functions/deno.json
 ```
 
-The hosted database must contain the migrations through `20260903000300_search_hardening.sql`. That migration adds request-safe search functions, embedding input/version invariants, stale-vector requeueing, attachment page provenance, and safe capture deduplication. The worker cron jobs read the project URL and internal worker secret from Supabase Vault, so those Vault secrets and the Edge Function secrets must be configured before expecting asynchronous embeddings or attachment extraction.
+The hosted database must contain the migrations through `20260903000400_release_hardening.sql`. That release adds request-safe search functions, embedding input/version invariants, stale-vector requeueing, attachment page provenance, and safe capture deduplication. The worker cron jobs read the project URL and internal worker secret from Supabase Vault, so those Vault secrets and the Edge Function secrets must be configured before expecting asynchronous embeddings or attachment extraction.
 
 Build and deploy the web package to Cloudflare Pages with the hosted Supabase values:
 

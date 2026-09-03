@@ -11,7 +11,7 @@ const QUERY_EMBEDDING_CACHE_MAX_ENTRIES = 256;
 const queryEmbeddingCache = new Map<string, { expiresAt: number; value: Promise<number[]> }>();
 
 function cachedQueryEmbedding(query: string): Promise<number[]> {
-  const key = query.trim().toLowerCase();
+  const key = `${EMBEDDING_MODEL}:${EMBEDDING_MODEL_VERSION}:${query.trim()}`;
   const now = Date.now();
   const existing = queryEmbeddingCache.get(key);
   if (existing && existing.expiresAt > now) return existing.value;
@@ -119,15 +119,16 @@ function cursorOffset(request: SearchRequest, fingerprint: string): number {
 }
 
 function pageResults(items: SearchResult[], request: SearchRequest, fingerprint: string, offset: number, notes: Map<string, SearchNoteRow>): { items: SearchResult[]; nextCursor: string | null } {
-  const scores = items.map((item) => item.score);
+  const consumedRawItems = items.slice(0, request.limit);
+  const scores = consumedRawItems.map((item) => item.score);
   const minimumScore = scores.length ? Math.min(...scores) : 0;
   const maximumScore = scores.length ? Math.max(...scores) : 0;
-  const normalized = items
+  const normalized = consumedRawItems
     .map((item) => normalizeResult(item, notes.get(item.noteId), minimumScore, maximumScore))
     .filter((item) => request.minimumRelativeScore === undefined || (item.scores?.hybrid ?? 0) >= request.minimumRelativeScore);
   const page = normalized.slice(0, request.limit);
   const hasMore = items.length > request.limit;
-  const nextOffset = offset + items.length;
+  const nextOffset = offset + consumedRawItems.length;
   return { items: page, nextCursor: hasMore ? encodeSearchCursor({ fingerprint, offset: nextOffset }) : null };
 }
 
@@ -203,7 +204,9 @@ export async function searchNotes(context: Context): Promise<Response> {
       const fallbackItems = await keywordSearch(auth.userId, request.query, retrievalLimit, request.filters, offset, request.maxPerNote);
       const fallbackNotes = await noteMetadata(auth.userId, [...new Set(fallbackItems.map((item) => item.noteId))]);
       const page = pageResults(fallbackItems, request, fingerprint, offset, fallbackNotes);
-      return searchResponse(context, page.items, { queryId, modeUsed: 'keyword', degraded: true, started, embeddingMs: elapsedMilliseconds(embeddingStarted), retrievalStarted }, await indexMetadata(auth.userId), page.nextCursor, 'QUERY_EMBEDDING_UNAVAILABLE');
+      // Degraded pages are deliberately not cursor-paginated: a later request
+      // must not silently switch from the requested semantic/hybrid ranking.
+      return searchResponse(context, page.items, { queryId, modeUsed: 'keyword', degraded: true, started, embeddingMs: elapsedMilliseconds(embeddingStarted), retrievalStarted }, await indexMetadata(auth.userId), null, 'QUERY_EMBEDDING_UNAVAILABLE');
     }
   }
 
@@ -227,7 +230,9 @@ export async function searchNotes(context: Context): Promise<Response> {
     const degradedReason: SearchResponseMetadata['degradedReason'] = error instanceof ApiError && (error.code === 'SEMANTIC_SEARCH_UNAVAILABLE' || error.code === 'QUERY_EMBEDDING_UNAVAILABLE')
       ? error.code
       : 'SEMANTIC_SEARCH_UNAVAILABLE';
-    return searchResponse(context, page.items, { queryId, modeUsed: 'keyword', degraded: true, started, embeddingMs: elapsedMilliseconds(embeddingStarted), retrievalStarted }, await indexMetadata(auth.userId), page.nextCursor, degradedReason);
+    // Degraded pages are deliberately not cursor-paginated: a later request
+    // must not silently switch from the requested semantic/hybrid ranking.
+    return searchResponse(context, page.items, { queryId, modeUsed: 'keyword', degraded: true, started, embeddingMs: elapsedMilliseconds(embeddingStarted), retrievalStarted }, await indexMetadata(auth.userId), null, degradedReason);
   }
   const notes = await noteMetadata(auth.userId, [...new Set(rawItems.map((item) => item.noteId))]);
   const page = pageResults(rawItems, request, fingerprint, offset, notes);

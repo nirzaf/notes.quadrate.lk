@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { QNotesClient } from '@qnotes/api-client';
-import { MAX_BLOCK_KEY_LENGTH, MAX_MARKDOWN_CODE_UNITS, MAX_SEARCH_QUERY_LENGTH, MAX_SLUG_LENGTH, MAX_TAG_COUNT, MAX_TAG_LENGTH, MAX_TITLE_LENGTH } from '@qnotes/shared';
+import { MAX_BLOCK_KEY_LENGTH, MAX_DEDUPE_KEY_LENGTH, MAX_MARKDOWN_CODE_UNITS, MAX_SEARCH_LIMIT, MAX_SEARCH_QUERY_LENGTH, MAX_SLUG_LENGTH, MAX_TAG_COUNT, MAX_TAG_LENGTH, MAX_TITLE_LENGTH } from '@qnotes/shared';
 import { getBlockTool } from './tools/get-block.js';
 import { readNoteContextTool } from './tools/read-note-context.js';
 import { searchNotesTool } from './tools/search-notes.js';
@@ -25,7 +25,7 @@ export function createQNotesMcpServer(client: QNotesClient & ReadQNotesClient, p
     inputSchema: {
       query: z.string().min(1).max(MAX_SEARCH_QUERY_LENGTH),
       mode: z.enum(['auto', 'keyword', 'semantic', 'hybrid']).optional(),
-      limit: z.number().int().min(1).max(20).optional(),
+      limit: z.number().int().min(1).max(MAX_SEARCH_LIMIT).optional(),
       filters: z.object({
         notebookIds: z.array(z.string().uuid()).max(50).optional(),
       tags: z.array(z.string().min(1).max(MAX_TAG_LENGTH)).max(MAX_TAG_COUNT).optional(),
@@ -66,7 +66,7 @@ export function createQNotesMcpServer(client: QNotesClient & ReadQNotesClient, p
         tags: z.array(z.string().min(1).max(MAX_TAG_LENGTH)).max(MAX_TAG_COUNT).optional(),
         slug: z.string().min(1).max(MAX_SLUG_LENGTH).optional(),
         notebookId: z.string().uuid().nullable().optional(),
-        dedupeKey: z.string().min(1).max(200).optional(),
+        dedupeKey: z.string().min(1).max(MAX_DEDUPE_KEY_LENGTH).optional(),
       },
       annotations: { readOnlyHint: false, openWorldHint: false },
     }, (args) => captureNoteTool(writeClient, args as Parameters<typeof captureNoteTool>[1]));
