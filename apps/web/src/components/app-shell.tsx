@@ -14,34 +14,43 @@ import { useToast } from './ui/toast';
 interface AppShellProps extends PropsWithChildren {
   title?: string;
   notes?: NoteSummary[];
+  sidebarNotes?: NoteSummary[];
   activeNoteId?: string;
+  selectedNotebookId?: string | null;
+  onNotebookSelect?: (notebookId: string | null) => void;
   onNew?: () => void;
   onSelectNote?: (noteId: string) => void;
   onRealtimeEvent?: (event: RealtimeNoteEvent) => void | Promise<void>;
   onRealtimeReconnect?: () => void;
 }
 
-export function AppShell({ title = 'Quadrate Notes', notes = [], activeNoteId, onNew, onSelectNote, onRealtimeEvent, onRealtimeReconnect, children }: AppShellProps): JSX.Element {
+export function AppShell({ title = 'Quadrate Notes', notes = [], sidebarNotes: sidebarNotesProp, activeNoteId, selectedNotebookId: selectedNotebookIdProp, onNotebookSelect, onNew, onSelectNote, onRealtimeEvent, onRealtimeReconnect, children }: AppShellProps): JSX.Element {
   const { session, signOut } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const notebooksQuery = useQuery({ queryKey: ['notebooks'], queryFn: () => api.listNotebooks() });
-  const [selectedNotebookId, setSelectedNotebookId] = useState<string | null>(null);
+  const [localSelectedNotebookId, setLocalSelectedNotebookId] = useState<string | null>(null);
+  const selectedNotebookId = selectedNotebookIdProp === undefined ? localSelectedNotebookId : selectedNotebookIdProp;
+  const sidebarNotes = sidebarNotesProp ?? notes;
+  const selectNotebook = useCallback((notebookId: string | null) => {
+    if (selectedNotebookIdProp === undefined) setLocalSelectedNotebookId(notebookId);
+    onNotebookSelect?.(notebookId);
+  }, [onNotebookSelect, selectedNotebookIdProp]);
   const defaultRealtimeEvent = useCallback(() => { void queryClient.invalidateQueries({ queryKey: ['notes'] }); }, [queryClient]);
   useNoteRealtime(onRealtimeEvent ?? defaultRealtimeEvent, onRealtimeReconnect);
   const create = onNew ?? (() => void navigate({ to: '/' }));
   const select = onSelectNote ?? ((noteId: string) => void navigate({ to: '/notes/$noteId', params: { noteId } }));
-  const noteCounts = useMemo(() => notes.reduce<Record<string, number>>((counts, note) => {
+  const noteCounts = useMemo(() => sidebarNotes.reduce<Record<string, number>>((counts, note) => {
     if (note.notebookId) counts[note.notebookId] = (counts[note.notebookId] ?? 0) + 1;
     return counts;
-  }, {}), [notes]);
+  }, {}), [sidebarNotes]);
   const filteredNotes = selectedNotebookId === null
-    ? notes
+    ? sidebarNotes
     : selectedNotebookId === UNFILED_NOTEBOOK_ID
-      ? notes.filter((note) => !note.notebookId)
-      : notes.filter((note) => note.notebookId === selectedNotebookId);
+      ? sidebarNotes.filter((note) => !note.notebookId)
+      : sidebarNotes.filter((note) => note.notebookId === selectedNotebookId);
   const createNotebook = useCallback(async (name: string) => {
     try {
       const notebook = await api.createNotebook({ name });
@@ -57,7 +66,7 @@ export function AppShell({ title = 'Quadrate Notes', notes = [], activeNoteId, o
       <aside className="q-sidebar">
         <Link to="/" className="q-brand" aria-label="Quadrate Notes home"><span className="q-brand-mark">qn</span><span className="q-brand-word">Quadrate Notes</span></Link>
         <div className="q-sidebar-search"><Link to="/" className="q-button q-button-outline" style={{ width: '100%' }}>Search notes <span className="q-search-kbd">⌘K</span></Link></div>
-        <NotebookList notebooks={notebooksQuery.data?.items ?? []} selectedNotebookId={selectedNotebookId} allCount={notes.length} unfiledCount={notes.filter((note) => !note.notebookId).length} noteCounts={noteCounts} onSelect={setSelectedNotebookId} onCreate={createNotebook} />
+        <NotebookList notebooks={notebooksQuery.data?.items ?? []} selectedNotebookId={selectedNotebookId} allCount={sidebarNotes.length} unfiledCount={sidebarNotes.filter((note) => !note.notebookId).length} noteCounts={noteCounts} onSelect={selectNotebook} onCreate={createNotebook} />
         <NoteList notes={filteredNotes} activeNoteId={activeNoteId} onNew={create} onSelect={select} />
         <div className="q-sidebar-footer"><span className="q-user-email" title={session?.user.email ?? ''}>{session?.user.email}</span><Button variant="ghost" size="sm" onClick={() => { void signOut().catch((error: unknown) => toast(error instanceof Error ? error.message : 'Unable to sign out.', 'error')); }}>Sign out</Button></div>
       </aside>

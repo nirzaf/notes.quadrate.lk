@@ -29,3 +29,29 @@ test('creates notebooks, moves notes, filters the sidebar, and keeps note action
   await expect(page.locator('.q-note-items .q-note-item')).toHaveCount(1);
   await expect(page.locator('.q-note-items .q-note-item')).toContainText('Notebook sidebar test');
 });
+
+test('filters all home cards from the selected notebook', async ({ page }) => {
+  await signInPage(page);
+  const session = await signInSession();
+  const notes = await Promise.all(Array.from({ length: 9 }, (_, index) => createNoteApi(session.access_token, `Notebook filter ${index + 1}`, `Filter fixture ${index + 1}.`)));
+  const notebookResponse = await apiJson('/api/notebooks', session.access_token, { method: 'POST', body: JSON.stringify({ name: 'Home filter test' }) });
+  expect(notebookResponse.response.ok).toBe(true);
+  const notebook = (notebookResponse.body as { data: { id: string } }).data;
+  await Promise.all(notes.map(async (note) => {
+    const moved = await apiJson(`/api/notes/${note.id}/notebook`, session.access_token, { method: 'PATCH', body: JSON.stringify({ notebookId: notebook.id, expectedVersion: note.version, deviceId: crypto.randomUUID(), mutationId: crypto.randomUUID() }) });
+    expect(moved.response.ok).toBe(true);
+  }));
+
+  await page.reload();
+  await page.getByRole('combobox', { name: 'Filter notes by notebook' }).selectOption(notebook.id);
+  await expect(page.locator('.q-home-notes .q-note-card')).toHaveCount(9);
+  await expect(page.locator('.q-home-notes')).toContainText('Notebook filter 9');
+
+  for (const viewport of [{ width: 375, height: 812 }, { width: 812, height: 375 }]) {
+    await page.setViewportSize(viewport);
+    await page.reload();
+    await page.getByRole('combobox', { name: 'Filter notes by notebook' }).selectOption(notebook.id);
+    await expect(page.locator('.q-home-notes .q-note-card')).toHaveCount(9);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  }
+});

@@ -78,6 +78,11 @@ a { color: inherit; text-decoration: none; }
 .q-search-large input { min-width: 0; flex: 1; height: 54px; border: 0; outline: 0; background: transparent; color: var(--ink); }
 .q-search-kbd { border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; color: var(--muted); font-size: 0.7rem; }
 .q-search-status { margin: 10px 2px 0; color: var(--muted); font-size: 0.82rem; }
+.q-home-filters { display: grid; grid-template-columns: minmax(0, 1fr) minmax(190px, 230px); gap: 12px; align-items: start; }
+.q-home-notebook-filter { display: grid; gap: 6px; }
+.q-home-notebook-filter .q-label { margin: 0; }
+.q-home-notebook-filter select { width: 100%; min-height: 54px; border: 1px solid var(--line); border-radius: 15px; padding: 0 32px 0 15px; color: var(--ink); background: var(--white); font-size: 0.88rem; }
+.q-home-notebook-filter select:focus-visible { outline: 3px solid rgb(230 106 60 / 0.55); outline-offset: 2px; }
 .q-card { border: 1px solid var(--line); border-radius: 18px; background: var(--white); box-shadow: var(--shadow); }
 .q-card-pad { padding: 22px; }
 .q-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 14px; }
@@ -181,6 +186,7 @@ a { color: inherit; text-decoration: none; }
   .q-main-body { width: 100%; padding: 22px 18px; }
   .q-home-intro { display: block; }
   .q-home-notes { max-width: none; }
+  .q-home-filters { grid-template-columns: 1fr; }
   .q-note-card-grid { grid-template-columns: minmax(0, 1fr); }
   .q-display { font-size: clamp(2.7rem, 13vw, 4.5rem); }
   .q-home-actions { margin-top: 18px; }
