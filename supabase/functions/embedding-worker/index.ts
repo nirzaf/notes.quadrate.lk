@@ -1,5 +1,6 @@
 import { archiveQueueMessage, deleteQueueMessage, readQueue } from '../_shared/queue.ts';
 import { appDbClient } from '../_shared/database.ts';
+import { embeddingDocumentFromRow } from './adapter.ts';
 import { EMBEDDING_MODEL, EMBEDDING_MODEL_VERSION, createEmbedding, embeddingInput, embeddingInputHash } from './embedding.ts';
 
 const queueName = 'note-embeddings';
@@ -38,7 +39,8 @@ async function processMessage(message: { message_id: number; read_count: number;
       await deleteQueueMessage(queueName, message.message_id);
       return 'skipped';
     }
-    const expectedInputHash = await embeddingInputHash(document);
+    const embeddingDocument = embeddingDocumentFromRow(document);
+    const expectedInputHash = await embeddingInputHash(embeddingDocument);
     failureInputHash = expectedInputHash;
     if (job.embeddingInputHash && job.embeddingInputHash !== expectedInputHash) {
       await deleteQueueMessage(queueName, message.message_id);
@@ -54,7 +56,7 @@ async function processMessage(message: { message_id: number; read_count: number;
       return 'skipped';
     }
 
-    const vector = await createEmbedding(embeddingInput(document));
+    const vector = await createEmbedding(embeddingInput(embeddingDocument));
     const { data: current, error: currentError } = await appDbClient
       .from('search_documents')
       .select('content, source_title, heading_path, content_hash, embedding_input_hash')
@@ -62,7 +64,7 @@ async function processMessage(message: { message_id: number; read_count: number;
       .eq('owner_id', job.ownerId)
       .maybeSingle();
     if (currentError) throw currentError;
-    const currentInputHash = current ? await embeddingInputHash(current) : null;
+    const currentInputHash = current ? await embeddingInputHash(embeddingDocumentFromRow(current)) : null;
     if (!current || current.content_hash !== job.contentHash || currentInputHash !== expectedInputHash || current.embedding_input_hash !== expectedInputHash) {
       await deleteQueueMessage(queueName, message.message_id);
       return 'skipped';
