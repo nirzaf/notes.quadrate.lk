@@ -58,7 +58,7 @@ The parser also derives plain text and search chunks from notes. Chunks are grou
 - `supabase/functions/embedding-worker` consumes the `note-embeddings` queue. `supabase/functions/attachment-worker` consumes `attachment-processing`, extracts supported files, and indexes attachment chunks.
 - `supabase/migrations` defines the `notesdb` schema, RLS, private Storage, pgvector/pgmq/pg_cron integration, Realtime Broadcast trigger, API tokens, notebooks, and search relevance indexes.
 
-PostgreSQL full-text and relevance-ranked keyword search is available immediately. Embeddings are generated asynchronously in 384 dimensions with `gte-small` model version `v2`. Every vector records a hash of the exact source title, heading path, and content used to create it; model changes and stale inputs are re-queued instead of being relabeled. Local tests set `QNOTES_FAKE_EMBEDDINGS=1` for deterministic embeddings. Worker cron jobs process both queues in the configured Supabase project, with bounded concurrency and batch draining.
+PostgreSQL full-text and relevance-ranked keyword search is available immediately. Embeddings are generated asynchronously in 384 dimensions with `gte-small` model version `v2`. Every vector records a hash of the exact source title, heading path, and content used to create it; model changes and stale inputs are re-queued instead of being relabeled. Local tests set `QNOTES_FAKE_EMBEDDINGS=1` for deterministic embeddings. Worker cron jobs process both queues every 30 seconds in the configured Supabase project, with bounded concurrency and batch draining. The daily `qnotes-requeue-stale-embeddings` job runs at 03:00 UTC (06:00 UTC+03) as a recovery/catch-up schedule for stale embedding work.
 
 The browser subscribes to the private `user:<user-id>:notes` Realtime channel and receives metadata-only `note.changed` events. IndexedDB stores drafts, a notes sync cursor, and recent authoritative note snapshots. Access tokens are not stored in IndexedDB or the service-worker cache.
 
@@ -137,7 +137,7 @@ pnpm exec supabase functions deploy qnotes-api embedding-worker attachment-worke
   --import-map supabase/functions/deno.json
 ```
 
-The hosted database must contain the migrations through `20260903000400_release_hardening.sql`. That release adds request-safe search functions, embedding input/version invariants, stale-vector requeueing, attachment page provenance, and safe capture deduplication. The worker cron jobs read the project URL and internal worker secret from Supabase Vault, so those Vault secrets and the Edge Function secrets must be configured before expecting asynchronous embeddings or attachment extraction.
+The hosted database must contain the migrations through `20260903000500_embedding_recovery.sql`. That release adds request-safe search functions, embedding input/version invariants, stale-vector requeueing, attachment page provenance, safe capture deduplication, and the daily embedding recovery schedule. The worker cron jobs read the project URL and internal worker secret from Supabase Vault, so those Vault secrets and the Edge Function secrets must be configured before expecting asynchronous embeddings or attachment extraction.
 
 Build and deploy the web package to Cloudflare Pages with the hosted Supabase values:
 

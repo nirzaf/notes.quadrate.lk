@@ -71,7 +71,7 @@ pnpm exec supabase secrets set --project-ref ciyoandzjezgqxjpcrin \
 
 Production must not set `QNOTES_FAKE_EMBEDDINGS=1`.
 
-The pg_cron jobs created by the migrations use Supabase Vault. In the Supabase SQL Editor, create these entries once, using the same worker secret as above. If the named entries already exist, update them instead of creating duplicates:
+The worker pg_cron jobs created by the migrations use Supabase Vault and invoke the workers every 30 seconds. A separate `qnotes-requeue-stale-embeddings` job runs daily at 03:00 UTC (06:00 UTC+03) as an embedding recovery/catch-up schedule. In the Supabase SQL Editor, create these Vault entries once, using the same worker secret as above. If the named entries already exist, update them instead of creating duplicates:
 
 ```sql
 select vault.create_secret(
@@ -110,7 +110,7 @@ pnpm run test:unit
 pnpm exec supabase db push --linked --dry-run
 ```
 
-The current search hardening release includes the additive migrations through `20260903000400_release_hardening.sql`. Review them in the dry-run output before applying; the latest migration fixes pagination and embedding queue races, preserves legacy RPC wrappers on the v2 contract, adds restore dedupe conflict reporting, and keeps incompatible vectors out of semantic search.
+The current search hardening release includes the additive migrations through `20260903000500_embedding_recovery.sql`. Review them in the dry-run output before applying; the latest migrations fix pagination and embedding queue races, preserve legacy RPC wrappers on the v2 contract, add restore dedupe conflict reporting, keep incompatible vectors out of semantic search, and add the daily stale-embedding recovery schedule.
 
 ### 3. Apply pending production migrations
 
