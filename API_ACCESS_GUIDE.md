@@ -123,7 +123,7 @@ The main validation limits are:
 | Search query | 1–500 characters |
 | Note list | Default 50, maximum 500 |
 | Sync page | Default 200, maximum 500 |
-| Search page | Default 20, maximum 50 |
+| Search page | Default 20, maximum 500 |
 | Attachment list | Default 20, maximum 50 |
 | Attachment upload | Default 20 MiB, configurable with `QNOTES_MAX_ATTACHMENT_BYTES` |
 | Workspace ZIP | Default 50 MiB, configurable with `QNOTES_EXPORT_MAX_BYTES` |
@@ -222,6 +222,25 @@ curl -fsS -X POST \
 ```
 
 The structured success response is `{ data: { queryId, modeUsed, degraded, degradedReason?, timing, index, items, nextCursor } }`. Each item includes `documentId`, `noteId`, `noteVersion`, a stable `qnotes://notes/{noteId}/documents/{documentId}` URI, title, heading path, source type/language, snippet, tags, notebook, updated time, match reasons, and normalized/raw scores. `index` reports the embedding model, pending/failed document counts, oldest pending age, and freshness. `nextCursor` is opaque and bound to the query, resolved mode, filters, per-note cap, and score threshold; pass it unchanged in the next POST body. The server consumes only returned page rows, so the lookahead row is returned on the next page. `minimumRelativeScore` is a page-relative ranking threshold and is not calibrated confidence. `minimumConfidence` remains accepted as a deprecated request alias. Explicit semantic or hybrid retrieval falls back to keyword results with `degraded: true` when embeddings or semantic retrieval are unavailable; degraded responses intentionally return `nextCursor: null` so a later page cannot silently change ranking mode.
+
+Search pages default to 20 items and accept at most 500 items. When `nextCursor` is non-null, request the next page by passing that opaque value unchanged:
+
+```bash
+curl -fsS -X POST \
+  -H "Authorization: Bearer ***" \
+  -H 'Content-Type: application/json' \
+  "$QNOTES_URL/api/search" \
+  --data '{
+    "query": "rollback production ERPNext",
+    "mode": "auto",
+    "limit": 20,
+    "maxPerNote": 2,
+    "filters": {},
+    "cursor": "PASTE_nextCursor_FROM_THE_FIRST_RESPONSE_UNCHANGED"
+  }'
+```
+
+Each response contains one bounded page in `items`; continue with the returned `nextCursor` while it is non-null.
 
 Read one exact document with bounded neighboring context:
 
@@ -440,7 +459,7 @@ pnpm --filter @qnotes/cli exec node dist/index.js export your-note-slug --output
 pnpm --filter @qnotes/cli exec node dist/index.js export --workspace --output backup.zip --force
 ```
 
-`qnotes search` defaults to `auto`; pass `--semantic` or `--hybrid`, and `--json` for JSON output. `get --raw` prints only the Markdown body. `export` prints a note to stdout when `--output` is omitted. File output refuses to overwrite an existing file unless `--force` is present.
+`qnotes search` defaults to `auto`; pass `--semantic` or `--hybrid`, `--limit <n>` (up to 500), `--cursor <cursor>` for a subsequent page, and `--json` for JSON output. `get --raw` prints only the Markdown body. `export` prints a note to stdout when `--output` is omitted. File output refuses to overwrite an existing file unless `--force` is present.
 
 The CLI uses native HTTP `fetch`, never connects directly to PostgreSQL, and does not retry failed requests automatically. The full command list is available with:
 

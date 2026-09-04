@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import { QNotesValidationError, resolveAutoSearchMode, validateSearchRequest, validateLimit, validateSearchMode, validateSearchQuery } from '@qnotes/shared';
+import { DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT, QNotesValidationError, resolveAutoSearchMode, validateSearchRequest, validateLimit, validateSearchMode, validateSearchQuery } from '@qnotes/shared';
 import type { ResolvedSearchMode, SearchFilters, SearchIndexMetadata, SearchRequest, SearchResponseMetadata, SearchResult } from '@qnotes/shared';
 import { EMBEDDING_MODEL, EMBEDDING_MODEL_VERSION, createEmbedding } from '../embedding-worker/embedding.ts';
 import { authFromContext, requireScope } from '../_shared/auth.ts';
@@ -174,7 +174,7 @@ async function requestFromContext(context: Context): Promise<SearchRequest> {
     return {
       query,
       mode: requestedMode,
-      limit: validateLimit(params.limit, 50, 20),
+      limit: validateLimit(params.limit, MAX_SEARCH_LIMIT, DEFAULT_SEARCH_LIMIT),
       maxPerNote: 2,
       filters: {},
       ...(params.cursor ? { cursor: params.cursor } : {}),

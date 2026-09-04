@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runCli, runCommand } from '../dist/commands.js';
+import { CliUsageError, runCli, runCommand } from '../dist/commands.js';
 
 function io() {
   const output = { stdout: '', stderr: '' };
@@ -36,6 +36,27 @@ test('human search output renders items from the response envelope', async () =>
   const { output, io: streams } = io();
   await runCommand(['search', 'deploy'], streams, { search: async () => ({ items: [{ noteTitle: 'Demo', sourceTitle: 'Deploy', snippet: 'x' }], queryId: '33333333-3333-4333-8333-333333333333', modeUsed: 'keyword', degraded: false, timing: { embeddingMs: 0, retrievalMs: 1, totalMs: 1 } }) });
   assert.match(output.stdout, /1\. Demo · Deploy\n   x/);
+});
+
+test('search forwards pagination flags without adding their values to the query', async () => {
+  const { output, io: streams } = io();
+  let searchInput;
+  const response = { items: [], queryId: '33333333-3333-4333-8333-333333333333', modeUsed: 'keyword', degraded: false, timing: { embeddingMs: 0, retrievalMs: 1, totalMs: 1 } };
+  await runCommand(['search', 'deploy', '--limit', '500', '--cursor', 'opaque-cursor', '--json'], streams, {
+    search: async (input) => { searchInput = input; return response; },
+  });
+  assert.deepEqual(searchInput, { query: 'deploy', mode: 'auto', limit: 500, cursor: 'opaque-cursor' });
+  assert.deepEqual(JSON.parse(output.stdout), response);
+});
+
+test('invalid search limit is a usage error', async () => {
+  const { output, io: streams } = io();
+  let searchCalls = 0;
+  await assert.rejects(() => runCommand(['search', 'deploy', '--limit', 'not-a-number'], streams, {
+    search: async () => { searchCalls += 1; return { items: [] }; },
+  }), (error) => error instanceof CliUsageError && /Usage: qnotes search/.test(error.message));
+  assert.equal(searchCalls, 0);
+  assert.equal(output.stdout, '');
 });
 
 test('existing export target is not overwritten without --force', async () => {

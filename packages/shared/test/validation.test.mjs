@@ -46,6 +46,11 @@ test('validates structured POST search filters and bounds', () => {
   });
 });
 
+test('accepts the maximum search page and rejects values above it', () => {
+  assert.equal(validateSearchRequest({ query: 'rollback', limit: 500 }).limit, 500);
+  assert.throws(() => validateSearchRequest({ query: 'rollback', limit: 501 }), /limit must be an integer from 1 to 500/);
+});
+
 test('preserves optional write fields and normalizes capture dedupe metadata', () => {
   const notebookId = '550e8400-e29b-41d4-a716-446655440000';
   const deviceId = '11111111-1111-4111-8111-111111111111';

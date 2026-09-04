@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { resolve } from 'node:path';
-import type { Note, NoteBlock } from '@qnotes/shared';
+import { MAX_SEARCH_LIMIT, type Note, type NoteBlock } from '@qnotes/shared';
 import { QNotesClient as Client, type QNotesClient } from '@qnotes/api-client';
 import { formatBlockSummary, formatNote, formatSearchResults, withOneFinalNewline, writeBinaryFile } from './output.js';
 
@@ -27,7 +27,7 @@ function help(): string {
   return `qnotes — Markdown notes over the Quadrate API
 
 Commands:
-  qnotes search "query" [--semantic|--hybrid] [--json]
+  qnotes search "query" [--semantic|--hybrid] [--limit <n>] [--cursor <cursor>] [--json]
   qnotes get <note-id-or-slug> [--raw]
   qnotes blocks <note-id-or-slug>
   qnotes block get <note-id-or-slug> <block-key>
@@ -68,6 +68,32 @@ function textFromArgs(args: string[]): string {
   return args.filter((value) => !value.startsWith('--')).join(' ').trim();
 }
 
+function searchOptions(args: string[]): { query: string; limit?: number; cursor?: string } {
+  const queryArgs: string[] = [];
+  let limit: number | undefined;
+  let cursor: string | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === undefined) continue;
+    if (arg === '--limit' || arg === '--cursor') {
+      const value = args[index + 1];
+      if (!value || value.startsWith('--')) usage('Usage: qnotes search "query"');
+      index += 1;
+      if (arg === '--limit') {
+        if (!/^\d+$/.test(value)) usage('Usage: qnotes search "query"');
+        const parsed = Number(value);
+        if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > MAX_SEARCH_LIMIT) usage('Usage: qnotes search "query"');
+        limit = parsed;
+      } else {
+        cursor = value;
+      }
+      continue;
+    }
+    if (!arg.startsWith('--')) queryArgs.push(arg);
+  }
+  return { query: textFromArgs(queryArgs), ...(limit !== undefined ? { limit } : {}), ...(cursor !== undefined ? { cursor } : {}) };
+}
+
 async function moveToNotebook(client: QNotesClient, note: Note, notebookId: string): Promise<Note> {
   return client.moveNoteToNotebook(note.id, { notebookId: notebookId === 'unfiled' ? null : notebookId, expectedVersion: note.version, deviceId: randomUUID(), mutationId: randomUUID() });
 }
@@ -79,11 +105,12 @@ export async function runCommand(args: string[], io: CommandIo, api?: QNotesClie
     return;
   }
   if (command === 'search') {
-    const query = textFromArgs(args.slice(1));
+    const options = searchOptions(args.slice(1));
+    const query = options.query;
     if (!query) usage('Usage: qnotes search "query"');
     const client = api ?? createClientFromEnvironment();
     const mode = args.includes('--semantic') ? 'semantic' : args.includes('--hybrid') ? 'hybrid' : 'auto';
-    const response = await client.search({ query, mode });
+    const response = await client.search({ query, mode, ...(options.limit !== undefined ? { limit: options.limit } : {}), ...(options.cursor !== undefined ? { cursor: options.cursor } : {}) });
     io.stdout(`${args.includes('--json') ? JSON.stringify(response, null, 2) : formatSearchResults(response.items)}\n`);
     return;
   }

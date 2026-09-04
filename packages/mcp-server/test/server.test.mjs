@@ -122,7 +122,7 @@ test('MCP protocol calls preserve filters, structured content, outcomes, and val
   });
   const { client } = await connectedProtocol('write', apiClient);
   const search = await client.callTool({ name: 'search_notes', arguments: {
-    query: 'rollback', limit: 50, filters: {
+    query: 'rollback', limit: 500, cursor: 'opaque-cursor', filters: {
       notebookIds: ['550e8400-e29b-41d4-a716-446655440000'], tags: ['ops'], sourceTypes: ['code_block'], languages: ['bash'],
       updatedAfter: '2026-01-01T00:00:00.000Z', unfiled: false,
     },
@@ -132,6 +132,8 @@ test('MCP protocol calls preserve filters, structured content, outcomes, and val
     notebookIds: ['550e8400-e29b-41d4-a716-446655440000'], tags: ['ops'], sourceTypes: ['code_block'], languages: ['bash'],
     updatedAfter: '2026-01-01T00:00:00.000Z', unfiled: false,
   });
+  assert.equal(searchInput.limit, 500);
+  assert.equal(searchInput.cursor, 'opaque-cursor');
   const capture = await client.callTool({ name: 'capture_note', arguments: { title: 'Captured', contentMarkdown: '', dedupeKey: 'source:event:1' } });
   assert.deepEqual(capture.structuredContent, { note: { id: 'note-1' }, outcome: 'deduplicated' });
   await client.close();

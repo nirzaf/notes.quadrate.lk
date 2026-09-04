@@ -21,7 +21,8 @@ export const DEFAULT_NOTE_LIST_LIMIT = 50;
 export const MAX_SYNC_LIMIT = 500;
 export const DEFAULT_SYNC_LIMIT = 200;
 export const MAX_SEARCH_QUERY_LENGTH = 500;
-export const MAX_SEARCH_LIMIT = 50;
+export const MAX_SEARCH_LIMIT = 500;
+export const MAX_SEARCH_CURSOR_LENGTH = 500;
 export const DEFAULT_SEARCH_LIMIT = 20;
 export const MAX_NOTEBOOK_NAME_LENGTH = 80;
 export const MAX_TITLE_LENGTH = 200;
@@ -219,7 +220,7 @@ export function validateSearchRequest(value: unknown): SearchRequest {
     request.minimumRelativeScore = relativeScore;
   }
   if (value.cursor !== undefined) {
-    if (typeof value.cursor !== 'string' || !value.cursor.trim() || value.cursor.length > 500) throw new QNotesValidationError('cursor must be a non-empty string of at most 500 characters.');
+    if (typeof value.cursor !== 'string' || !value.cursor.trim() || value.cursor.length > MAX_SEARCH_CURSOR_LENGTH) throw new QNotesValidationError(`cursor must be a non-empty string of at most ${MAX_SEARCH_CURSOR_LENGTH} characters.`);
     request.cursor = value.cursor;
   }
   return request;
