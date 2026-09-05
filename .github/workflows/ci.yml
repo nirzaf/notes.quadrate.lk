@@ -27,7 +27,7 @@ jobs:
           pnpm exec supabase functions serve qnotes-api embedding-worker attachment-worker --env-file supabase/functions/.env.test --no-verify-jwt > "$RUNNER_TEMP/qnotes-functions.log" 2>&1 &
           echo $! > "$RUNNER_TEMP/qnotes-functions.pid"
           for attempt in $(seq 1 60); do
-            if curl -fsS -H 'Origin: http://127.0.0.1:5173' http://127.0.0.1:54321/functions/v1/qnotes-api/api/health > /dev/null; then
+            if curl --connect-timeout 1 --max-time 5 -fsS -H 'Origin: http://127.0.0.1:5173' http://127.0.0.1:54321/functions/v1/qnotes-api/api/health > /dev/null; then
               exit 0
             fi
             sleep 1
