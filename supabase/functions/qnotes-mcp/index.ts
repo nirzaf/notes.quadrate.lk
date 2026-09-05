@@ -442,7 +442,7 @@ async function handle(request: Request): Promise<Response> {
   const path = requestPath(request);
   if (request.method === 'OPTIONS') return withCors(request, new Response(null, { status: 204 }));
   if (path === '/health' && request.method === 'GET') return json(request, { status: 'ok' });
-  if (path === '/.well-known/oauth-authorization-server' && request.method === 'GET') return json(request, oauthMetadata(request));
+  if ((path === '/.well-known/oauth-authorization-server' || path === '/.well-known/openid-configuration') && request.method === 'GET') return json(request, oauthMetadata(request));
   if ((path === '/.well-known/oauth-protected-resource' || path === '/.well-known/oauth-protected-resource/mcp') && request.method === 'GET') return json(request, oauthResourceMetadata(request));
   if ((path === '/register' || path === '/api/oauth/register') && request.method === 'POST') return handleRegister(request);
   if (path === '/authorize' && request.method === 'GET') return handleAuthorize(request);
