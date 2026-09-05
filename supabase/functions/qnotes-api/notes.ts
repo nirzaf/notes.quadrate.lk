@@ -50,6 +50,20 @@ interface NoteResult {
   status: string;
 }
 
+export type NoteMutationOutcome = 'applied' | 'idempotent';
+
+export function noteMutationOutcome(status: string): NoteMutationOutcome {
+  if (status === 'ok') return 'applied';
+  if (status === 'idempotent') return 'idempotent';
+  throw new ApiError(500, 'INTERNAL_ERROR', 'The note mutation returned an invalid success status.');
+}
+
+export function mutationResponse(context: Context, result: NoteResult): Response {
+  const response = dataBody(context, result.note);
+  response.headers.set('x-qnotes-mutation-outcome', noteMutationOutcome(result.status));
+  return response;
+}
+
 function blockDocuments(parsed: Awaited<ReturnType<typeof parseMarkdown>>, title: string) {
   return parsed.blocks.map((block) => ({
     sourceType: block.explicit ? 'copy_block' : 'code_block',
@@ -166,14 +180,14 @@ export async function updateNote(context: Context): Promise<Response> {
   const currentNote = input.tags === undefined ? await findOwnedNote(auth.userId, noteId) : null;
   const tags = input.tags ?? currentNote?.tags ?? [];
   const parsed = await parsedContent(input.contentMarkdown, input.title);
-  const normalizedBody = { title: input.title, slug: input.slug, contentMarkdown: parsed.parsed.normalizedMarkdown, tags, deviceId: input.deviceId, mutationId: input.mutationId };
+  const normalizedBody = { title: input.title, slug: input.slug, contentMarkdown: parsed.parsed.normalizedMarkdown, ...(input.tags === undefined ? {} : { tags: input.tags }), deviceId: input.deviceId, mutationId: input.mutationId };
   const hash = await requestHash({ userId: auth.userId, operation: 'updated', noteId, expectedVersion: input.expectedVersion, body: normalizedBody });
   const result = assertSupabase(await serviceClient.rpc('qnotes_update_note', {
     p_owner_id: auth.userId, p_note_id: noteId, p_slug: normalizeSlug(input.slug, input.title), p_title: input.title, p_content_markdown: parsed.parsed.normalizedMarkdown,
     p_content_plain: parsed.parsed.plainText, p_tags: tags, p_expected_version: input.expectedVersion, p_device_id: input.deviceId,
     p_mutation_id: input.mutationId, p_request_hash: hash, p_blocks: parsed.blocks, p_documents: parsed.documents,
   }));
-  return dataBody(context, mapMutationResult(result).note);
+  return mutationResponse(context, mapMutationResult(result));
 }
 
 export async function appendNote(context: Context): Promise<Response> {
@@ -205,7 +219,7 @@ export async function appendNote(context: Context): Promise<Response> {
     p_blocks: parsed.blocks,
     p_documents: parsed.documents,
   }));
-  return dataBody(context, mapMutationResult(result).note);
+  return mutationResponse(context, mapMutationResult(result));
 }
 
 export async function moveNoteToNotebook(context: Context): Promise<Response> {
@@ -239,7 +253,7 @@ async function versionedMutation(context: Context, operation: 'deleted' | 'resto
     ? { p_owner_id: auth.userId, p_note_id: noteId, p_expected_version: input.expectedVersion, p_device_id: input.deviceId, p_mutation_id: input.mutationId, p_request_hash: hash }
     : { p_owner_id: auth.userId, p_note_id: noteId, p_expected_version: input.expectedVersion, p_device_id: input.deviceId, p_mutation_id: input.mutationId, p_request_hash: hash };
   const result = assertSupabase(await serviceClient.rpc(functionName, params));
-  return dataBody(context, mapMutationResult(result).note);
+  return mutationResponse(context, mapMutationResult(result));
 }
 
 export async function deleteNote(context: Context): Promise<Response> {

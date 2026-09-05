@@ -10,7 +10,7 @@ export interface HermesMcpConfigInput {
 }
 
 const READ_TOOLS = ['search_notes', 'read_note_context', 'get_block'];
-const WRITE_TOOLS = ['capture_note', 'append_note', 'update_note'];
+const WRITE_TOOLS = ['capture_note', 'append_note', 'update_note', 'delete_note', 'restore_note'];
 
 /**
  * JSON is valid YAML 1.2, so JSON.stringify gives Hermes a safely escaped,

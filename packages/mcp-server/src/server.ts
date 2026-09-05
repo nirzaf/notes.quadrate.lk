@@ -9,13 +9,25 @@ import type { ReadQNotesClient } from './tools/common.ts';
 import { registerNotesResources } from './resources/notes.ts';
 import { appendNoteTool } from './tools/append-note.ts';
 import { captureNoteTool, type WriteQNotesClient } from './tools/capture-note.ts';
+import { deleteNoteTool } from './tools/delete-note.ts';
+import { restoreNoteTool } from './tools/restore-note.ts';
 import type { WriteToolOptions } from './tools/write-notes.ts';
 import { updateNoteTool } from './tools/update-note.ts';
 
 export type McpProfile = 'read' | 'write';
 export const READ_TOOL_NAMES = ['search_notes', 'read_note_context', 'get_block'] as const;
-export const WRITE_TOOL_NAMES = ['capture_note', 'append_note', 'update_note'] as const;
+export const WRITE_TOOL_NAMES = ['capture_note', 'append_note', 'update_note', 'delete_note', 'restore_note'] as const;
 export interface QNotesMcpServerOptions extends WriteToolOptions {}
+
+const noteAcknowledgmentFields = {
+  noteId: z.string().min(1),
+  title: z.string(),
+  resultingVersion: z.number().int().min(1),
+  mutationId: z.string().uuid(),
+  uri: z.string().startsWith('qnotes://notes/'),
+};
+const captureAcknowledgmentSchema = { ...noteAcknowledgmentFields, outcome: z.enum(['created', 'idempotent', 'deduplicated']) };
+const mutationAcknowledgmentSchema = { ...noteAcknowledgmentFields, outcome: z.enum(['applied', 'idempotent']) };
 
 export function createQNotesMcpServer(client: QNotesClient & ReadQNotesClient, profile: McpProfile = 'read', options: QNotesMcpServerOptions = {}): McpServer {
   const server = new McpServer(
@@ -72,6 +84,7 @@ export function createQNotesMcpServer(client: QNotesClient & ReadQNotesClient, p
         dedupeKey: z.string().min(1).max(MAX_DEDUPE_KEY_LENGTH).optional(),
         mutationId: z.string().uuid().optional(),
       },
+      outputSchema: captureAcknowledgmentSchema,
       annotations: { readOnlyHint: false, openWorldHint: false },
     }, (args: Record<string, unknown>) => captureNoteTool(writeClient, args as Parameters<typeof captureNoteTool>[1], options));
     server.registerTool('append_note', {
@@ -82,6 +95,7 @@ export function createQNotesMcpServer(client: QNotesClient & ReadQNotesClient, p
         expectedVersion: z.number().int().min(1).optional(),
         mutationId: z.string().uuid().optional(),
       },
+      outputSchema: mutationAcknowledgmentSchema,
       annotations: { readOnlyHint: false, openWorldHint: false },
     }, (args: Record<string, unknown>) => appendNoteTool(writeClient, args as Parameters<typeof appendNoteTool>[1], options));
     server.registerTool('update_note', {
@@ -95,8 +109,31 @@ export function createQNotesMcpServer(client: QNotesClient & ReadQNotesClient, p
         expectedVersion: z.number().int().min(1),
         mutationId: z.string().uuid().optional(),
       },
+      outputSchema: mutationAcknowledgmentSchema,
       annotations: { readOnlyHint: false, openWorldHint: false },
     }, (args: Record<string, unknown>) => updateNoteTool(writeClient, args as Parameters<typeof updateNoteTool>[1], options));
+    server.registerTool('delete_note', {
+      description: 'Soft-delete one exact note after an explicit confirmation and expected-version check. There is no permanent purge operation.',
+      inputSchema: {
+        noteId: z.string().uuid(),
+        expectedVersion: z.number().int().min(1),
+        mutationId: z.string().uuid().optional(),
+        confirm: z.literal(true),
+      },
+      outputSchema: mutationAcknowledgmentSchema,
+      annotations: { readOnlyHint: false, openWorldHint: false },
+    }, (args: Record<string, unknown>) => deleteNoteTool(writeClient, args as Parameters<typeof deleteNoteTool>[1], options));
+    server.registerTool('restore_note', {
+      description: 'Restore one exact soft-deleted note after an explicit confirmation and expected-version check.',
+      inputSchema: {
+        noteId: z.string().uuid(),
+        expectedVersion: z.number().int().min(1),
+        mutationId: z.string().uuid().optional(),
+        confirm: z.literal(true),
+      },
+      outputSchema: mutationAcknowledgmentSchema,
+      annotations: { readOnlyHint: false, openWorldHint: false },
+    }, (args: Record<string, unknown>) => restoreNoteTool(writeClient, args as Parameters<typeof restoreNoteTool>[1], options));
   }
   return server;
 }

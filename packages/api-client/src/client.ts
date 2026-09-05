@@ -23,6 +23,7 @@ import type {
 import { QNotesHttpError } from './http-error.ts';
 
 export type CreateNoteOutcome = 'created' | 'idempotent' | 'deduplicated';
+export type NoteMutationOutcome = 'applied' | 'idempotent';
 
 export class QNotesProtocolError extends Error {
   constructor(resource: string) {
@@ -34,6 +35,11 @@ export class QNotesProtocolError extends Error {
 export interface CreateNoteResult {
   note: Note;
   outcome: CreateNoteOutcome;
+}
+
+export interface NoteMutationResult {
+  note: Note;
+  outcome: NoteMutationOutcome;
 }
 
 export interface QNotesClientOptions {
@@ -165,6 +171,22 @@ function isNoteBlock(value: unknown): value is NoteBlock {
     && isString(value.contentHash);
 }
 
+function isSearchContextSource(value: unknown): boolean {
+  return isRecord(value) && isString(value.documentId) && isString(value.noteId)
+    && typeof value.noteVersion === 'number' && Number.isSafeInteger(value.noteVersion)
+    && isString(value.sourceType) && SEARCH_SOURCE_TYPES.has(value.sourceType)
+    && isNullableString(value.sourceId) && isString(value.sourceKey) && isString(value.sourceTitle)
+    && isNullableString(value.headingPath) && isNullableString(value.attachmentId)
+    && isNullableNumber(value.pageNumber) && isString(value.content) && isString(value.sourceHash)
+    && typeof value.truncated === 'boolean';
+}
+
+function isSearchContextTokenBudget(value: unknown): boolean {
+  return isRecord(value) && typeof value.max === 'number' && Number.isSafeInteger(value.max) && value.max >= 0
+    && typeof value.used === 'number' && Number.isSafeInteger(value.used) && value.used >= 0 && value.used <= value.max
+    && value.unit === 'approximate_tokens';
+}
+
 function isSearchContext(value: unknown): value is SearchContext {
   return isRecord(value) && isString(value.noteId) && typeof value.noteVersion === 'number' && isString(value.documentId)
     && isString(value.uri) && isString(value.title) && isNullableString(value.headingPath) && isString(value.content)
@@ -172,7 +194,12 @@ function isSearchContext(value: unknown): value is SearchContext {
     && SEARCH_SOURCE_TYPES.has(value.sourceType) && (value.sourceId === undefined || isNullableString(value.sourceId))
     && (value.sourceKey === undefined || isString(value.sourceKey)) && (value.sourceTitle === undefined || isString(value.sourceTitle))
     && (value.attachmentId === undefined || isNullableString(value.attachmentId))
-    && (value.pageNumber === undefined || isNullableNumber(value.pageNumber));
+    && (value.pageNumber === undefined || isNullableNumber(value.pageNumber))
+    && (value.sourceHash === undefined || isString(value.sourceHash))
+    && (value.truncated === undefined || typeof value.truncated === 'boolean')
+    && (value.tokenBudget === undefined || isSearchContextTokenBudget(value.tokenBudget))
+    && (value.previousSources === undefined || (Array.isArray(value.previousSources) && value.previousSources.every(isSearchContextSource)))
+    && (value.nextSources === undefined || (Array.isArray(value.nextSources) && value.nextSources.every(isSearchContextSource)));
 }
 
 function isSyncPage(value: unknown): value is SyncPage {
@@ -284,12 +311,30 @@ export class QNotesClient {
     return { note, outcome: result.response.status === 201 ? 'created' : 'idempotent' };
   }
 
+  private async noteMutationDetailed(path: string, method: 'PATCH' | 'POST' | 'DELETE', input: unknown): Promise<NoteMutationResult> {
+    const result = await this.requestWithResponse<unknown>(path, { method, body: JSON.stringify(input) });
+    const note = isValid(result.data, isNote, 'note');
+    const outcome = result.response.headers.get('x-qnotes-mutation-outcome');
+    if (outcome === 'applied' || outcome === 'idempotent') return { note, outcome };
+    // Older API deployments do not send the outcome header. Treat their
+    // successful response as applied; never infer idempotency from a 200.
+    return { note, outcome: 'applied' };
+  }
+
   updateNote(noteId: UUID, input: UpdateNoteInput): Promise<Note> {
     return this.requestValidated(`/notes/${encodeURIComponent(noteId)}`, isNote, 'note', { method: 'PATCH', body: JSON.stringify(input) });
   }
 
+  updateNoteDetailed(noteId: UUID, input: UpdateNoteInput): Promise<NoteMutationResult> {
+    return this.noteMutationDetailed(`/notes/${encodeURIComponent(noteId)}`, 'PATCH', input);
+  }
+
   appendNote(noteId: UUID, input: AppendNoteInput): Promise<Note> {
     return this.requestValidated(`/notes/${encodeURIComponent(noteId)}/append`, isNote, 'note', { method: 'POST', body: JSON.stringify(input) });
+  }
+
+  appendNoteDetailed(noteId: UUID, input: AppendNoteInput): Promise<NoteMutationResult> {
+    return this.noteMutationDetailed(`/notes/${encodeURIComponent(noteId)}/append`, 'POST', input);
   }
 
   moveNoteToNotebook(noteId: UUID, input: { notebookId: UUID | null; expectedVersion: number; deviceId: UUID; mutationId: UUID }): Promise<Note> {
@@ -300,8 +345,16 @@ export class QNotesClient {
     return this.requestValidated(`/notes/${encodeURIComponent(noteId)}`, isNote, 'note', { method: 'DELETE', body: JSON.stringify(input) });
   }
 
+  deleteNoteDetailed(noteId: UUID, input: VersionedNoteMutationInput): Promise<NoteMutationResult> {
+    return this.noteMutationDetailed(`/notes/${encodeURIComponent(noteId)}`, 'DELETE', input);
+  }
+
   restoreNote(noteId: UUID, input: VersionedNoteMutationInput): Promise<Note> {
     return this.requestValidated(`/notes/${encodeURIComponent(noteId)}/restore`, isNote, 'note', { method: 'POST', body: JSON.stringify(input) });
+  }
+
+  restoreNoteDetailed(noteId: UUID, input: VersionedNoteMutationInput): Promise<NoteMutationResult> {
+    return this.noteMutationDetailed(`/notes/${encodeURIComponent(noteId)}/restore`, 'POST', input);
   }
 
   listBlocks(noteRef: string, options: RequestOptions = {}): Promise<NoteBlock[]> {

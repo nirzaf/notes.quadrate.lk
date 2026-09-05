@@ -117,6 +117,25 @@ test('posts structured search requests and retrieves bounded document context', 
   assert.equal(calls[1].init.headers.get('Authorization'), 'Bearer read-token');
 });
 
+test('accepts old context payloads and validates additive provenance fields', async () => {
+  const source = {
+    documentId: 'neighbor-1', noteId: 'note-1', noteVersion: 3, sourceType: 'note_chunk', sourceId: null,
+    sourceKey: 'section-1', sourceTitle: 'Rollback', headingPath: 'Production', attachmentId: null,
+    pageNumber: null, content: 'neighbor', sourceHash: 'neighbor-hash', truncated: false,
+  };
+  const context = {
+    noteId: 'note-1', noteVersion: 3, documentId: 'doc-1', uri: 'qnotes://notes/note-1/documents/doc-1',
+    title: 'Rollback', headingPath: null, content: 'exact', previous: ['neighbor'], next: [],
+    updatedAt: '2026-01-01T00:00:00Z', sourceType: 'note_chunk', sourceHash: 'center-hash', truncated: true,
+    tokenBudget: { max: 4, used: 4, unit: 'approximate_tokens' }, previousSources: [source], nextSources: [],
+  };
+  const client = new QNotesClient({ baseUrl: 'http://example.test', getAccessToken: () => null, fetchImplementation: async () => jsonResponse({ data: context }) });
+  assert.deepEqual(await client.readNoteContext('doc-1'), context);
+
+  const malformedClient = new QNotesClient({ baseUrl: 'http://example.test', getAccessToken: () => null, fetchImplementation: async () => jsonResponse({ data: { ...context, previousSources: [{ ...source, truncated: 'false' }] } }) });
+  await assert.rejects(() => malformedClient.readNoteContext('doc-1'), /malformed search context/);
+});
+
 test('preserves search items and response metadata inside the success data envelope', async () => {
   const response = {
     items: [{ id: 'document-1', documentId: 'document-1', noteId: 'note-1', noteVersion: 1, noteSlug: 'deployment', noteTitle: 'Deployment', sourceType: 'note_chunk', sourceId: null, sourceKey: 'section-1', sourceTitle: 'Deployment', headingPath: null, snippet: 'rollback', score: 1, keywordRank: 1, semanticRank: null, copyable: false, blockKey: null, language: null, attachmentId: null }],

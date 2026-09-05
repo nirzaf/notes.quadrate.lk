@@ -2,6 +2,7 @@ import type { ApiTokenScope } from '@qnotes/shared';
 import type { Context } from 'hono';
 import { appDbClient, serviceClient } from './database.ts';
 import { ApiError } from './errors.ts';
+import { shouldUpdateLastUsedAt } from './auth-telemetry.ts';
 import { hashPersonalToken, isPersonalToken } from './token.ts';
 
 export interface AuthContext {
@@ -18,18 +19,20 @@ export async function authenticateRequest(request: Request): Promise<AuthContext
   if (!credential) throw new ApiError(401, 'AUTH_REQUIRED', 'Authentication is required.');
   if (isPersonalToken(credential)) {
     const tokenHash = await hashPersonalToken(credential);
-    const { data, error } = await appDbClient.from('api_tokens').select('id, owner_id, scopes, expires_at, revoked_at').eq('token_hash', tokenHash).maybeSingle();
+    const { data, error } = await appDbClient.from('api_tokens').select('id, owner_id, scopes, expires_at, last_used_at, revoked_at').eq('token_hash', tokenHash).maybeSingle();
     if (error || !data) throw new ApiError(401, 'INVALID_TOKEN', 'The personal token is invalid.');
     if (data.revoked_at) throw new ApiError(401, 'INVALID_TOKEN', 'The personal token has been revoked.');
     if (data.expires_at && Date.parse(data.expires_at) <= Date.now()) throw new ApiError(401, 'TOKEN_EXPIRED', 'The personal token has expired.');
-    const telemetryCutoff = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-    await appDbClient
-      .from('api_tokens')
-      .update({ last_used_at: new Date().toISOString() })
-      .eq('id', data.id)
-      .or(`last_used_at.is.null,last_used_at.lt.${telemetryCutoff}`)
-      .then(() => undefined)
-      .catch(() => undefined);
+    if (shouldUpdateLastUsedAt(data.last_used_at)) {
+      const telemetryCutoff = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      await appDbClient
+        .from('api_tokens')
+        .update({ last_used_at: new Date().toISOString() })
+        .eq('id', data.id)
+        .or(`last_used_at.is.null,last_used_at.lt.${telemetryCutoff}`)
+        .then(() => undefined)
+        .catch(() => undefined);
+    }
     return { userId: data.owner_id, authKind: 'personal', scopes: data.scopes as ApiTokenScope[], tokenId: data.id };
   }
   const { data, error } = await serviceClient.auth.getUser(credential);

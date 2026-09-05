@@ -518,7 +518,7 @@ console.log(response.items);
 console.log(response.timing);
 ```
 
-The client exposes `listNotes`, `listNotebooks`, `createNotebook`, `getNote`, `createNote`, `createNoteDetailed`, `updateNote`, `appendNote`, `moveNoteToNotebook`, `deleteNote`, `restoreNote`, `listBlocks`, `getBlock`, `search`, `searchPost`, `readNoteContext`, `sync`, `listAttachments`, `requestAttachmentUpload`, `finalizeAttachment`, `getAttachmentDownloadUrl`, `deleteAttachment`, `listTokens`, `createToken`, `revokeToken`, `exportNote`, and `exportWorkspace`. `createNote` remains the note-only API; `createNoteDetailed` additionally returns the `created`, `idempotent`, or `deduplicated` outcome. Export methods return the raw `Response`; attachment upload still requires uploading the bytes to Supabase Storage with the signed path/token returned by `requestAttachmentUpload`.
+The client exposes `listNotes`, `listNotebooks`, `createNotebook`, `getNote`, `createNote`, `createNoteDetailed`, `updateNote`, `updateNoteDetailed`, `appendNote`, `appendNoteDetailed`, `moveNoteToNotebook`, `deleteNote`, `deleteNoteDetailed`, `restoreNote`, `restoreNoteDetailed`, `listBlocks`, `getBlock`, `search`, `searchPost`, `readNoteContext`, `sync`, `listAttachments`, `requestAttachmentUpload`, `finalizeAttachment`, `getAttachmentDownloadUrl`, `deleteAttachment`, `listTokens`, `createToken`, `revokeToken`, `exportNote`, and `exportWorkspace`. The note-only mutation methods preserve the existing REST response shape; the `Detailed` variants additionally return a compact mutation outcome. `createNoteDetailed` returns `created`, `idempotent`, or `deduplicated`; the other detailed note mutations return `applied` or `idempotent`. Export methods return the raw `Response`; attachment upload still requires uploading the bytes to Supabase Storage with the signed path/token returned by `requestAttachmentUpload`.
 
 ## Native MCP server
 
@@ -535,7 +535,7 @@ The default read profile exposes only `search_notes`, `read_note_context`, and `
 - `qnotes://notes/{noteId}/documents/{documentId}`
 - `qnotes://notes/{noteId}/blocks/{blockKey}`
 
-Use a separate write profile and token for `capture_note`, `append_note`, and `update_note`. The server keeps reads as the default profile and only registers write tools when `QNOTES_MCP_PROFILE=write`; API scopes still enforce the token boundary. `mutationId` is optional in each write tool for compatibility, but a caller that may retry after an ambiguous transport result must supply the same mutation ID for the same logical operation. Keep the generated `QNOTES_MCP_DEVICE_ID` unchanged across process restarts; the existing owner-scoped `(owner_id, mutation_id)` receipt key plus the device ID in the request hash makes retry behavior durable across MCP processes. Omitted identity fields remain supported and receive fresh values, so those calls are new operations rather than durable retries. `capture_note` accepts optional `notebookId` and `dedupeKey` and returns `{ note, outcome }`, where the outcome distinguishes creation, an idempotent retry, and a deduplicated existing note. `append_note` preserves Markdown boundaries and uses the dedicated logical append endpoint, so a lost response can be retried without duplicating the addition. `update_note` preserves tags when `tags` is omitted and still requires the expected note version for a new update.
+Use a separate write profile and token for `capture_note`, `append_note`, `update_note`, `delete_note`, and `restore_note`. The server keeps reads as the default profile and only registers write tools when `QNOTES_MCP_PROFILE=write`; API scopes still enforce the token boundary. `mutationId` is optional in each write tool for compatibility, but a caller that may retry after an ambiguous transport result must supply the same mutation ID for the same logical operation. Keep the generated `QNOTES_MCP_DEVICE_ID` unchanged across process restarts; the existing owner-scoped `(owner_id, mutation_id)` receipt key plus the device ID in the request hash makes retry behavior durable across MCP processes. Omitted identity fields remain supported and receive fresh values, so those calls are new operations rather than durable retries. All write tools return a compact acknowledgment containing the note ID, title, resulting version, mutation ID, outcome, and note URI—never the full Markdown body. `capture_note` accepts optional `notebookId` and `dedupeKey`; its outcome distinguishes creation, an idempotent retry, and a deduplicated existing note. `append_note` preserves Markdown boundaries and uses the dedicated logical append endpoint, so a lost response can be retried without duplicating the addition. `update_note` preserves tags when `tags` is omitted and still requires the expected note version for a new update. `delete_note` and `restore_note` require an exact note ID, expected version, mutation ID when retry identity is needed, and `confirm: true`; deletion is soft-only and there is no permanent purge tool.
 
 ```yaml
 mcp_servers:
@@ -573,6 +573,8 @@ mcp_servers:
         - capture_note
         - append_note
         - update_note
+        - delete_note
+        - restore_note
       prompts: false
 ```
 

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { calculateMetrics } from './search-evaluation-metrics.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const argument = (name) => {
@@ -11,6 +12,7 @@ const argument = (name) => {
 const fixturePath = resolve(root, argument('--fixtures') ?? 'tests/search-evaluation-fixtures.json');
 const inputPath = argument('--results');
 const shouldSeed = process.argv.includes('--seed');
+const metricUnit = argument('--metric-unit') ?? 'note';
 const fixture = JSON.parse(await readFile(fixturePath, 'utf8'));
 
 function isLocalUrl(value) {
@@ -30,69 +32,6 @@ function deterministicUuid(value) {
 function bodyData(body) {
   if (!body || typeof body !== 'object' || !('data' in body)) throw new Error('QNotes API returned an invalid success envelope.');
   return body.data;
-}
-
-function resultKey(item) {
-  if (typeof item === 'string') return item;
-  if (!item || typeof item !== 'object') return null;
-  if (typeof item.key === 'string') return item.key;
-  if (typeof item.noteSlug === 'string') return item.noteSlug;
-  if (typeof item.slug === 'string') return item.slug;
-  return null;
-}
-
-function resultNoteId(item) {
-  if (!item || typeof item !== 'object') return null;
-  if (typeof item.noteId === 'string') return item.noteId;
-  if (typeof item.id === 'string') return item.id;
-  return null;
-}
-
-function calculateMetrics(queries, predictions) {
-  let recallTotal = 0;
-  let reciprocalTotal = 0;
-  let ndcgTotal = 0;
-  let gradedQueries = 0;
-  let noResultPredictions = 0;
-  let noResultCorrect = 0;
-  let duplicateNoteRows = 0;
-  let resultRows = 0;
-  const queryReports = [];
-  for (const query of queries) {
-    const rawItems = Array.isArray(predictions[query.id]) ? predictions[query.id] : [];
-    const items = rawItems.map((item) => ({ key: resultKey(item), noteId: resultNoteId(item) }));
-    const relevant = new Set(query.relevant ?? []);
-    const keys = items.map((item) => item.key);
-    if (relevant.size) {
-      gradedQueries += 1;
-      recallTotal += keys.slice(0, 5).filter((item) => relevant.has(item)).length / relevant.size;
-      const firstRelevant = keys.slice(0, 10).findIndex((item) => relevant.has(item));
-      reciprocalTotal += firstRelevant >= 0 ? 1 / (firstRelevant + 1) : 0;
-      const dcg = keys.slice(0, 10).reduce((sum, item, index) => sum + (Number(query.graded?.[item] ?? 0) / Math.log2(index + 2)), 0);
-      const ideal = Object.values(query.graded ?? {}).sort((a, b) => b - a).slice(0, 10).reduce((sum, score, index) => sum + (Number(score) / Math.log2(index + 2)), 0);
-      ndcgTotal += ideal ? dcg / ideal : 0;
-    }
-    if (!items.length) {
-      noResultPredictions += 1;
-      if (query.expectedNoResult) noResultCorrect += 1;
-    }
-    const noteIds = items.map((item) => item.noteId).filter(Boolean);
-    resultRows += noteIds.length;
-    duplicateNoteRows += noteIds.length - new Set(noteIds).size;
-    queryReports.push({ id: query.id, returned: items.length, keys });
-  }
-  const denominator = gradedQueries || 1;
-  return {
-    queries: queries.length,
-    gradedQueries,
-    recallAt5: recallTotal / denominator,
-    mrrAt10: reciprocalTotal / denominator,
-    ndcgAt10: ndcgTotal / denominator,
-    duplicateNoteRate: resultRows ? duplicateNoteRows / resultRows : 0,
-    noResultPrecision: noResultPredictions ? noResultCorrect / noResultPredictions : null,
-    noResultQueries: noResultPredictions,
-    queryReports,
-  };
 }
 
 async function localEnvironment() {
@@ -230,7 +169,7 @@ async function seedCorpus(env, fixture) {
 async function main() {
   if (inputPath) {
     const predictions = JSON.parse(await readFile(resolve(root, inputPath), 'utf8'));
-    console.log(JSON.stringify({ mode: 'offline', ...calculateMetrics(fixture.queries, predictions) }, null, 2));
+    console.log(JSON.stringify({ mode: 'offline', ...calculateMetrics(fixture.queries, predictions, { metricUnit }) }, null, 2));
     return;
   }
   const env = await localEnvironment();
@@ -246,7 +185,7 @@ async function main() {
     const data = bodyData(await request(env, '/search', token, { method: 'POST', body: JSON.stringify({ query: query.query, mode: query.mode, limit: 10, maxPerNote: 2, filters }) }));
     predictions[query.id] = (data.items ?? []).map((item) => ({ key: fixture.corpus.find((candidate) => candidate.slug === item.noteSlug)?.key ?? null, noteId: item.noteId, documentId: item.documentId ?? item.id }));
   }
-  console.log(JSON.stringify({ mode: 'api', ...calculateMetrics(fixture.queries, predictions) }, null, 2));
+  console.log(JSON.stringify({ mode: 'api', ...calculateMetrics(fixture.queries, predictions, { metricUnit }) }, null, 2));
 }
 
 await main();

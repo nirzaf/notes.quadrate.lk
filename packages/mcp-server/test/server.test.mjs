@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { getBlockTool } from '../dist/tools/get-block.js';
 import { readNoteContextTool } from '../dist/tools/read-note-context.js';
 import { searchNotesTool } from '../dist/tools/search-notes.js';
-import { appendNoteTool, captureNoteTool, updateNoteTool } from '../dist/tools/write-notes.js';
+import { appendNoteTool, captureNoteTool, deleteNoteTool, restoreNoteTool, updateNoteTool } from '../dist/tools/write-notes.js';
 import { appendMarkdown } from '../dist/tools/common.js';
 import { READ_TOOL_NAMES, WRITE_TOOL_NAMES, createQNotesMcpServer } from '../dist/server.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -50,31 +50,40 @@ test('default MCP profile exposes only the read surface', () => {
   assert.deepEqual(READ_TOOL_NAMES, ['search_notes', 'read_note_context', 'get_block']);
 });
 
-test('MCP write helpers preserve markdown boundaries and omitted tags', async () => {
+test('MCP write helpers avoid pre-reads and preserve omitted fields for the API', async () => {
   assert.equal(appendMarkdown('  keep indentation\n', '\n## Added\n\ntext\n'), '  keep indentation\n\n## Added\n\ntext\n');
   const calls = [];
   const client = {
-    async getNote() { return { id: 'note-1', title: 'Title', slug: 'title', contentMarkdown: '# Existing\n', contentPlain: 'Existing', tags: ['ops'], notebookId: null, version: 3, createdAt: '2026-01-01', updatedAt: '2026-01-01', deletedAt: null }; },
-    async appendNote(noteId, input) { calls.push({ noteId, input }); return { id: noteId, ...input }; },
-    async updateNote(noteId, input) { calls.push({ noteId, input }); return { id: noteId, ...input }; },
+    async getNote() { throw new Error('MCP write helper must not pre-read the note.'); },
+    async appendNote(noteId, input) { calls.push({ operation: 'append', noteId, input }); return { id: noteId, title: 'Title', version: 4 }; },
+    async updateNote(noteId, input) { calls.push({ operation: 'update', noteId, input }); return { id: noteId, title: 'Title', version: 4 }; },
   };
-  await appendNoteTool(client, { noteId: 'note-1', contentMarkdown: '\n## Added\n' });
-  await updateNoteTool(client, { noteId: 'note-1', title: 'Title', slug: 'title', contentMarkdown: '# Replaced', expectedVersion: 3 });
+  const append = await appendNoteTool(client, { noteId: 'note-1', contentMarkdown: '\n## Added\n', mutationId: '660e8400-e29b-41d4-a716-446655440000' });
+  const update = await updateNoteTool(client, { noteId: 'note-1', title: 'Title', slug: 'title', contentMarkdown: '# Replaced', expectedVersion: 3, mutationId: '660e8400-e29b-41d4-a716-446655440001' });
+  assert.equal(calls.length, 2);
   assert.equal(calls[0].input.contentMarkdown, '\n## Added\n');
-  assert.equal(calls[0].input.expectedVersion, 3);
-  assert.deepEqual(calls[1].input.tags, ['ops']);
+  assert.equal(Object.hasOwn(calls[0].input, 'expectedVersion'), false);
+  assert.equal(Object.hasOwn(calls[1].input, 'tags'), false);
+  assert.deepEqual(JSON.parse(append.content[0].text), {
+    noteId: 'note-1', title: 'Title', resultingVersion: 4, mutationId: '660e8400-e29b-41d4-a716-446655440000', outcome: 'applied', uri: 'qnotes://notes/note-1',
+  });
+  assert.deepEqual(JSON.parse(update.content[0].text), {
+    noteId: 'note-1', title: 'Title', resultingVersion: 4, mutationId: '660e8400-e29b-41d4-a716-446655440001', outcome: 'applied', uri: 'qnotes://notes/note-1',
+  });
   assert.match(calls[0].input.deviceId, /^[0-9a-f-]{36}$/);
-  assert.match(calls[0].input.mutationId, /^[0-9a-f-]{36}$/);
 });
 
 test('MCP capture accepts dedupe and notebook provenance without caller mutation IDs', async () => {
   let captured;
-  const client = { async createNote(input) { captured = input; return { id: 'note-1', ...input }; } };
-  await captureNoteTool(client, { title: 'Captured', contentMarkdown: 'text', notebookId: null, dedupeKey: 'source:event:1' });
+  const client = { async createNote(input) { captured = input; return { id: 'note-1', title: 'Captured', version: 1 }; } };
+  const result = await captureNoteTool(client, { title: 'Captured', contentMarkdown: 'text', notebookId: null, dedupeKey: 'source:event:1' });
   assert.equal(captured.notebookId, null);
   assert.equal(captured.dedupeKey, 'source:event:1');
   assert.match(captured.deviceId, /^[0-9a-f-]{36}$/);
   assert.match(captured.mutationId, /^[0-9a-f-]{36}$/);
+  assert.deepEqual(JSON.parse(result.content[0].text), {
+    noteId: 'note-1', title: 'Captured', resultingVersion: 1, mutationId: captured.mutationId, outcome: 'created', uri: 'qnotes://notes/note-1',
+  });
 });
 
 function protocolClient(overrides = {}) {
@@ -90,6 +99,8 @@ function protocolClient(overrides = {}) {
     async createNote(input) { return { ...note, title: input.title }; },
     async appendNote(noteId, input) { return { ...note, id: noteId, version: note.version + 1, contentMarkdown: `${note.contentMarkdown}\n\n${input.contentMarkdown}\n` }; },
     async updateNote(noteId, input) { return { ...note, id: noteId, ...input }; },
+    async deleteNote(noteId, input) { return { ...note, id: noteId, version: input.expectedVersion + 1, deletedAt: '2026-01-01T00:00:01Z' }; },
+    async restoreNote(noteId, input) { return { ...note, id: noteId, version: input.expectedVersion + 1, deletedAt: null }; },
     ...overrides,
   };
 }
@@ -111,18 +122,29 @@ test('MCP protocol advertises the exact read and write tool profiles', async () 
   const write = await connectedProtocol('write', protocolClient());
   const writeTools = await write.client.listTools();
   assert.deepEqual(writeTools.tools.map((tool) => tool.name), [...READ_TOOL_NAMES, ...WRITE_TOOL_NAMES]);
+  const deleteTool = writeTools.tools.find((tool) => tool.name === 'delete_note');
+  assert.match(JSON.stringify(deleteTool.inputSchema), /confirm/);
+  assert.match(JSON.stringify(deleteTool.inputSchema), /true/);
+  const readAgain = await connectedProtocol('read', protocolClient());
+  const readToolNames = (await readAgain.client.listTools()).tools.map((tool) => tool.name);
+  assert.equal(readToolNames.includes('delete_note'), false);
+  assert.equal(readToolNames.includes('restore_note'), false);
+  await readAgain.client.close();
   await write.client.close();
 });
 
 test('MCP append exposes a caller-owned retry identity and expected version', async () => {
   let appendInput;
   const { client } = await connectedProtocol('write', protocolClient({
-    async appendNote(_noteId, input) { appendInput = input; return { id: 'note-1', version: 4, contentMarkdown: '# Rollback\n\nAdded\n' }; },
+    async getNote() { throw new Error('append_note must not pre-read'); },
+    async appendNote(_noteId, input) { appendInput = input; return { id: 'note-1', title: 'Rollback', version: 4 }; },
   }));
   const result = await client.callTool({ name: 'append_note', arguments: {
     noteId: '550e8400-e29b-41d4-a716-446655440000', contentMarkdown: 'Added', expectedVersion: 3, mutationId: '660e8400-e29b-41d4-a716-446655440000',
   } });
-  assert.equal(result.structuredContent.version, 4);
+  assert.deepEqual(result.structuredContent, {
+    noteId: 'note-1', title: 'Rollback', resultingVersion: 4, mutationId: '660e8400-e29b-41d4-a716-446655440000', outcome: 'applied', uri: 'qnotes://notes/note-1',
+  });
   assert.deepEqual(appendInput, {
     contentMarkdown: 'Added', expectedVersion: 3, deviceId: appendInput.deviceId, mutationId: '660e8400-e29b-41d4-a716-446655440000',
   });
@@ -151,7 +173,7 @@ test('MCP protocol calls preserve filters, structured content, outcomes, and val
       searchInput = input;
       return { items: [], queryId: 'query-2', modeUsed: 'keyword', degraded: false, timing: { embeddingMs: 0, retrievalMs: 1, totalMs: 1 } };
     },
-    async createNoteDetailed() { return { note: { id: 'note-1' }, outcome: 'deduplicated' }; },
+    async createNoteDetailed(input) { return { note: { id: 'note-1', slug: 'captured', title: input.title, contentMarkdown: '', contentPlain: '', tags: [], notebookId: null, version: 7, createdAt: '2026-01-01', updatedAt: '2026-01-01', deletedAt: null }, outcome: 'deduplicated' }; },
   });
   const { client } = await connectedProtocol('write', apiClient);
   const search = await client.callTool({ name: 'search_notes', arguments: {
@@ -168,8 +190,33 @@ test('MCP protocol calls preserve filters, structured content, outcomes, and val
   assert.equal(searchInput.limit, 500);
   assert.equal(searchInput.cursor, 'opaque-cursor');
   const capture = await client.callTool({ name: 'capture_note', arguments: { title: 'Captured', contentMarkdown: '', dedupeKey: 'source:event:1' } });
-  assert.deepEqual(capture.structuredContent, { note: { id: 'note-1' }, outcome: 'deduplicated' });
+  assert.equal(capture.structuredContent.noteId, 'note-1');
+  assert.equal(capture.structuredContent.title, 'Captured');
+  assert.equal(capture.structuredContent.resultingVersion, 7);
+  assert.equal(capture.structuredContent.outcome, 'deduplicated');
+  assert.equal('contentMarkdown' in capture.structuredContent, false);
+  assert.equal('contentPlain' in capture.structuredContent, false);
+  assert.equal('blocks' in capture.structuredContent, false);
   await client.close();
+});
+
+test('MCP delete and restore wrappers require confirmation and preserve mutation identity', async () => {
+  const calls = [];
+  const note = { id: 'note-1', title: 'Rollback', version: 4 };
+  const client = {
+    async deleteNote(noteId, input) { calls.push({ operation: 'delete', noteId, input }); return note; },
+    async restoreNote(noteId, input) { calls.push({ operation: 'restore', noteId, input }); return { ...note, version: 5 }; },
+  };
+  const deleted = await deleteNoteTool(client, { noteId: 'note-1', expectedVersion: 4, confirm: true, mutationId: '660e8400-e29b-41d4-a716-446655440010' }, { deviceId: '770e8400-e29b-41d4-a716-446655440000' });
+  const restored = await restoreNoteTool(client, { noteId: 'note-1', expectedVersion: 5, confirm: true, mutationId: '660e8400-e29b-41d4-a716-446655440011' }, { deviceId: '770e8400-e29b-41d4-a716-446655440000' });
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls.map(({ operation, input }) => ({ operation, input })), [
+    { operation: 'delete', input: { expectedVersion: 4, deviceId: '770e8400-e29b-41d4-a716-446655440000', mutationId: '660e8400-e29b-41d4-a716-446655440010' } },
+    { operation: 'restore', input: { expectedVersion: 5, deviceId: '770e8400-e29b-41d4-a716-446655440000', mutationId: '660e8400-e29b-41d4-a716-446655440011' } },
+  ]);
+  assert.equal(deleted.structuredContent.outcome, 'applied');
+  assert.equal(restored.structuredContent.outcome, 'applied');
+  await assert.rejects(() => deleteNoteTool(client, { noteId: 'note-1', expectedVersion: 4, confirm: false }), /confirm must be true/);
 });
 
 test('MCP resources read notes, documents, and blocks and reject mismatched provenance', async () => {
