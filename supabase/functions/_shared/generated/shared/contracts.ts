@@ -243,6 +243,28 @@ export interface SyncPage {
   hasMore: boolean;
 }
 
+export interface SearchContextSource {
+  documentId: UUID;
+  noteId: UUID;
+  noteVersion: number;
+  sourceType: SearchSourceType;
+  sourceId: UUID | null;
+  sourceKey: string;
+  sourceTitle: string;
+  headingPath: string | null;
+  attachmentId: UUID | null;
+  pageNumber: number | null;
+  content: string;
+  sourceHash: string;
+  truncated: boolean;
+}
+
+export interface SearchContextTokenBudget {
+  max: number;
+  used: number;
+  unit: 'approximate_tokens';
+}
+
 export interface SearchContext {
   noteId: UUID;
   noteVersion: number;
@@ -260,6 +282,11 @@ export interface SearchContext {
   sourceTitle?: string;
   attachmentId?: UUID | null;
   pageNumber?: number | null;
+  sourceHash?: string;
+  truncated?: boolean;
+  tokenBudget?: SearchContextTokenBudget;
+  previousSources?: SearchContextSource[];
+  nextSources?: SearchContextSource[];
 }
 export interface SearchResult {
   id: UUID;

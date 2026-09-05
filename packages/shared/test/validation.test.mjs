@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildHermesMcpConfig } from '../dist/hermes.js';
+import { approximateContextTokens, boundContextContent, boundContextSource, contextNoteChanged, contextTokenUsage, takeContextSources } from '../dist/context.js';
 import { resolveAutoSearchMode, validateAppendNoteInput, validateCreateNoteInput, validateListNotesQuery, validateSearchRequest, validateUpdateNoteInput } from '../dist/validation.js';
 
 test('auto mode uses keyword retrieval for identifiers and quoted phrases', () => {
@@ -87,4 +88,42 @@ test('validates optional append versions and generates a parseable Hermes config
   });
   assert.deepEqual(config.mcp_servers.quadrate_notes_write.tools.include, ['capture_note', 'append_note', 'update_note', 'delete_note', 'restore_note']);
   assert.throws(() => buildHermesMcpConfig({ profile: 'write', serverPath: '/repo/server.js' }), /stable UUID/);
+});
+
+test('bounds context content without an implicit ellipsis and reports truncation', () => {
+  assert.deepEqual(boundContextContent('abcdefghij', 2), { content: 'abcdefgh', truncated: true });
+  assert.deepEqual(boundContextContent('abcdefgh', 2), { content: 'abcdefgh', truncated: false });
+});
+
+test('accounts for Unicode by code point while keeping the approximate token budget bounded', () => {
+  const value = '😀😀😀😀😀';
+  const bounded = boundContextContent(value, 1);
+  assert.equal(bounded.content, '😀😀😀😀');
+  assert.equal([...bounded.content].length, 4);
+  assert.equal(approximateContextTokens(bounded.content), 1);
+  assert.equal(contextTokenUsage(bounded.content), 1);
+});
+
+test('keeps provenance separate for bounded neighboring sources', () => {
+  const source = (documentId, sourceHash, content) => ({
+    documentId, noteId: 'note-1', noteVersion: 7, sourceType: 'note_chunk', sourceId: null,
+    sourceKey: documentId, sourceTitle: documentId, headingPath: null, attachmentId: null, pageNumber: null,
+    content, sourceHash,
+  });
+  const previous = takeContextSources([source('previous-doc', 'previous-hash', 'previous content')], 10);
+  const next = takeContextSources([source('next-doc', 'next-hash', 'next content')], 10);
+  assert.equal(previous[0].documentId, 'previous-doc');
+  assert.equal(previous[0].sourceHash, 'previous-hash');
+  assert.equal(previous[0].content, 'previous content');
+  assert.equal(next[0].documentId, 'next-doc');
+  assert.equal(next[0].sourceHash, 'next-hash');
+  assert.equal(next[0].content, 'next content');
+  assert.equal(boundContextSource(source('center-doc', 'center-hash', 'center'), 10).sourceHash, 'center-hash');
+});
+
+test('detects stale context snapshots by version or updated timestamp', () => {
+  const snapshot = { version: 3, updatedAt: '2026-01-01T00:00:00Z' };
+  assert.equal(contextNoteChanged(snapshot, snapshot), false);
+  assert.equal(contextNoteChanged(snapshot, { version: 4, updatedAt: snapshot.updatedAt }), true);
+  assert.equal(contextNoteChanged(snapshot, { version: snapshot.version, updatedAt: '2026-01-01T00:00:01Z' }), true);
 });

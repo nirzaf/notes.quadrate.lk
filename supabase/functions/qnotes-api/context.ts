@@ -1,6 +1,6 @@
 import type { Context } from 'hono';
 import type { SearchContext, SearchSourceType } from '@qnotes/shared';
-import { isUUID } from '@qnotes/shared';
+import { boundContextSource, contextNoteChanged, contextTokenUsage, isUUID, takeContextSources, type ContextSourceInput } from '@qnotes/shared';
 import { authFromContext, requireScope } from '../_shared/auth.ts';
 import { ApiError } from '../_shared/errors.ts';
 import { appDbClient } from '../_shared/database.ts';
@@ -27,8 +27,14 @@ interface SearchDocumentRow {
   source_title: string;
   heading_path: string | null;
   content: string;
+  content_hash: string;
   position: number;
   page_number: number | null;
+}
+
+interface SearchDocumentReferenceRow {
+  id: string;
+  note_id: string;
 }
 
 interface NoteRow {
@@ -62,33 +68,38 @@ function parseRequest(documentId: unknown, values: { before?: unknown; after?: u
   return { documentId, before, after, maxTokens };
 }
 
-function approximateTokens(value: string): number {
-  return Math.ceil(value.trim().length / 4);
+function sourceInput(row: SearchDocumentRow, note: NoteRow): ContextSourceInput {
+  return {
+    documentId: row.id,
+    noteId: note.id,
+    noteVersion: note.version,
+    sourceType: row.source_type as SearchSourceType,
+    sourceId: row.source_id,
+    sourceKey: row.source_key,
+    sourceTitle: row.source_title,
+    headingPath: row.heading_path,
+    attachmentId: row.source_type === 'attachment_chunk' ? row.source_id : null,
+    pageNumber: row.page_number,
+    content: row.content,
+    sourceHash: row.content_hash,
+  };
 }
 
-function truncate(value: string, maxTokens: number): string {
-  const maxChars = maxTokens * 4;
-  if (value.length <= maxChars) return value;
-  return `${value.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
-}
-
-function takeNeighbors(rows: SearchDocumentRow[], maxTokens: number): string[] {
-  const values: string[] = [];
-  let remaining = maxTokens;
-  for (const row of rows) {
-    if (remaining < 1) break;
-    const value = truncate(row.content, remaining);
-    if (!value) continue;
-    values.push(value);
-    remaining -= Math.max(1, approximateTokens(value));
-  }
-  return values;
+async function loadDocumentReference(userId: string, documentId: string): Promise<SearchDocumentReferenceRow> {
+  const { data, error } = await appDbClient
+    .from('search_documents')
+    .select('id, note_id')
+    .eq('id', documentId)
+    .eq('owner_id', userId)
+    .maybeSingle();
+  if (error || !data) throw new ApiError(404, 'NOTE_NOT_FOUND', 'The search document was not found.');
+  return data as unknown as SearchDocumentReferenceRow;
 }
 
 async function loadDocument(userId: string, documentId: string): Promise<SearchDocumentRow> {
   const { data, error } = await appDbClient
     .from('search_documents')
-    .select('id, note_id, source_type, source_id, source_key, source_title, heading_path, content, position, page_number')
+    .select('id, note_id, source_type, source_id, source_key, source_title, heading_path, content, content_hash, position, page_number')
     .eq('id', documentId)
     .eq('owner_id', userId)
     .maybeSingle();
@@ -110,8 +121,8 @@ async function loadNote(userId: string, noteId: string): Promise<NoteRow> {
 
 async function loadNeighbors(userId: string, document: SearchDocumentRow, request: ContextRequest): Promise<{ previous: SearchDocumentRow[]; next: SearchDocumentRow[] }> {
   if (document.source_type === 'note_metadata' || document.source_type === 'copy_block' || document.source_type === 'code_block') return { previous: [], next: [] };
-  const previousBase = appDbClient.from('search_documents').select('id, note_id, source_type, source_id, source_key, source_title, heading_path, content, position, page_number').eq('owner_id', userId).eq('note_id', document.note_id).eq('source_type', document.source_type).lt('position', document.position);
-  const nextBase = appDbClient.from('search_documents').select('id, note_id, source_type, source_id, source_key, source_title, heading_path, content, position, page_number').eq('owner_id', userId).eq('note_id', document.note_id).eq('source_type', document.source_type).gt('position', document.position);
+  const previousBase = appDbClient.from('search_documents').select('id, note_id, source_type, source_id, source_key, source_title, heading_path, content, content_hash, position, page_number').eq('owner_id', userId).eq('note_id', document.note_id).eq('source_type', document.source_type).lt('position', document.position);
+  const nextBase = appDbClient.from('search_documents').select('id, note_id, source_type, source_id, source_key, source_title, heading_path, content, content_hash, position, page_number').eq('owner_id', userId).eq('note_id', document.note_id).eq('source_type', document.source_type).gt('position', document.position);
   const previousScoped = document.source_id ? previousBase.eq('source_id', document.source_id) : previousBase.is('source_id', null);
   const nextScoped = document.source_id ? nextBase.eq('source_id', document.source_id) : nextBase.is('source_id', null);
   const [previousResult, nextResult] = await Promise.all([
@@ -130,32 +141,46 @@ async function loadNeighbors(userId: string, document: SearchDocumentRow, reques
 }
 
 async function contextFor(userId: string, request: ContextRequest): Promise<SearchContext> {
+  const documentReference = await loadDocumentReference(userId, request.documentId);
+  const noteBefore = await loadNote(userId, documentReference.note_id);
   const document = await loadDocument(userId, request.documentId);
-  const note = await loadNote(userId, document.note_id);
   const neighbors = await loadNeighbors(userId, document, request);
-  let remainingTokens = request.maxTokens;
-  const content = truncate(document.content, remainingTokens);
-  remainingTokens = Math.max(0, remainingTokens - Math.max(1, approximateTokens(content)));
-  const previous = takeNeighbors(neighbors.previous, Math.floor(remainingTokens / 2));
-  const previousTokens = previous.reduce((sum, value) => sum + Math.max(1, approximateTokens(value)), 0);
-  const next = takeNeighbors(neighbors.next, Math.max(0, remainingTokens - previousTokens));
+  const noteAfter = await loadNote(userId, document.note_id);
+  if (contextNoteChanged(noteBefore, noteAfter)) {
+    throw new ApiError(409, 'NOTE_VERSION_CONFLICT', 'The note changed while context was being read. Retry the context request.', {
+      currentVersion: noteAfter.version,
+      currentUpdatedAt: noteAfter.updated_at,
+    });
+  }
+  const center = boundContextSource(sourceInput(document, noteAfter), request.maxTokens);
+  let usedTokens = contextTokenUsage(center.content);
+  const remainingAfterCenter = Math.max(0, request.maxTokens - usedTokens);
+  const previousSources = takeContextSources(neighbors.previous.map((row) => sourceInput(row, noteAfter)), Math.floor(remainingAfterCenter / 2));
+  usedTokens += previousSources.reduce((sum, source) => sum + contextTokenUsage(source.content), 0);
+  const nextSources = takeContextSources(neighbors.next.map((row) => sourceInput(row, noteAfter)), Math.max(0, request.maxTokens - usedTokens));
+  usedTokens += nextSources.reduce((sum, source) => sum + contextTokenUsage(source.content), 0);
   return {
-    noteId: note.id,
-    noteVersion: note.version,
+    noteId: noteAfter.id,
+    noteVersion: noteAfter.version,
     documentId: document.id,
-    uri: `qnotes://notes/${note.id}/documents/${document.id}`,
-    title: note.title || document.source_title,
+    uri: `qnotes://notes/${noteAfter.id}/documents/${document.id}`,
+    title: noteAfter.title || document.source_title,
     headingPath: document.heading_path,
-    content,
-    previous,
-    next,
-    updatedAt: note.updated_at,
+    content: center.content,
+    previous: previousSources.map((source) => source.content),
+    next: nextSources.map((source) => source.content),
+    updatedAt: noteAfter.updated_at,
     sourceType: document.source_type as SearchSourceType,
     sourceId: document.source_id,
     sourceKey: document.source_key,
     sourceTitle: document.source_title,
     attachmentId: document.source_type === 'attachment_chunk' ? document.source_id : null,
     pageNumber: document.page_number,
+    sourceHash: center.sourceHash,
+    truncated: center.truncated || previousSources.some((source) => source.truncated) || nextSources.some((source) => source.truncated),
+    tokenBudget: { max: request.maxTokens, used: usedTokens, unit: 'approximate_tokens' },
+    previousSources,
+    nextSources,
   };
 }
 
