@@ -2,6 +2,18 @@ import { archiveQueueMessage, deleteQueueMessage, readQueue } from '../_shared/q
 import { appDbClient } from '../_shared/database.ts';
 import { embeddingDocumentFromRow } from './adapter.ts';
 import { EMBEDDING_MODEL, EMBEDDING_MODEL_VERSION, createEmbedding, embeddingInput, embeddingInputHash } from './embedding.ts';
+import {
+  boundProviderEmbedding,
+  canStartWork,
+  createWorkerBudget,
+  isProviderEmbeddingTimeout,
+  remainingWorkerBudgetMs,
+  shouldStartBatch,
+  WORKER_BATCH_SIZE,
+  WORKER_VISIBILITY_LEASE_SECONDS,
+  PROVIDER_EMBEDDING_TIMEOUT_MS,
+  type WorkerBudget,
+} from './worker-budget.ts';
 
 const queueName = 'note-embeddings';
 const WORKER_CONCURRENCY = 3;
@@ -16,7 +28,7 @@ function validMessage(value: unknown): value is EmbeddingJob {
     && typeof (value as { contentHash?: unknown }).contentHash === 'string';
 }
 
-async function processMessage(message: { message_id: number; read_count: number; message: unknown }): Promise<WorkerOutcome> {
+async function processMessage(message: { message_id: number; read_count: number; message: unknown }, budget: WorkerBudget): Promise<WorkerOutcome> {
   if (!validMessage(message.message)) {
     await archiveQueueMessage(queueName, message.message_id);
     return 'failed';
@@ -56,7 +68,13 @@ async function processMessage(message: { message_id: number; read_count: number;
       return 'skipped';
     }
 
-    const vector = await createEmbedding(embeddingInput(embeddingDocument));
+    if (!canStartWork(budget, Date.now())) return 'retried';
+    const remainingBudgetMs = remainingWorkerBudgetMs(budget, Date.now());
+    if (!remainingBudgetMs) return 'retried';
+    const vector = await boundProviderEmbedding(
+      createEmbedding(embeddingInput(embeddingDocument)),
+      Math.min(PROVIDER_EMBEDDING_TIMEOUT_MS, remainingBudgetMs),
+    );
     const { data: current, error: currentError } = await appDbClient
       .from('search_documents')
       .select('content, source_title, heading_path, content_hash, embedding_input_hash')
@@ -92,7 +110,8 @@ async function processMessage(message: { message_id: number; read_count: number;
     if (updateError) throw updateError;
     await deleteQueueMessage(queueName, message.message_id);
     return updated ? 'completed' : 'skipped';
-  } catch {
+  } catch (error) {
+    if (isProviderEmbeddingTimeout(error)) return 'retried';
     if (message.read_count >= 5) {
       const failed = await appDbClient
         .from('search_documents')
@@ -114,29 +133,34 @@ async function processMessage(message: { message_id: number; read_count: number;
   }
 }
 
-async function processBounded(messages: Array<{ message_id: number; read_count: number; message: unknown }>): Promise<WorkerOutcome[]> {
+async function processBounded(
+  messages: Array<{ message_id: number; read_count: number; message: unknown }>,
+  budget: WorkerBudget,
+): Promise<WorkerOutcome[]> {
   const results: WorkerOutcome[] = [];
   let nextIndex = 0;
   async function consume(): Promise<void> {
     while (nextIndex < messages.length) {
+      if (!canStartWork(budget, Date.now())) return;
       const index = nextIndex;
       nextIndex += 1;
       const message = messages[index];
-      if (message) results[index] = await processMessage(message);
+      if (message) results[index] = await processMessage(message, budget);
     }
   }
   const workerCount = Math.min(WORKER_CONCURRENCY, messages.length);
   await Promise.all(Array.from({ length: workerCount }, () => consume()));
-  return results;
+  return results.filter((outcome): outcome is WorkerOutcome => outcome !== undefined);
 }
 
 async function processRequest(request: Request): Promise<Response> {
   if (request.headers.get('x-qnotes-worker-secret') !== Deno.env.get('QNOTES_INTERNAL_WORKER_SECRET')) return Response.json({ error: 'unauthorized' }, { status: 401 });
+  const budget = createWorkerBudget(Date.now());
   const outcomes: WorkerOutcome[] = [];
-  for (let batch = 0; batch < 4; batch += 1) {
-    const messages = await readQueue(queueName, 120, 50);
+  for (let batch = 0; shouldStartBatch(batch, budget, Date.now()); batch += 1) {
+    const messages = await readQueue(queueName, WORKER_VISIBILITY_LEASE_SECONDS, WORKER_BATCH_SIZE);
     if (!messages.length) break;
-    outcomes.push(...await processBounded(messages));
+    outcomes.push(...await processBounded(messages, budget));
   }
   return Response.json({
     data: {
