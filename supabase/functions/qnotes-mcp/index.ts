@@ -9,6 +9,7 @@ const OAUTH_SCOPE = 'ACCESS_VIEW_MANAGE_MCP_CONTENT';
 const OAUTH_CODE_TTL_SECONDS = 90;
 const OAUTH_ACCESS_TTL_SECONDS = 30 * 24 * 60 * 60;
 const OAUTH_CLIENT_TTL_SECONDS = 90 * 24 * 60 * 60;
+const OAUTH_CONSENT_URL = Deno.env.get('QNOTES_MCP_CONSENT_URL')?.trim() || 'https://notes.quadrate.lk/oauth/authorize';
 const GOOGLE_REDIRECT_HOSTS = new Set([
   'oauth-redirect.googleusercontent.com',
   'oauth-redirect-sandbox.googleusercontent.com',
@@ -198,20 +199,6 @@ function isAllowedGoogleRedirect(uri: string): boolean {
   }
 }
 
-function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (character) => ({
-    '&': '&amp;',
-    '<': '&lt;',
-    '>': '&gt;',
-    '"': '&quot;',
-    "'": '&#39;',
-  })[character] ?? character);
-}
-
-function hiddenInput(name: string, value: string): string {
-  return `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">`;
-}
-
 function oauthError(request: Request, error: string, description: string, status = 400): Response {
   return json(request, { error, error_description: description }, status, {
     'Cache-Control': 'no-store',
@@ -273,32 +260,27 @@ async function clientAllowsRedirect(client: OAuthClientPayload, redirectUri: str
   return client.redirectUriHashes.length === 0 || client.redirectUriHashes.includes(await redirectFingerprint(redirectUri));
 }
 
-function htmlResponse(request: Request, html: string): Response {
-  return withCors(request, new Response(html, {
+function consentRedirect(request: Request, data: { clientId: string; clientName: string; redirectUri: string; state: string; codeChallenge: string; scope: string; resource: string }): Response {
+  const consentUrl = new URL(OAUTH_CONSENT_URL);
+  const values = {
+    client_id: data.clientId,
+    client_name: data.clientName,
+    redirect_uri: data.redirectUri,
+    state: data.state,
+    code_challenge: data.codeChallenge,
+    code_challenge_method: 'S256',
+    scope: data.scope,
+    resource: data.resource,
+  };
+  for (const [key, value] of Object.entries(values)) consentUrl.searchParams.set(key, value);
+  return withCors(request, new Response(null, {
+    status: 302,
     headers: {
-      'Content-Type': 'text/html; charset=utf-8',
+      Location: consentUrl.toString(),
       'Cache-Control': 'no-store',
-      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'",
-      'Referrer-Policy': 'no-referrer',
+      Pragma: 'no-cache',
     },
   }));
-}
-
-function consentPage(request: Request, data: { clientId: string; clientName: string; redirectUri: string; state: string; codeChallenge: string; scope: string; resource: string }): Response {
-  const fields = [
-    hiddenInput('client_id', data.clientId),
-    hiddenInput('redirect_uri', data.redirectUri),
-    hiddenInput('state', data.state),
-    hiddenInput('code_challenge', data.codeChallenge),
-    hiddenInput('code_challenge_method', 'S256'),
-    hiddenInput('scope', data.scope),
-    hiddenInput('resource', data.resource),
-  ].join('');
-  return htmlResponse(request, `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Authorize Quadrate Notes</title>
-<style>body{font-family:system-ui,sans-serif;background:#0b1020;color:#e5e7eb;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}.card{background:#151b2e;border:1px solid #263049;border-radius:14px;padding:2rem;max-width:460px;width:calc(100% - 2rem);box-sizing:border-box}h1{font-size:1.2rem;margin:0 0 .6rem}p{color:#9fb0c7;font-size:.92rem;line-height:1.5}label{display:block;font-size:.86rem;color:#cbd5e1;margin-top:1.25rem;margin-bottom:.4rem}input[type=password]{width:100%;padding:.7rem;border-radius:8px;border:1px solid #3b4863;background:#0b1020;color:#fff;box-sizing:border-box;font-size:.95rem}.row{display:flex;gap:.75rem;margin-top:1.5rem}button{flex:1;padding:.72rem;border-radius:8px;border:0;font-size:.95rem;cursor:pointer}.approve{background:#3b82f6;color:#fff}.deny{background:transparent;color:#cbd5e1;border:1px solid #3b4863}code{word-break:break-all;font-size:.8rem}</style></head>
-<body><main class="card"><h1>Connect Quadrate Notes</h1><p><strong>${escapeHtml(data.clientName)}</strong> is requesting read-only access to your <strong>Quadrate Notes</strong> MCP tools.</p><p>Enter the personal token you created in Quadrate Notes. It remains protected by the server and is not included in the authorization URL.</p>
-<form method="post" action="">${fields}<label for="qnotes-token">Quadrate Notes personal token</label><input id="qnotes-token" name="qnotes_token" type="password" autocomplete="off" placeholder="qnt_…" required autofocus><div class="row"><button class="approve" name="decision" value="approve" type="submit">Approve &amp; Connect</button><button class="deny" name="decision" value="deny" type="submit">Cancel</button></div></form></main></body></html>`);
 }
 
 function authorizationRedirect(request: Request, redirectUri: string, values: Record<string, string>): Response {
@@ -352,7 +334,7 @@ async function handleAuthorize(request: Request): Promise<Response> {
     if (!params.get('state') || params.get('state')!.length > 4096) return oauthError(request, 'invalid_request', 'A valid state parameter is required.');
     if (!params.get('code_challenge') || params.get('code_challenge_method') !== 'S256' || params.get('code_challenge')!.length > 256) return oauthError(request, 'invalid_request', 'PKCE S256 is required.');
     if (scope.length > 512) return oauthError(request, 'invalid_request', 'The OAuth scope is invalid.');
-    return consentPage(request, { clientId, clientName: client.clientName, redirectUri, state: params.get('state')!, codeChallenge: params.get('code_challenge')!, scope, resource });
+    return consentRedirect(request, { clientId, clientName: client.clientName, redirectUri, state: params.get('state')!, codeChallenge: params.get('code_challenge')!, scope, resource });
   }
 
   if (request.method !== 'POST') return oauthError(request, 'invalid_request', 'The authorization endpoint only accepts GET and POST.');
