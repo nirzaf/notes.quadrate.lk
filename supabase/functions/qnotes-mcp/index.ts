@@ -4,10 +4,11 @@ import { createQNotesMcpServer } from '../_shared/generated/mcp-server/server.ts
 import { isPersonalToken } from '../_shared/token.ts';
 
 const MCP_PATHS = new Set(['', '/', '/mcp']);
-const OAUTH_CLIENT_ID = Deno.env.get('QNOTES_MCP_OAUTH_CLIENT_ID') ?? 'qnotes-gemini';
+const STATIC_OAUTH_CLIENT_ID = Deno.env.get('QNOTES_MCP_OAUTH_CLIENT_ID') ?? 'qnotes-gemini';
 const OAUTH_SCOPE = 'ACCESS_VIEW_MANAGE_MCP_CONTENT';
 const OAUTH_CODE_TTL_SECONDS = 90;
 const OAUTH_ACCESS_TTL_SECONDS = 30 * 24 * 60 * 60;
+const OAUTH_CLIENT_TTL_SECONDS = 90 * 24 * 60 * 60;
 const GOOGLE_REDIRECT_HOSTS = new Set([
   'oauth-redirect.googleusercontent.com',
   'oauth-redirect-sandbox.googleusercontent.com',
@@ -20,6 +21,23 @@ interface OAuthCodePayload {
   codeChallenge: string;
   scope: string;
   resource: string;
+  encryptedToken: string;
+  expiresAt: number;
+}
+
+interface OAuthClientPayload {
+  type: 'client';
+  redirectUris: string[];
+  clientName: string;
+  expiresAt: number;
+  nonce: string;
+}
+
+interface OAuthAccessPayload {
+  type: 'access_token';
+  clientId: string;
+  resource: string;
+  encryptedToken: string;
   expiresAt: number;
 }
 
@@ -97,6 +115,44 @@ async function oauthKey(): Promise<CryptoKey> {
   );
 }
 
+async function oauthEncryptionKey(): Promise<CryptoKey> {
+  const pepper = Deno.env.get('QNOTES_TOKEN_PEPPER');
+  if (!pepper) throw new Error('QNOTES_TOKEN_PEPPER is not configured.');
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pepper));
+  return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+}
+
+async function encryptSecret(value: string): Promise<string> {
+  const iv = crypto.getRandomValues(new Uint8Array(12)) as Uint8Array<ArrayBuffer>;
+  const ciphertext = new Uint8Array(await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    await oauthEncryptionKey(),
+    new TextEncoder().encode(value),
+  ));
+  const combined = new Uint8Array(iv.byteLength + ciphertext.byteLength);
+  combined.set(iv, 0);
+  combined.set(ciphertext, iv.byteLength);
+  return base64Url(combined);
+}
+
+async function decryptSecret(value: string): Promise<string | null> {
+  try {
+    const combined = decodeBase64Url(value);
+    if (combined.byteLength <= 12) return null;
+    const iv = new Uint8Array(combined.slice(0, 12)) as Uint8Array<ArrayBuffer>;
+    const ciphertext = new Uint8Array(combined.slice(12)) as Uint8Array<ArrayBuffer>;
+    const plaintext = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv },
+      await oauthEncryptionKey(),
+      ciphertext,
+    );
+    const token = new TextDecoder().decode(plaintext);
+    return isPersonalToken(token) ? token : null;
+  } catch {
+    return null;
+  }
+}
+
 async function signOAuthValue(prefix: string, payload: Record<string, unknown>): Promise<string> {
   const encodedPayload = base64Url(new TextEncoder().encode(JSON.stringify(payload)));
   const signature = new Uint8Array(await crypto.subtle.sign('HMAC', await oauthKey(), new TextEncoder().encode(encodedPayload)));
@@ -136,6 +192,20 @@ function isAllowedGoogleRedirect(uri: string): boolean {
   }
 }
 
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  })[character] ?? character);
+}
+
+function hiddenInput(name: string, value: string): string {
+  return `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">`;
+}
+
 function oauthError(request: Request, error: string, description: string, status = 400): Response {
   return json(request, { error, error_description: description }, status, {
     'Cache-Control': 'no-store',
@@ -149,10 +219,11 @@ function oauthMetadata(request: Request): Record<string, unknown> {
     issuer: base,
     authorization_endpoint: `${base}/authorize`,
     token_endpoint: `${base}/token`,
+    registration_endpoint: `${base}/register`,
     response_types_supported: ['code'],
     grant_types_supported: ['authorization_code'],
     code_challenge_methods_supported: ['S256'],
-    token_endpoint_auth_methods_supported: ['client_secret_post', 'client_secret_basic'],
+    token_endpoint_auth_methods_supported: ['none'],
     scopes_supported: [OAUTH_SCOPE],
   };
 }
@@ -167,55 +238,146 @@ function oauthResourceMetadata(request: Request): Record<string, unknown> {
   };
 }
 
-function basicCredentials(request: Request): { clientId: string; clientSecret: string } | null {
+function basicClientId(request: Request): string | null {
   const header = request.headers.get('authorization');
   if (!header?.startsWith('Basic ')) return null;
   try {
     const decoded = new TextDecoder().decode(decodeBase64Url(header.slice(6).trim()));
     const separator = decoded.indexOf(':');
     if (separator < 1) return null;
-    return { clientId: decoded.slice(0, separator), clientSecret: decoded.slice(separator + 1) };
+    return decoded.slice(0, separator);
   } catch {
     return null;
   }
 }
 
+async function oauthClient(clientId: string): Promise<OAuthClientPayload | null> {
+  if (!clientId || clientId.length > 4096) return null;
+  if (clientId === STATIC_OAUTH_CLIENT_ID) {
+    return { type: 'client', redirectUris: [], clientName: 'Google', expiresAt: Number.MAX_SAFE_INTEGER, nonce: 'static' };
+  }
+  const client = await verifyOAuthValue<OAuthClientPayload>(clientId, 'qdc');
+  if (!client || client.type !== 'client' || client.expiresAt <= Math.floor(Date.now() / 1000)) return null;
+  if (!Array.isArray(client.redirectUris) || client.redirectUris.length === 0 || client.redirectUris.length > 16 || !client.redirectUris.every((uri) => typeof uri === 'string' && isAllowedGoogleRedirect(uri))) return null;
+  return client;
+}
+
+function clientAllowsRedirect(client: OAuthClientPayload, redirectUri: string): boolean {
+  return isAllowedGoogleRedirect(redirectUri) && (client.redirectUris.length === 0 || client.redirectUris.includes(redirectUri));
+}
+
+function htmlResponse(request: Request, html: string): Response {
+  return withCors(request, new Response(html, {
+    headers: {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'",
+      'Referrer-Policy': 'no-referrer',
+    },
+  }));
+}
+
+function consentPage(request: Request, data: { clientId: string; clientName: string; redirectUri: string; state: string; codeChallenge: string; scope: string; resource: string }): Response {
+  const fields = [
+    hiddenInput('client_id', data.clientId),
+    hiddenInput('redirect_uri', data.redirectUri),
+    hiddenInput('state', data.state),
+    hiddenInput('code_challenge', data.codeChallenge),
+    hiddenInput('code_challenge_method', 'S256'),
+    hiddenInput('scope', data.scope),
+    hiddenInput('resource', data.resource),
+  ].join('');
+  return htmlResponse(request, `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Authorize Quadrate Notes</title>
+<style>body{font-family:system-ui,sans-serif;background:#0b1020;color:#e5e7eb;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}.card{background:#151b2e;border:1px solid #263049;border-radius:14px;padding:2rem;max-width:460px;width:calc(100% - 2rem);box-sizing:border-box}h1{font-size:1.2rem;margin:0 0 .6rem}p{color:#9fb0c7;font-size:.92rem;line-height:1.5}label{display:block;font-size:.86rem;color:#cbd5e1;margin-top:1.25rem;margin-bottom:.4rem}input[type=password]{width:100%;padding:.7rem;border-radius:8px;border:1px solid #3b4863;background:#0b1020;color:#fff;box-sizing:border-box;font-size:.95rem}.row{display:flex;gap:.75rem;margin-top:1.5rem}button{flex:1;padding:.72rem;border-radius:8px;border:0;font-size:.95rem;cursor:pointer}.approve{background:#3b82f6;color:#fff}.deny{background:transparent;color:#cbd5e1;border:1px solid #3b4863}code{word-break:break-all;font-size:.8rem}</style></head>
+<body><main class="card"><h1>Connect Quadrate Notes</h1><p><strong>${escapeHtml(data.clientName)}</strong> is requesting read-only access to your <strong>Quadrate Notes</strong> MCP tools.</p><p>Enter the personal token you created in Quadrate Notes. It remains protected by the server and is not included in the authorization URL.</p>
+<form method="post" action="">${fields}<label for="qnotes-token">Quadrate Notes personal token</label><input id="qnotes-token" name="qnotes_token" type="password" autocomplete="off" placeholder="qnt_…" required autofocus><div class="row"><button class="approve" name="decision" value="approve" type="submit">Approve &amp; Connect</button><button class="deny" name="decision" value="deny" type="submit">Cancel</button></div></form></main></body></html>`);
+}
+
+function authorizationRedirect(request: Request, redirectUri: string, values: Record<string, string>): Response {
+  const redirect = new URL(redirectUri);
+  for (const [key, value] of Object.entries(values)) redirect.searchParams.set(key, value);
+  return withCors(request, new Response(null, {
+    status: 302,
+    headers: { Location: redirect.toString(), 'Cache-Control': 'no-store' },
+  }));
+}
+
+async function handleRegister(request: Request): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    body = await request.json() as Record<string, unknown>;
+  } catch {
+    return oauthError(request, 'invalid_client_metadata', 'The registration request must be JSON.');
+  }
+  const redirectUris = Array.isArray(body.redirect_uris) ? body.redirect_uris.filter((value): value is string => typeof value === 'string') : [];
+  if (redirectUris.length === 0 || redirectUris.length > 16 || redirectUris.some((uri) => !isAllowedGoogleRedirect(uri))) return oauthError(request, 'invalid_redirect_uri', 'Only HTTPS Google OAuth redirect URIs are allowed.');
+  const clientName = typeof body.client_name === 'string' && body.client_name.trim() ? body.client_name.trim().slice(0, 128) : 'Google';
+  const now = Math.floor(Date.now() / 1000);
+  const clientId = await signOAuthValue('qdc', {
+    type: 'client',
+    redirectUris,
+    clientName,
+    expiresAt: now + OAUTH_CLIENT_TTL_SECONDS,
+    nonce: base64Url(crypto.getRandomValues(new Uint8Array(18))),
+  });
+  return json(request, {
+    client_id: clientId,
+    client_id_issued_at: now,
+    redirect_uris: redirectUris,
+    client_name: clientName,
+    grant_types: ['authorization_code'],
+    response_types: ['code'],
+    token_endpoint_auth_method: 'none',
+  }, 201, { 'Cache-Control': 'no-store' });
+}
+
 async function handleAuthorize(request: Request): Promise<Response> {
-  const params = new URL(request.url).searchParams;
-  const clientId = params.get('client_id');
-  const redirectUri = params.get('redirect_uri');
-  const state = params.get('state');
-  const responseType = params.get('response_type');
-  const codeChallenge = params.get('code_challenge');
-  const codeChallengeMethod = params.get('code_challenge_method');
-  const resource = params.get('resource') ?? mcpBaseUrl(request);
-  const scope = params.get('scope')?.trim() || OAUTH_SCOPE;
+  if (request.method === 'GET') {
+    const params = new URL(request.url).searchParams;
+    const clientId = params.get('client_id') ?? '';
+    const redirectUri = params.get('redirect_uri') ?? '';
+    const client = await oauthClient(clientId);
+    const resource = params.get('resource') ?? mcpBaseUrl(request);
+    const scope = params.get('scope')?.trim() || OAUTH_SCOPE;
+    if (!client || params.get('response_type') !== 'code' || !clientAllowsRedirect(client, redirectUri)) return oauthError(request, 'invalid_request', 'The OAuth authorization request is invalid.');
+    if (!params.get('state') || params.get('state')!.length > 4096) return oauthError(request, 'invalid_request', 'A valid state parameter is required.');
+    if (!params.get('code_challenge') || params.get('code_challenge_method') !== 'S256' || params.get('code_challenge')!.length > 256) return oauthError(request, 'invalid_request', 'PKCE S256 is required.');
+    if (resource !== mcpBaseUrl(request) || scope.length > 512) return oauthError(request, 'invalid_request', 'The OAuth resource or scope is invalid.');
+    return consentPage(request, { clientId, clientName: client.clientName, redirectUri, state: params.get('state')!, codeChallenge: params.get('code_challenge')!, scope, resource });
+  }
 
-  if (clientId !== OAUTH_CLIENT_ID || responseType !== 'code') return oauthError(request, 'invalid_request', 'The OAuth authorization request is invalid.');
-  if (!redirectUri || !isAllowedGoogleRedirect(redirectUri)) return oauthError(request, 'invalid_request', 'The redirect URI is not allowed.');
-  if (!state || state.length > 2048) return oauthError(request, 'invalid_request', 'A valid state parameter is required.');
-  if (!codeChallenge || codeChallengeMethod !== 'S256' || codeChallenge.length > 256) return oauthError(request, 'invalid_request', 'PKCE S256 is required.');
+  if (request.method !== 'POST') return oauthError(request, 'invalid_request', 'The authorization endpoint only accepts GET and POST.');
+  let form: FormData;
+  try {
+    form = await request.formData();
+  } catch {
+    return oauthError(request, 'invalid_request', 'The authorization request must use form encoding.');
+  }
+  const clientId = String(form.get('client_id') ?? '');
+  const redirectUri = String(form.get('redirect_uri') ?? '');
+  const state = String(form.get('state') ?? '');
+  const client = await oauthClient(clientId);
+  if (!client || !clientAllowsRedirect(client, redirectUri)) return oauthError(request, 'invalid_request', 'The OAuth authorization request is invalid.');
+  if (form.get('decision') !== 'approve') return authorizationRedirect(request, redirectUri, { error: 'access_denied', state, iss: mcpBaseUrl(request) });
+  const qnotesToken = String(form.get('qnotes_token') ?? '');
+  if (!isPersonalToken(qnotesToken)) return oauthError(request, 'access_denied', 'A valid Quadrate Notes personal token is required.');
+  const codeChallenge = String(form.get('code_challenge') ?? '');
+  if (!state || state.length > 4096 || !codeChallenge || form.get('code_challenge_method') !== 'S256' || codeChallenge.length > 256) return oauthError(request, 'invalid_request', 'PKCE S256 and state are required.');
+  const resource = String(form.get('resource') ?? mcpBaseUrl(request));
   if (resource !== mcpBaseUrl(request)) return oauthError(request, 'invalid_target', 'The resource does not match this MCP server.');
-
+  const scope = String(form.get('scope') ?? OAUTH_SCOPE).slice(0, 512);
   const code = await signOAuthValue('qoc', {
     type: 'authorization_code',
     clientId,
     redirectUri,
     codeChallenge,
-    scope: scope.slice(0, 512),
+    scope,
     resource,
+    encryptedToken: await encryptSecret(qnotesToken),
     expiresAt: Math.floor(Date.now() / 1000) + OAUTH_CODE_TTL_SECONDS,
   });
-  const redirect = new URL(redirectUri);
-  redirect.searchParams.set('code', code);
-  redirect.searchParams.set('state', state);
-  return withCors(request, new Response(null, {
-    status: 302,
-    headers: {
-      Location: redirect.toString(),
-      'Cache-Control': 'no-store',
-    },
-  }));
+  return authorizationRedirect(request, redirectUri, { code, state, iss: mcpBaseUrl(request) });
 }
 
 async function handleToken(request: Request): Promise<Response> {
@@ -226,10 +388,9 @@ async function handleToken(request: Request): Promise<Response> {
     return oauthError(request, 'invalid_request', 'The token request must use form encoding.');
   }
 
-  const basic = basicCredentials(request);
-  const clientId = String(form.get('client_id') ?? basic?.clientId ?? '');
-  const clientSecret = String(form.get('client_secret') ?? basic?.clientSecret ?? '');
-  if (clientId !== OAUTH_CLIENT_ID || !isPersonalToken(clientSecret)) return oauthError(request, 'invalid_client', 'The OAuth client credentials are invalid.', 401);
+  const clientId = String(form.get('client_id') ?? basicClientId(request) ?? '');
+  const client = await oauthClient(clientId);
+  if (!client) return oauthError(request, 'invalid_client', 'The OAuth client credentials are invalid.', 401);
   if (form.get('grant_type') !== 'authorization_code') return oauthError(request, 'unsupported_grant_type', 'Only the authorization_code grant is supported.');
 
   const codeValue = String(form.get('code') ?? '');
@@ -242,8 +403,16 @@ async function handleToken(request: Request): Promise<Response> {
   const verifier = String(form.get('code_verifier') ?? '');
   if (!verifier || (await pkceChallenge(verifier)) !== code.codeChallenge) return oauthError(request, 'invalid_grant', 'The PKCE verifier is invalid.');
 
+  const accessToken = await signOAuthValue('qoa', {
+    type: 'access_token',
+    clientId,
+    resource: code.resource,
+    encryptedToken: code.encryptedToken,
+    expiresAt: Math.floor(Date.now() / 1000) + OAUTH_ACCESS_TTL_SECONDS,
+  });
+
   return json(request, {
-    access_token: clientSecret,
+    access_token: accessToken,
     token_type: 'Bearer',
     expires_in: OAUTH_ACCESS_TTL_SECONDS,
     scope: code.scope,
@@ -253,17 +422,28 @@ async function handleToken(request: Request): Promise<Response> {
   });
 }
 
+async function resolveBearerToken(request: Request): Promise<string | null> {
+  const token = bearerToken(request);
+  if (!token) return null;
+  if (isPersonalToken(token)) return token;
+  const access = await verifyOAuthValue<OAuthAccessPayload>(token, 'qoa');
+  if (!access || access.type !== 'access_token' || access.expiresAt <= Math.floor(Date.now() / 1000) || access.resource !== mcpBaseUrl(request)) return null;
+  return decryptSecret(access.encryptedToken);
+}
+
 async function handle(request: Request): Promise<Response> {
   const path = requestPath(request);
   if (request.method === 'OPTIONS') return withCors(request, new Response(null, { status: 204 }));
   if (path === '/health' && request.method === 'GET') return json(request, { status: 'ok' });
   if (path === '/.well-known/oauth-authorization-server' && request.method === 'GET') return json(request, oauthMetadata(request));
   if ((path === '/.well-known/oauth-protected-resource' || path === '/.well-known/oauth-protected-resource/mcp') && request.method === 'GET') return json(request, oauthResourceMetadata(request));
+  if ((path === '/register' || path === '/api/oauth/register') && request.method === 'POST') return handleRegister(request);
   if (path === '/authorize' && request.method === 'GET') return handleAuthorize(request);
-  if (path === '/token' && request.method === 'POST') return handleToken(request);
+  if (path === '/authorize' && request.method === 'POST') return handleAuthorize(request);
+  if ((path === '/token' || path === '/api/oauth/token') && request.method === 'POST') return handleToken(request);
   if (!MCP_PATHS.has(path)) return json(request, { error: 'Not found' }, 404);
 
-  const token = bearerToken(request);
+  const token = await resolveBearerToken(request);
   if (!token) {
     return json(request, { error: 'Bearer authentication is required.' }, 401, {
       'WWW-Authenticate': `Bearer realm="quadrate-notes-mcp", resource_metadata="${mcpBaseUrl(request)}/.well-known/oauth-protected-resource", scope="${OAUTH_SCOPE}"`,

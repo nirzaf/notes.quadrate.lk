@@ -16,7 +16,7 @@ The repository is a pnpm monorepo. The web app is a Vite/React PWA, the API is a
 - A guided Integrations page for read-only-by-default Hermes setup, explicit write scopes, real token expiry choices, one-time secret/config display, and separate API versus Hermes verification.
 - Note Markdown exports and workspace ZIP exports containing active notes, attachments, and a manifest.
 
-The repository ships a native stdio MCP server in `packages/mcp-server` and a hosted, read-only Streamable HTTP MCP endpoint for Gemini Spark at `https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-mcp`. See [API_ACCESS_GUIDE.md](API_ACCESS_GUIDE.md) for the REST API, CLI, JavaScript client, and MCP setup.
+The repository ships a native stdio MCP server in `packages/mcp-server` and a hosted, read-only Streamable HTTP MCP endpoint for Gemini Spark at `https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-mcp`, including standard OAuth discovery, dynamic client registration, and PKCE consent. See [API_ACCESS_GUIDE.md](API_ACCESS_GUIDE.md) for the REST API, CLI, JavaScript client, and MCP setup.
 
 ## Using the web app
 
