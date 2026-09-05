@@ -6,6 +6,7 @@ import { HomePage } from './pages/home-page';
 import { SearchPage } from './pages/search-page';
 import { TokensPage } from './pages/tokens-page';
 import { TrashPage } from './pages/trash-page';
+import { OAuthAuthorizePage } from './pages/oauth-authorize-page';
 import { currentAppPath, safeInternalPath, validateAppSearch } from './navigation-context';
 
 function RecoveryState({ title, message, onRetry }: { title: string; message: string; onRetry?: () => void }): JSX.Element {
@@ -24,8 +25,9 @@ function RootLayout(): JSX.Element {
   const { session, loading, authError, retryInitialization } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
+  const isOAuthAuthorize = location.pathname === '/oauth/authorize';
   useEffect(() => {
-    if (loading || authError) return;
+    if (isOAuthAuthorize || loading || authError) return;
     if (!session && location.pathname !== '/login') {
       const returnTo = safeInternalPath(currentAppPath());
       void navigate({ to: '/login', replace: true, search: returnTo ? { returnTo } : {} });
@@ -34,7 +36,8 @@ function RootLayout(): JSX.Element {
       const returnTo = safeInternalPath(new URLSearchParams(window.location.search).get('returnTo'));
       void navigate((returnTo ? { href: returnTo, replace: true } : { to: '/', replace: true }) as never);
     }
-  }, [authError, loading, location.pathname, location.search, navigate, session]);
+  }, [authError, isOAuthAuthorize, loading, location.pathname, location.search, navigate, session]);
+  if (isOAuthAuthorize) return <Outlet />;
   if (loading) return <div className="q-auth-page"><div className="q-empty">Opening your private workspace…</div></div>;
   if (authError && location.pathname !== '/login') return <RecoveryState title="Sign-in could not be restored." message="Authentication initialization failed. Retry, or continue to the sign-in screen." onRetry={retryInitialization} />;
   if (!session && location.pathname !== '/login') return <div className="q-auth-page"><div className="q-empty">Redirecting to sign in…</div></div>;
@@ -44,13 +47,14 @@ function RootLayout(): JSX.Element {
 
 export const rootRoute = createRootRoute({ component: RootLayout, validateSearch: validateAppSearch, errorComponent: routeErrorComponent, notFoundComponent: routeNotFoundComponent });
 export const loginRoute = createRoute({ getParentRoute: () => rootRoute, path: '/login', component: LoginPage });
+export const oauthAuthorizeRoute = createRoute({ getParentRoute: () => rootRoute, path: '/oauth/authorize', component: OAuthAuthorizePage });
 export const homeRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: HomePage });
 export const searchRoute = createRoute({ getParentRoute: () => rootRoute, path: '/search', component: SearchPage });
 export const noteRoute = createRoute({ getParentRoute: () => rootRoute, path: '/notes/$noteId', component: lazyRouteComponent(() => import('./pages/note-page'), 'NotePage') });
 export const integrationsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/settings/integrations', component: TokensPage });
 export const tokensRoute = createRoute({ getParentRoute: () => rootRoute, path: '/settings/tokens', component: TokensPage });
 export const trashRoute = createRoute({ getParentRoute: () => rootRoute, path: '/trash', component: TrashPage });
-export const routeTree = rootRoute.addChildren([loginRoute, homeRoute, searchRoute, noteRoute, integrationsRoute, tokensRoute, trashRoute]);
+export const routeTree = rootRoute.addChildren([loginRoute, oauthAuthorizeRoute, homeRoute, searchRoute, noteRoute, integrationsRoute, tokensRoute, trashRoute]);
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });
 
 declare module '@tanstack/react-router' {
