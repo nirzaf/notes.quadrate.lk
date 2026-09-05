@@ -44,6 +44,17 @@ test('read MCP tools delegate to the API client and return structured JSON', asy
   assert.equal(JSON.parse(block.content[0].text).blockKey, 'rollback');
 });
 
+test('MCP read context forwards an opaque continuation only when supplied', async () => {
+  let received;
+  await readNoteContextTool({
+    async readNoteContext(documentId, params) {
+      received = { documentId, params };
+      return context;
+    },
+  }, { documentId: 'doc-1', continuation: 'opaque-context-cursor' });
+  assert.deepEqual(received, { documentId: 'doc-1', params: { before: 1, after: 1, maxTokens: 1800, continuation: 'opaque-context-cursor' } });
+});
+
 test('default MCP profile exposes only the read surface', () => {
   const server = createQNotesMcpServer(mockClient());
   assert.ok(server);

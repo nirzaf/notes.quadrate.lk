@@ -2,7 +2,7 @@ import type { NoteBlock, SearchContext, SearchRequest, SearchResponse } from '@q
 
 export interface ReadQNotesClient {
   searchPost(input: SearchRequest, options?: { signal?: AbortSignal }): Promise<SearchResponse>;
-  readNoteContext(documentId: string, params?: { before?: number; after?: number; maxTokens?: number }): Promise<SearchContext>;
+  readNoteContext(documentId: string, params?: { before?: number; after?: number; maxTokens?: number; continuation?: string }): Promise<SearchContext>;
   getBlock(noteRef: string, blockKey: string): Promise<NoteBlock>;
 }
 
