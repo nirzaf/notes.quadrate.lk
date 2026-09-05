@@ -123,7 +123,7 @@ When prompted, enter the production database password from the password manager.
 ### 4. Deploy Supabase Edge Functions
 
 ```bash
-pnpm exec supabase functions deploy qnotes-api embedding-worker attachment-worker \
+pnpm exec supabase functions deploy qnotes-api embedding-worker attachment-worker qnotes-mcp \
   --project-ref ciyoandzjezgqxjpcrin \
   --no-verify-jwt \
   --use-api \
@@ -162,6 +162,7 @@ The command returns a deployment URL. A `master` deployment is production; other
 ```bash
 curl -fsS https://notes.quadrate.lk/
 curl -fsS https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-api/api/health
+curl -fsS https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-mcp/health
 npx --yes wrangler@4.128.0 pages deployment list --project-name notes-quadrate-lk
 git status --short --branch
 git rev-parse HEAD
@@ -172,6 +173,7 @@ Expected results:
 
 - The website returns HTTP 200.
 - The API health endpoint returns a successful JSON response.
+- The remote MCP health endpoint returns `{"status":"ok"}`.
 - The latest Pages deployment is `Production`, branch `master`, and shows the intended commit.
 - `HEAD` matches `origin/master` and the worktree is clean.
 

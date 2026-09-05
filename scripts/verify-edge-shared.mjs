@@ -6,15 +6,17 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const mappings = [
   ['packages/shared/src', 'supabase/functions/_shared/generated/shared'],
   ['packages/markdown/src', 'supabase/functions/_shared/generated/markdown'],
+  ['packages/api-client/src', 'supabase/functions/_shared/generated/api-client'],
+  ['packages/mcp-server/src', 'supabase/functions/_shared/generated/mcp-server'],
 ];
 
-async function filesIn(directory) {
+async function filesIn(directory, root = directory) {
   const entries = await readdir(directory, { withFileTypes: true });
   const files = [];
   for (const entry of entries) {
     const path = join(directory, entry.name);
-    if (entry.isDirectory()) files.push(...await filesIn(path));
-    else files.push(relative(directory, path));
+    if (entry.isDirectory()) files.push(...await filesIn(path, root));
+    else files.push(relative(root, path));
   }
   return files.sort();
 }

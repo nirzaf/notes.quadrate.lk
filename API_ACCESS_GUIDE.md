@@ -559,6 +559,18 @@ mcp_servers:
 
 Keep tokens in the MCP server process environment. Do not put them in tool arguments, URLs, or returned resource content. Browser search selection telemetry is stored locally as query/document IDs and timestamps; plaintext queries are not logged or transmitted as telemetry.
 
+## Gemini Spark remote MCP endpoint
+
+Gemini Spark can connect to the hosted read-only MCP endpoint:
+
+```text
+https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-mcp
+```
+
+The endpoint exposes `search_notes`, `read_note_context`, and `get_block`, plus the read-only `qnotes://...` resources. It accepts a personal `qnt_...` token in the `Authorization: Bearer ...` header; the least-privilege token profile is `notes:read, search:read`. Write tools are not exposed by this endpoint.
+
+To connect it in Gemini Spark, open Connected Apps, enter the endpoint under **Custom apps for Spark**, and choose **Next**. If Gemini shows **Advanced features** because this server does not use Dynamic Client Registration, enter the personal token as the server credential. The token is shown in full only once, so revoke it from [Personal API tokens](https://notes.quadrate.lk/settings/tokens) if it is exposed or no longer needed.
+
 ## Endpoint reference
 
 All routes except health require a bearer credential. Personal tokens must have the listed scope; `/api/tokens` requires a Supabase user JWT even though it has no personal-token scope.

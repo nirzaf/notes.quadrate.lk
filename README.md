@@ -15,7 +15,7 @@ The repository is a pnpm monorepo. The web app is a Vite/React PWA, the API is a
 - Personal API tokens with least-privilege scopes for scripts, agents, backups, and the CLI.
 - Note Markdown exports and workspace ZIP exports containing active notes, attachments, and a manifest.
 
-The repository ships a native stdio MCP server in `packages/mcp-server`. See [API_ACCESS_GUIDE.md](API_ACCESS_GUIDE.md) for the REST API, CLI, JavaScript client, and MCP setup.
+The repository ships a native stdio MCP server in `packages/mcp-server` and a hosted, read-only Streamable HTTP MCP endpoint for Gemini Spark at `https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-mcp`. See [API_ACCESS_GUIDE.md](API_ACCESS_GUIDE.md) for the REST API, CLI, JavaScript client, and MCP setup.
 
 ## Using the web app
 
@@ -132,7 +132,7 @@ The hosted project is `ciyoandzjezgqxjpcrin`, and the production web site is `ht
 Deploy the API and worker functions with the repository import map:
 
 ```bash
-pnpm exec supabase functions deploy qnotes-api embedding-worker attachment-worker \
+pnpm exec supabase functions deploy qnotes-api embedding-worker attachment-worker qnotes-mcp \
   --project-ref ciyoandzjezgqxjpcrin --no-verify-jwt --use-api \
   --import-map supabase/functions/deno.json
 ```
