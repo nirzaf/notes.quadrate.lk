@@ -100,12 +100,15 @@ async function measuredIndexMetadata(userId: string): Promise<{ index: SearchInd
   }
 }
 
-function normalizeResult(item: SearchResult, note: SearchNoteRow | undefined, minimumScore: number, maximumScore: number): SearchResult {
+function normalizeResult(item: SearchResult, note: SearchNoteRow | undefined, query: string, minimumScore: number, maximumScore: number): SearchResult {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const normalizedHeading = item.headingPath?.toLocaleLowerCase() ?? '';
+  const normalizedLanguage = item.language?.toLocaleLowerCase() ?? '';
   const matchReasons = [
     item.keywordRank !== null ? 'keyword_match' : null,
     item.semanticRank !== null ? 'semantic_match' : null,
-    item.headingPath ? 'heading_match' : null,
-    item.copyable && item.language ? 'code_language_match' : null,
+    normalizedHeading.includes(normalizedQuery) ? 'heading_match' : null,
+    item.copyable && normalizedLanguage && normalizedQuery.includes(normalizedLanguage) ? 'code_language_match' : null,
   ].filter((reason): reason is string => reason !== null);
   return {
     ...item,
@@ -145,7 +148,7 @@ function pageResults(items: SearchResult[], request: SearchRequest, fingerprint:
   const minimumScore = scores.length ? Math.min(...scores) : 0;
   const maximumScore = scores.length ? Math.max(...scores) : 0;
   const normalized = consumedRawItems
-    .map((item) => normalizeResult(item, notes.get(item.noteId), minimumScore, maximumScore))
+    .map((item) => normalizeResult(item, notes.get(item.noteId), request.query, minimumScore, maximumScore))
     .filter((item) => request.minimumRelativeScore === undefined || (item.scores?.hybrid ?? 0) >= request.minimumRelativeScore);
   const page = normalized.slice(0, request.limit);
   const hasMore = items.length > request.limit;
