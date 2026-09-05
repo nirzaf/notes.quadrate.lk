@@ -85,6 +85,7 @@ export interface NoteContextParams extends RequestOptions {
   before?: number;
   after?: number;
   maxTokens?: number;
+  continuation?: string;
 }
 
 type Success<T> = { data: T };
@@ -235,6 +236,12 @@ function isSearchContextTokenBudget(value: unknown): boolean {
     && value.unit === 'approximate_tokens';
 }
 
+function isSearchContextContinuation(value: unknown): boolean {
+  return isRecord(value) && isString(value.cursor) && typeof value.noteVersion === 'number'
+    && Number.isSafeInteger(value.noteVersion) && isString(value.sourceHash)
+    && typeof value.nextOffset === 'number' && Number.isSafeInteger(value.nextOffset) && value.nextOffset >= 0;
+}
+
 function isSearchContext(value: unknown): value is SearchContext {
   return isRecord(value) && isString(value.noteId) && typeof value.noteVersion === 'number' && isString(value.documentId)
     && isString(value.uri) && isString(value.title) && isNullableString(value.headingPath) && isString(value.content)
@@ -246,6 +253,7 @@ function isSearchContext(value: unknown): value is SearchContext {
     && (value.sourceHash === undefined || isString(value.sourceHash))
     && (value.truncated === undefined || typeof value.truncated === 'boolean')
     && (value.tokenBudget === undefined || isSearchContextTokenBudget(value.tokenBudget))
+    && (value.continuation === undefined || isSearchContextContinuation(value.continuation))
     && (value.previousSources === undefined || (Array.isArray(value.previousSources) && value.previousSources.every(isSearchContextSource)))
     && (value.nextSources === undefined || (Array.isArray(value.nextSources) && value.nextSources.every(isSearchContextSource)));
 }
@@ -448,7 +456,7 @@ export class QNotesClient {
   }
 
   readNoteContext(documentId: UUID, params: NoteContextParams = {}): Promise<SearchContext> {
-    return this.requestValidated(`/search/documents/${encodeURIComponent(documentId)}/context${queryString({ before: params.before ?? 1, after: params.after ?? 1, maxTokens: params.maxTokens ?? 1800 })}`, isSearchContext, 'search context', {}, params);
+    return this.requestValidated(`/search/documents/${encodeURIComponent(documentId)}/context${queryString({ before: params.before ?? 1, after: params.after ?? 1, maxTokens: params.maxTokens ?? 1800, continuation: params.continuation })}`, isSearchContext, 'search context', {}, params);
   }
 
   sync(cursor?: string, limit?: number, options: RequestOptions = {}): Promise<SyncPage> {
