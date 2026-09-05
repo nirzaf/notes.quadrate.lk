@@ -13,6 +13,13 @@ function notePayload(overrides = {}) {
   };
 }
 
+function waitForAbort(signal) {
+  return new Promise((_, reject) => {
+    if (signal.aborted) reject(signal.reason);
+    else signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+  });
+}
+
 test('normalizes base URL, serializes queries, and sends authorization', async () => {
   const calls = [];
   const client = new QNotesClient({ baseUrl: 'http://example.test///', getAccessToken: () => 'jwt', fetchImplementation: async (url, init) => {
@@ -143,7 +150,8 @@ test('preserves search items and response metadata inside the success data envel
     modeUsed: 'keyword',
     degraded: true,
     degradedReason: 'QUERY_EMBEDDING_UNAVAILABLE',
-    timing: { embeddingMs: 12, retrievalMs: 4, totalMs: 16 },
+    timing: { embeddingMs: 12, retrievalMs: 4, metadataMs: 2, freshnessMs: 1, serializationMs: 0, totalMs: 16 },
+    index: { model: 'gte-small:v2', pendingDocuments: 2, failedDocuments: 0, oldestPendingAgeSeconds: 4, fresh: false, freshness: 'unknown' },
   };
   const client = new QNotesClient({
     baseUrl: 'http://example.test',
@@ -176,4 +184,68 @@ test('passes cancellation signals through list and detail reads', async () => {
   await client.listNotes({ signal: controller.signal });
   await client.getNote('note-1', { signal: controller.signal });
   assert.deepEqual(calls, [controller.signal, controller.signal]);
+});
+
+test('composes timeout signals while preserving the caller abort reason', async () => {
+  let requestSignal;
+  const client = new QNotesClient({
+    baseUrl: 'http://example.test',
+    getAccessToken: () => null,
+    fetchImplementation: async (_url, init) => {
+      requestSignal = init.signal;
+      return waitForAbort(init.signal);
+    },
+  });
+  const caller = new AbortController();
+  const reason = new Error('component disposed');
+  const request = client.search({ query: 'rollback', signal: caller.signal, timeoutMs: 1000 });
+  while (!requestSignal) await new Promise((resolve) => setImmediate(resolve));
+  caller.abort(reason);
+  await assert.rejects(request, (error) => error === reason);
+  assert.notEqual(requestSignal, caller.signal);
+  assert.equal(requestSignal.reason, reason);
+});
+
+test('aborts a pending request at its bounded per-call timeout', async () => {
+  let requestSignal;
+  const client = new QNotesClient({
+    baseUrl: 'http://example.test',
+    getAccessToken: () => null,
+    fetchImplementation: async (_url, init) => {
+      requestSignal = init.signal;
+      return waitForAbort(init.signal);
+    },
+  });
+  await assert.rejects(client.search({ query: 'rollback', timeoutMs: 10 }), (error) => error?.name === 'TimeoutError');
+  assert.equal(requestSignal.aborted, true);
+  assert.equal(requestSignal.reason.name, 'TimeoutError');
+});
+
+test('cleans up a request timeout after a successful response', async () => {
+  let requestSignal;
+  const client = new QNotesClient({
+    baseUrl: 'http://example.test',
+    getAccessToken: () => null,
+    fetchImplementation: async (_url, init) => {
+      requestSignal = init.signal;
+      return jsonResponse({ data: { items: [], nextCursor: null } });
+    },
+  });
+  await client.listNotes({ timeoutMs: 10 });
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(requestSignal.aborted, false);
+});
+
+test('does not retry a mutation after its request is aborted', async () => {
+  let calls = 0;
+  const client = new QNotesClient({
+    baseUrl: 'http://example.test',
+    getAccessToken: () => null,
+    fetchImplementation: async (_url, init) => {
+      calls += 1;
+      return waitForAbort(init.signal);
+    },
+  });
+  await assert.rejects(client.createNote({ title: 'x', contentMarkdown: '', tags: [], deviceId: 'd', mutationId: 'm' }, { timeoutMs: 10 }), (error) => error?.name === 'TimeoutError');
+  assert.equal(calls, 1);
 });

@@ -487,7 +487,7 @@ pnpm --filter @qnotes/cli exec node dist/index.js --help
 
 ## Use the JavaScript client
 
-`@qnotes/api-client` handles the `/api` prefix, bearer authorization, `{ data: ... }` envelopes, binary exports, abort signals for searches, and structured `QNotesHttpError` failures. `search` returns `{ items, queryId, modeUsed, degraded, timing, index, nextCursor }`; use `items` for matching documents and inspect the metadata when measuring retrieval or handling keyword fallback:
+`@qnotes/api-client` handles the `/api` prefix, bearer authorization, `{ data: ... }` envelopes, binary exports, abort signals, bounded per-call deadlines, and structured `QNotesHttpError` failures. Request option objects accept `signal` and optional `timeoutMs`; deadlines are capped at 120 seconds, and a timeout abort uses a `TimeoutError` reason. Existing signal callers remain supported, and the client does not retry mutations. The access-token provider receives the request signal when one exists, but a provider that ignores it cannot be forcibly cancelled; the client checks for cancellation before sending the HTTP request. `search` returns `{ items, queryId, modeUsed, degraded, timing, index, nextCursor }`; use `items` for matching documents and inspect the metadata when measuring retrieval or handling keyword fallback:
 
 ```js
 import { QNotesClient } from '@qnotes/api-client';
