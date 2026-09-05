@@ -6,6 +6,8 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const mappings = [
   ['packages/shared/src', 'supabase/functions/_shared/generated/shared'],
   ['packages/markdown/src', 'supabase/functions/_shared/generated/markdown'],
+  ['packages/api-client/src', 'supabase/functions/_shared/generated/api-client'],
+  ['packages/mcp-server/src', 'supabase/functions/_shared/generated/mcp-server'],
 ];
 
 async function filesIn(directory) {
