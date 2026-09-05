@@ -135,7 +135,7 @@ function pageResults(items: SearchResult[], request: SearchRequest, fingerprint:
 function searchResponse(
   context: Context,
   items: SearchResult[],
-  metadata: Omit<SearchResponseMetadata, 'timing'> & { started: number; embeddingMs: number; retrievalStarted: number },
+  metadata: Omit<SearchResponseMetadata, 'timing'> & { started: number; embeddingMs: number; retrievalMs: number },
   index: SearchIndexMetadata,
   nextCursor: string | null,
   degradedReason?: SearchResponseMetadata['degradedReason'],
@@ -147,7 +147,7 @@ function searchResponse(
     ...(degradedReason ? { degradedReason } : {}),
     timing: {
       embeddingMs: metadata.embeddingMs,
-      retrievalMs: elapsedMilliseconds(metadata.retrievalStarted),
+      retrievalMs: metadata.retrievalMs,
       totalMs: elapsedMilliseconds(metadata.started),
     },
   };
@@ -195,22 +195,27 @@ export async function searchNotes(context: Context): Promise<Response> {
   const retrievalLimit = request.limit + 1;
   const queryId = crypto.randomUUID();
   const embeddingStarted = performance.now();
+  let embeddingMs = 0;
   let embedding: number[] | undefined;
   if (mode !== 'keyword') {
     try {
       embedding = await cachedQueryEmbedding(request.query);
+      embeddingMs = elapsedMilliseconds(embeddingStarted);
     } catch {
+      embeddingMs = elapsedMilliseconds(embeddingStarted);
       const retrievalStarted = performance.now();
       const fallbackItems = await keywordSearch(auth.userId, request.query, retrievalLimit, request.filters, offset, request.maxPerNote);
+      const retrievalMs = elapsedMilliseconds(retrievalStarted);
       const fallbackNotes = await noteMetadata(auth.userId, [...new Set(fallbackItems.map((item) => item.noteId))]);
       const page = pageResults(fallbackItems, request, fingerprint, offset, fallbackNotes);
       // Degraded pages are deliberately not cursor-paginated: a later request
       // must not silently switch from the requested semantic/hybrid ranking.
-      return searchResponse(context, page.items, { queryId, modeUsed: 'keyword', degraded: true, started, embeddingMs: elapsedMilliseconds(embeddingStarted), retrievalStarted }, await indexMetadata(auth.userId), null, 'QUERY_EMBEDDING_UNAVAILABLE');
+      return searchResponse(context, page.items, { queryId, modeUsed: 'keyword', degraded: true, started, embeddingMs, retrievalMs }, await indexMetadata(auth.userId), null, 'QUERY_EMBEDDING_UNAVAILABLE');
     }
   }
 
   const retrievalStarted = performance.now();
+  let retrievalMs = 0;
   let rawItems: SearchResult[];
   try {
     if (mode === 'keyword') {
@@ -222,9 +227,11 @@ export async function searchNotes(context: Context): Promise<Response> {
       if (result.error) throw new ApiError(503, 'SEMANTIC_SEARCH_UNAVAILABLE', 'Semantic search is temporarily unavailable.');
       rawItems = (Array.isArray(result.data) ? result.data : []).map((row) => searchResultFromRow(row as Record<string, unknown>));
     }
+    retrievalMs = elapsedMilliseconds(retrievalStarted);
   } catch (error: unknown) {
     if (mode === 'keyword') throw error;
     const fallbackItems = await keywordSearch(auth.userId, request.query, retrievalLimit, request.filters, offset, request.maxPerNote);
+    retrievalMs = elapsedMilliseconds(retrievalStarted);
     const fallbackNotes = await noteMetadata(auth.userId, [...new Set(fallbackItems.map((item) => item.noteId))]);
     const page = pageResults(fallbackItems, request, fingerprint, offset, fallbackNotes);
     const degradedReason: SearchResponseMetadata['degradedReason'] = error instanceof ApiError && (error.code === 'SEMANTIC_SEARCH_UNAVAILABLE' || error.code === 'QUERY_EMBEDDING_UNAVAILABLE')
@@ -232,9 +239,9 @@ export async function searchNotes(context: Context): Promise<Response> {
       : 'SEMANTIC_SEARCH_UNAVAILABLE';
     // Degraded pages are deliberately not cursor-paginated: a later request
     // must not silently switch from the requested semantic/hybrid ranking.
-    return searchResponse(context, page.items, { queryId, modeUsed: 'keyword', degraded: true, started, embeddingMs: elapsedMilliseconds(embeddingStarted), retrievalStarted }, await indexMetadata(auth.userId), null, degradedReason);
+    return searchResponse(context, page.items, { queryId, modeUsed: 'keyword', degraded: true, started, embeddingMs, retrievalMs }, await indexMetadata(auth.userId), null, degradedReason);
   }
   const notes = await noteMetadata(auth.userId, [...new Set(rawItems.map((item) => item.noteId))]);
   const page = pageResults(rawItems, request, fingerprint, offset, notes);
-  return searchResponse(context, page.items, { queryId, modeUsed: mode, degraded: false, started, embeddingMs: mode === 'keyword' ? 0 : elapsedMilliseconds(embeddingStarted), retrievalStarted }, await indexMetadata(auth.userId), page.nextCursor);
+  return searchResponse(context, page.items, { queryId, modeUsed: mode, degraded: false, started, embeddingMs, retrievalMs }, await indexMetadata(auth.userId), page.nextCursor);
 }

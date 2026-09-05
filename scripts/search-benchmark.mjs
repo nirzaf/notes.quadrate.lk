@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { BenchmarkBodyParseError, readJsonBody } from './search-benchmark-utils.mjs';
 
 const execFileAsync = promisify(execFile);
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -49,9 +50,10 @@ async function search(token, query, mode) {
   const started = performance.now();
   try {
     const response = await fetch(`${apiUrl}/api/search`, { method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ query, mode, limit: 10, maxPerNote: 1, filters: {} }) });
-    const bytes = (await response.arrayBuffer()).byteLength;
-    return { latencyMs: performance.now() - started, bytes, ok: response.ok, response };
+    const { body, bytes } = await readJsonBody(response, 'Search response');
+    return { latencyMs: performance.now() - started, bytes, ok: response.ok, status: response.status, body };
   } catch (error) {
+    if (error instanceof BenchmarkBodyParseError) throw error;
     return { latencyMs: performance.now() - started, bytes: 0, ok: false, error: String(error) };
   }
 }
@@ -134,9 +136,11 @@ async function annRecall(token, ownerId) {
   const values = [];
   for (const query of queries) {
     const response = await search(token, query, 'semantic');
-    if (!response.ok) continue;
-    const body = await response.response.json().catch(() => null);
-    const approximate = (body?.data?.items ?? []).map((item) => item.documentId ?? item.id).filter(Boolean);
+    if (!response.ok) throw new Error(`ANN search failed with HTTP ${response.status}: ${JSON.stringify(response.body)}`);
+    if (!response.body || typeof response.body !== 'object' || !response.body.data || typeof response.body.data !== 'object' || !Array.isArray(response.body.data.items)) {
+      throw new Error('ANN search returned a malformed success envelope.');
+    }
+    const approximate = response.body.data.items.map((item) => item.documentId ?? item.id).filter(Boolean);
     const exact = await exactIds(ownerId, query);
     if (exact.length) values.push(approximate.filter((id) => exact.includes(id)).length / exact.length);
   }

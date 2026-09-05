@@ -23,6 +23,7 @@ import type {
 import { QNotesHttpError } from './http-error.js';
 
 export type CreateNoteOutcome = 'created' | 'idempotent' | 'deduplicated';
+export type NoteMutationOutcome = 'applied' | 'idempotent';
 
 export class QNotesProtocolError extends Error {
   constructor(resource: string) {
@@ -34,6 +35,11 @@ export class QNotesProtocolError extends Error {
 export interface CreateNoteResult {
   note: Note;
   outcome: CreateNoteOutcome;
+}
+
+export interface NoteMutationResult {
+  note: Note;
+  outcome: NoteMutationOutcome;
 }
 
 export interface QNotesClientOptions {
@@ -284,12 +290,30 @@ export class QNotesClient {
     return { note, outcome: result.response.status === 201 ? 'created' : 'idempotent' };
   }
 
+  private async noteMutationDetailed(path: string, method: 'PATCH' | 'POST' | 'DELETE', input: unknown): Promise<NoteMutationResult> {
+    const result = await this.requestWithResponse<unknown>(path, { method, body: JSON.stringify(input) });
+    const note = isValid(result.data, isNote, 'note');
+    const outcome = result.response.headers.get('x-qnotes-mutation-outcome');
+    if (outcome === 'applied' || outcome === 'idempotent') return { note, outcome };
+    // Older API deployments do not send the outcome header. Treat their
+    // successful response as applied; never infer idempotency from a 200.
+    return { note, outcome: 'applied' };
+  }
+
   updateNote(noteId: UUID, input: UpdateNoteInput): Promise<Note> {
     return this.requestValidated(`/notes/${encodeURIComponent(noteId)}`, isNote, 'note', { method: 'PATCH', body: JSON.stringify(input) });
   }
 
+  updateNoteDetailed(noteId: UUID, input: UpdateNoteInput): Promise<NoteMutationResult> {
+    return this.noteMutationDetailed(`/notes/${encodeURIComponent(noteId)}`, 'PATCH', input);
+  }
+
   appendNote(noteId: UUID, input: AppendNoteInput): Promise<Note> {
     return this.requestValidated(`/notes/${encodeURIComponent(noteId)}/append`, isNote, 'note', { method: 'POST', body: JSON.stringify(input) });
+  }
+
+  appendNoteDetailed(noteId: UUID, input: AppendNoteInput): Promise<NoteMutationResult> {
+    return this.noteMutationDetailed(`/notes/${encodeURIComponent(noteId)}/append`, 'POST', input);
   }
 
   moveNoteToNotebook(noteId: UUID, input: { notebookId: UUID | null; expectedVersion: number; deviceId: UUID; mutationId: UUID }): Promise<Note> {
@@ -300,8 +324,16 @@ export class QNotesClient {
     return this.requestValidated(`/notes/${encodeURIComponent(noteId)}`, isNote, 'note', { method: 'DELETE', body: JSON.stringify(input) });
   }
 
+  deleteNoteDetailed(noteId: UUID, input: VersionedNoteMutationInput): Promise<NoteMutationResult> {
+    return this.noteMutationDetailed(`/notes/${encodeURIComponent(noteId)}`, 'DELETE', input);
+  }
+
   restoreNote(noteId: UUID, input: VersionedNoteMutationInput): Promise<Note> {
     return this.requestValidated(`/notes/${encodeURIComponent(noteId)}/restore`, isNote, 'note', { method: 'POST', body: JSON.stringify(input) });
+  }
+
+  restoreNoteDetailed(noteId: UUID, input: VersionedNoteMutationInput): Promise<NoteMutationResult> {
+    return this.noteMutationDetailed(`/notes/${encodeURIComponent(noteId)}/restore`, 'POST', input);
   }
 
   listBlocks(noteRef: string, options: RequestOptions = {}): Promise<NoteBlock[]> {

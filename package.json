@@ -7,7 +7,7 @@
     "dev": "pnpm --filter @qnotes/web dev",
     "build": "pnpm -r build && pnpm run verify:edge-shared",
     "typecheck": "pnpm -r typecheck",
-    "test:unit": "pnpm --filter @qnotes/shared test && pnpm --filter @qnotes/markdown test && pnpm --filter @qnotes/sync test && pnpm --filter @qnotes/api-client test && pnpm --filter @qnotes/cli test && pnpm --filter @qnotes/mcp-server test",
+    "test:unit": "node --test scripts/test/*.test.mjs && pnpm --filter @qnotes/shared test && pnpm --filter @qnotes/markdown test && pnpm --filter @qnotes/sync test && pnpm --filter @qnotes/api-client test && pnpm --filter @qnotes/cli test && pnpm --filter @qnotes/mcp-server test",
     "test:mcp": "pnpm --filter @qnotes/mcp-server test",
     "evaluate:search": "node scripts/evaluate-search.mjs",
     "benchmark:seed": "node scripts/seed-search-benchmark.mjs",
