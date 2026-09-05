@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import type { SearchContext, SearchSourceType } from '@qnotes/shared';
+import type { SearchContext, SearchContextContinuation, SearchSourceType } from '@qnotes/shared';
 import { boundContextSource, contextNoteChanged, contextTokenUsage, isUUID, takeContextSources, type ContextSourceInput } from '@qnotes/shared';
 import { authFromContext, requireScope } from '../_shared/auth.ts';
 import { ApiError } from '../_shared/errors.ts';
@@ -16,6 +16,7 @@ interface ContextRequest {
   before: number;
   after: number;
   maxTokens: number;
+  continuation?: string;
 }
 
 interface SearchDocumentRow {
@@ -59,13 +60,54 @@ function bodyInteger(value: unknown, field: string, fallback: number, max: numbe
   return parsed;
 }
 
-function parseRequest(documentId: unknown, values: { before?: unknown; after?: unknown; maxTokens?: unknown }): ContextRequest {
+function parseRequest(documentId: unknown, values: { before?: unknown; after?: unknown; maxTokens?: unknown; continuation?: unknown }): ContextRequest {
   if (!isUUID(documentId)) throw new ApiError(422, 'VALIDATION_ERROR', 'documentId must be a valid UUID.');
   const before = bodyInteger(values.before, 'before', DEFAULT_BEFORE, MAX_CONTEXT_NEIGHBORS);
   const after = bodyInteger(values.after, 'after', DEFAULT_AFTER, MAX_CONTEXT_NEIGHBORS);
   const maxTokens = bodyInteger(values.maxTokens, 'maxTokens', DEFAULT_MAX_TOKENS, MAX_CONTEXT_TOKENS);
   if (maxTokens < 1) throw new ApiError(422, 'VALIDATION_ERROR', 'maxTokens must be positive.');
-  return { documentId, before, after, maxTokens };
+  if (values.continuation !== undefined && (typeof values.continuation !== 'string' || values.continuation.length > 8192)) {
+    throw new ApiError(422, 'VALIDATION_ERROR', 'continuation must be an opaque token no longer than 8192 characters.');
+  }
+  return { documentId, before, after, maxTokens, ...(values.continuation === undefined ? {} : { continuation: values.continuation }) };
+}
+
+interface ContinuationPayload {
+  documentId: string;
+  noteId: string;
+  noteVersion: number;
+  sourceHash: string;
+  nextOffset: number;
+}
+
+function encodeContinuation(payload: ContinuationPayload): string {
+  return btoa(JSON.stringify({ version: 1, ...payload })).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/u, '');
+}
+
+function decodeContinuation(value: string): ContinuationPayload {
+  try {
+    const padded = value.replaceAll('-', '+').replaceAll('_', '/') + '='.repeat((4 - (value.length % 4)) % 4);
+    const parsed = record(JSON.parse(atob(padded)));
+    if (
+      parsed.version !== 1
+      || !isUUID(parsed.documentId)
+      || !isUUID(parsed.noteId)
+      || !Number.isSafeInteger(parsed.noteVersion)
+      || !Number.isSafeInteger(parsed.nextOffset)
+      || parsed.nextOffset < 0
+      || typeof parsed.sourceHash !== 'string'
+      || parsed.sourceHash.length === 0
+    ) throw new Error('invalid continuation');
+    return {
+      documentId: parsed.documentId,
+      noteId: parsed.noteId,
+      noteVersion: parsed.noteVersion,
+      sourceHash: parsed.sourceHash,
+      nextOffset: parsed.nextOffset,
+    };
+  } catch {
+    throw new ApiError(422, 'VALIDATION_ERROR', 'continuation is invalid or expired.');
+  }
 }
 
 function sourceInput(row: SearchDocumentRow, note: NoteRow): ContextSourceInput {
@@ -141,10 +183,17 @@ async function loadNeighbors(userId: string, document: SearchDocumentRow, reques
 }
 
 async function contextFor(userId: string, request: ContextRequest): Promise<SearchContext> {
+  const continuation = request.continuation ? decodeContinuation(request.continuation) : null;
+  if (continuation && continuation.documentId !== request.documentId) {
+    throw new ApiError(422, 'VALIDATION_ERROR', 'continuation belongs to a different document.');
+  }
   const documentReference = await loadDocumentReference(userId, request.documentId);
+  if (continuation && continuation.noteId !== documentReference.note_id) {
+    throw new ApiError(422, 'VALIDATION_ERROR', 'continuation belongs to a different note.');
+  }
   const noteBefore = await loadNote(userId, documentReference.note_id);
   const document = await loadDocument(userId, request.documentId);
-  const neighbors = await loadNeighbors(userId, document, request);
+  const neighbors = continuation ? { previous: [], next: [] } : await loadNeighbors(userId, document, request);
   const noteAfter = await loadNote(userId, document.note_id);
   if (contextNoteChanged(noteBefore, noteAfter)) {
     throw new ApiError(409, 'NOTE_VERSION_CONFLICT', 'The note changed while context was being read. Retry the context request.', {
@@ -152,13 +201,30 @@ async function contextFor(userId: string, request: ContextRequest): Promise<Sear
       currentUpdatedAt: noteAfter.updated_at,
     });
   }
-  const center = boundContextSource(sourceInput(document, noteAfter), request.maxTokens);
+  if (continuation && (continuation.noteVersion !== noteAfter.version || continuation.sourceHash !== document.content_hash)) {
+    throw new ApiError(409, 'NOTE_VERSION_CONFLICT', 'The context continuation is stale. Read a new context page.', {
+      currentVersion: noteAfter.version,
+      currentUpdatedAt: noteAfter.updated_at,
+    });
+  }
+  const documentCharacters = Array.from(document.content);
+  const offset = continuation?.nextOffset ?? 0;
+  if (offset > documentCharacters.length) throw new ApiError(422, 'VALIDATION_ERROR', 'continuation offset is invalid.');
+  const center = boundContextSource(sourceInput({ ...document, content: documentCharacters.slice(offset).join('') }, noteAfter), request.maxTokens);
   let usedTokens = contextTokenUsage(center.content);
   const remainingAfterCenter = Math.max(0, request.maxTokens - usedTokens);
   const previousSources = takeContextSources(neighbors.previous.map((row) => sourceInput(row, noteAfter)), Math.floor(remainingAfterCenter / 2));
   usedTokens += previousSources.reduce((sum, source) => sum + contextTokenUsage(source.content), 0);
   const nextSources = takeContextSources(neighbors.next.map((row) => sourceInput(row, noteAfter)), Math.max(0, request.maxTokens - usedTokens));
   usedTokens += nextSources.reduce((sum, source) => sum + contextTokenUsage(source.content), 0);
+  const nextOffset = offset + documentCharacters.slice(offset, offset + Array.from(center.content).length).length;
+  const hasMore = nextOffset < documentCharacters.length;
+  const nextContinuation: SearchContextContinuation | undefined = hasMore ? {
+    cursor: encodeContinuation({ documentId: document.id, noteId: noteAfter.id, noteVersion: noteAfter.version, sourceHash: document.content_hash, nextOffset }),
+    noteVersion: noteAfter.version,
+    sourceHash: document.content_hash,
+    nextOffset,
+  } : undefined;
   return {
     noteId: noteAfter.id,
     noteVersion: noteAfter.version,
@@ -177,8 +243,9 @@ async function contextFor(userId: string, request: ContextRequest): Promise<Sear
     attachmentId: document.source_type === 'attachment_chunk' ? document.source_id : null,
     pageNumber: document.page_number,
     sourceHash: center.sourceHash,
-    truncated: center.truncated || previousSources.some((source) => source.truncated) || nextSources.some((source) => source.truncated),
+    truncated: center.truncated || previousSources.some((source) => source.truncated) || nextSources.some((source) => source.truncated) || hasMore,
     tokenBudget: { max: request.maxTokens, used: usedTokens, unit: 'approximate_tokens' },
+    ...(nextContinuation ? { continuation: nextContinuation } : {}),
     previousSources,
     nextSources,
   };
@@ -188,7 +255,7 @@ export async function getNoteContext(context: Context): Promise<Response> {
   const auth = authFromContext(context);
   requireScope(auth, 'search:read');
   const query = context.req.query();
-  const request = parseRequest(context.req.param('documentId'), { before: query.before, after: query.after, maxTokens: query.maxTokens });
+  const request = parseRequest(context.req.param('documentId'), { before: query.before, after: query.after, maxTokens: query.maxTokens, continuation: query.continuation });
   return dataBody(context, await contextFor(auth.userId, request));
 }
 
@@ -196,6 +263,6 @@ export async function postNoteContext(context: Context): Promise<Response> {
   const auth = authFromContext(context);
   requireScope(auth, 'search:read');
   const body = record(await context.req.json().catch(() => null));
-  const request = parseRequest(body.documentId, { before: body.before, after: body.after, maxTokens: body.maxTokens });
+  const request = parseRequest(body.documentId, { before: body.before, after: body.after, maxTokens: body.maxTokens, continuation: body.continuation });
   return dataBody(context, await contextFor(auth.userId, request));
 }

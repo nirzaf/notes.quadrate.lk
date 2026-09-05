@@ -265,6 +265,13 @@ export interface SearchContextTokenBudget {
   unit: 'approximate_tokens';
 }
 
+export interface SearchContextContinuation {
+  cursor: string;
+  noteVersion: number;
+  sourceHash: string;
+  nextOffset: number;
+}
+
 export interface SearchContext {
   noteId: UUID;
   noteVersion: number;
@@ -285,6 +292,7 @@ export interface SearchContext {
   sourceHash?: string;
   truncated?: boolean;
   tokenBudget?: SearchContextTokenBudget;
+  continuation?: SearchContextContinuation;
   previousSources?: SearchContextSource[];
   nextSources?: SearchContextSource[];
 }

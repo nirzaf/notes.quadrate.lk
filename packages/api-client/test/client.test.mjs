@@ -134,7 +134,7 @@ test('accepts old context payloads and validates additive provenance fields', as
     noteId: 'note-1', noteVersion: 3, documentId: 'doc-1', uri: 'qnotes://notes/note-1/documents/doc-1',
     title: 'Rollback', headingPath: null, content: 'exact', previous: ['neighbor'], next: [],
     updatedAt: '2026-01-01T00:00:00Z', sourceType: 'note_chunk', sourceHash: 'center-hash', truncated: true,
-    tokenBudget: { max: 4, used: 4, unit: 'approximate_tokens' }, previousSources: [source], nextSources: [],
+    tokenBudget: { max: 4, used: 4, unit: 'approximate_tokens' }, continuation: { cursor: 'opaque-context-cursor', noteVersion: 3, sourceHash: 'center-hash', nextOffset: 4 }, previousSources: [source], nextSources: [],
   };
   const client = new QNotesClient({ baseUrl: 'http://example.test', getAccessToken: () => null, fetchImplementation: async () => jsonResponse({ data: context }) });
   assert.deepEqual(await client.readNoteContext('doc-1'), context);
