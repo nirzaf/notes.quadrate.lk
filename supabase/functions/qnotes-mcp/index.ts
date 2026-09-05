@@ -27,7 +27,7 @@ interface OAuthCodePayload {
 
 interface OAuthClientPayload {
   type: 'client';
-  redirectUris: string[];
+  redirectUriHashes: string[];
   clientName: string;
   expiresAt: number;
   nonce: string;
@@ -183,6 +183,11 @@ async function pkceChallenge(verifier: string): Promise<string> {
   return base64Url(new Uint8Array(digest));
 }
 
+async function redirectFingerprint(uri: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(uri));
+  return base64Url(new Uint8Array(digest).slice(0, 12));
+}
+
 function isAllowedGoogleRedirect(uri: string): boolean {
   try {
     const redirect = new URL(uri);
@@ -254,16 +259,17 @@ function basicClientId(request: Request): string | null {
 async function oauthClient(clientId: string): Promise<OAuthClientPayload | null> {
   if (!clientId || clientId.length > 4096) return null;
   if (clientId === STATIC_OAUTH_CLIENT_ID) {
-    return { type: 'client', redirectUris: [], clientName: 'Google', expiresAt: Number.MAX_SAFE_INTEGER, nonce: 'static' };
+    return { type: 'client', redirectUriHashes: [], clientName: 'Google', expiresAt: Number.MAX_SAFE_INTEGER, nonce: 'static' };
   }
   const client = await verifyOAuthValue<OAuthClientPayload>(clientId, 'qdc');
   if (!client || client.type !== 'client' || client.expiresAt <= Math.floor(Date.now() / 1000)) return null;
-  if (!Array.isArray(client.redirectUris) || client.redirectUris.length === 0 || client.redirectUris.length > 16 || !client.redirectUris.every((uri) => typeof uri === 'string' && isAllowedGoogleRedirect(uri))) return null;
+  if (!Array.isArray(client.redirectUriHashes) || client.redirectUriHashes.length === 0 || client.redirectUriHashes.length > 16 || !client.redirectUriHashes.every((hash) => typeof hash === 'string' && /^[A-Za-z0-9_-]{16}$/.test(hash))) return null;
   return client;
 }
 
-function clientAllowsRedirect(client: OAuthClientPayload, redirectUri: string): boolean {
-  return isAllowedGoogleRedirect(redirectUri) && (client.redirectUris.length === 0 || client.redirectUris.includes(redirectUri));
+async function clientAllowsRedirect(client: OAuthClientPayload, redirectUri: string): Promise<boolean> {
+  if (!isAllowedGoogleRedirect(redirectUri)) return false;
+  return client.redirectUriHashes.length === 0 || client.redirectUriHashes.includes(await redirectFingerprint(redirectUri));
 }
 
 function htmlResponse(request: Request, html: string): Response {
@@ -314,9 +320,10 @@ async function handleRegister(request: Request): Promise<Response> {
   if (redirectUris.length === 0 || redirectUris.length > 16 || redirectUris.some((uri) => !isAllowedGoogleRedirect(uri))) return oauthError(request, 'invalid_redirect_uri', 'Only HTTPS Google OAuth redirect URIs are allowed.');
   const clientName = typeof body.client_name === 'string' && body.client_name.trim() ? body.client_name.trim().slice(0, 128) : 'Google';
   const now = Math.floor(Date.now() / 1000);
+  const redirectUriHashes = await Promise.all(redirectUris.map(redirectFingerprint));
   const clientId = await signOAuthValue('qdc', {
     type: 'client',
-    redirectUris,
+    redirectUriHashes,
     clientName,
     expiresAt: now + OAUTH_CLIENT_TTL_SECONDS,
     nonce: base64Url(crypto.getRandomValues(new Uint8Array(18))),
@@ -338,12 +345,12 @@ async function handleAuthorize(request: Request): Promise<Response> {
     const clientId = params.get('client_id') ?? '';
     const redirectUri = params.get('redirect_uri') ?? '';
     const client = await oauthClient(clientId);
-    const resource = params.get('resource') ?? mcpBaseUrl(request);
+    const resource = mcpBaseUrl(request);
     const scope = params.get('scope')?.trim() || OAUTH_SCOPE;
-    if (!client || params.get('response_type') !== 'code' || !clientAllowsRedirect(client, redirectUri)) return oauthError(request, 'invalid_request', 'The OAuth authorization request is invalid.');
+    if (!client || params.get('response_type') !== 'code' || !(await clientAllowsRedirect(client, redirectUri))) return oauthError(request, 'invalid_request', 'The OAuth authorization request is invalid.');
     if (!params.get('state') || params.get('state')!.length > 4096) return oauthError(request, 'invalid_request', 'A valid state parameter is required.');
     if (!params.get('code_challenge') || params.get('code_challenge_method') !== 'S256' || params.get('code_challenge')!.length > 256) return oauthError(request, 'invalid_request', 'PKCE S256 is required.');
-    if (resource !== mcpBaseUrl(request) || scope.length > 512) return oauthError(request, 'invalid_request', 'The OAuth resource or scope is invalid.');
+    if (scope.length > 512) return oauthError(request, 'invalid_request', 'The OAuth scope is invalid.');
     return consentPage(request, { clientId, clientName: client.clientName, redirectUri, state: params.get('state')!, codeChallenge: params.get('code_challenge')!, scope, resource });
   }
 
@@ -358,14 +365,13 @@ async function handleAuthorize(request: Request): Promise<Response> {
   const redirectUri = String(form.get('redirect_uri') ?? '');
   const state = String(form.get('state') ?? '');
   const client = await oauthClient(clientId);
-  if (!client || !clientAllowsRedirect(client, redirectUri)) return oauthError(request, 'invalid_request', 'The OAuth authorization request is invalid.');
+  if (!client || !(await clientAllowsRedirect(client, redirectUri))) return oauthError(request, 'invalid_request', 'The OAuth authorization request is invalid.');
   if (form.get('decision') !== 'approve') return authorizationRedirect(request, redirectUri, { error: 'access_denied', state, iss: mcpBaseUrl(request) });
   const qnotesToken = String(form.get('qnotes_token') ?? '');
   if (!isPersonalToken(qnotesToken)) return oauthError(request, 'access_denied', 'A valid Quadrate Notes personal token is required.');
   const codeChallenge = String(form.get('code_challenge') ?? '');
   if (!state || state.length > 4096 || !codeChallenge || form.get('code_challenge_method') !== 'S256' || codeChallenge.length > 256) return oauthError(request, 'invalid_request', 'PKCE S256 and state are required.');
-  const resource = String(form.get('resource') ?? mcpBaseUrl(request));
-  if (resource !== mcpBaseUrl(request)) return oauthError(request, 'invalid_target', 'The resource does not match this MCP server.');
+  const resource = mcpBaseUrl(request);
   const scope = String(form.get('scope') ?? OAUTH_SCOPE).slice(0, 512);
   const code = await signOAuthValue('qoc', {
     type: 'authorization_code',
@@ -398,7 +404,8 @@ async function handleToken(request: Request): Promise<Response> {
   if (!code || code.type !== 'authorization_code' || code.clientId !== clientId || code.expiresAt <= Math.floor(Date.now() / 1000)) {
     return oauthError(request, 'invalid_grant', 'The authorization code is invalid or expired.');
   }
-  if (String(form.get('redirect_uri') ?? '') !== code.redirectUri) return oauthError(request, 'invalid_grant', 'The redirect URI does not match the authorization code.');
+  const requestedRedirectUri = form.get('redirect_uri');
+  if (requestedRedirectUri !== null && String(requestedRedirectUri) !== code.redirectUri) return oauthError(request, 'invalid_grant', 'The redirect URI does not match the authorization code.');
   if (code.resource !== mcpBaseUrl(request)) return oauthError(request, 'invalid_target', 'The resource does not match this MCP server.');
   const verifier = String(form.get('code_verifier') ?? '');
   if (!verifier || (await pkceChallenge(verifier)) !== code.codeChallenge) return oauthError(request, 'invalid_grant', 'The PKCE verifier is invalid.');
