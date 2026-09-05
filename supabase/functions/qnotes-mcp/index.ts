@@ -12,6 +12,7 @@ const OAUTH_CLIENT_TTL_SECONDS = 90 * 24 * 60 * 60;
 const GOOGLE_REDIRECT_HOSTS = new Set([
   'oauth-redirect.googleusercontent.com',
   'oauth-redirect-sandbox.googleusercontent.com',
+  'oauth-redirect-test.googleusercontent.com',
 ]);
 
 interface OAuthCodePayload {
@@ -197,23 +198,6 @@ function isAllowedGoogleRedirect(uri: string): boolean {
   }
 }
 
-function redirectUriShape(value: unknown): Record<string, unknown> {
-  if (typeof value !== 'string') return { type: typeof value };
-  try {
-    const redirect = new URL(value);
-    return {
-      protocol: redirect.protocol,
-      hostname: redirect.hostname,
-      pathnameLength: redirect.pathname.length,
-      hasQuery: Boolean(redirect.search),
-      hasHash: Boolean(redirect.hash),
-      allowed: isAllowedGoogleRedirect(value),
-    };
-  } catch {
-    return { type: 'invalid-url' };
-  }
-}
-
 function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({
     '&': '&amp;',
@@ -333,14 +317,6 @@ async function handleRegister(request: Request): Promise<Response> {
   } catch {
     return oauthError(request, 'invalid_client_metadata', 'The registration request must be JSON.');
   }
-  const rawRedirectUris = body.redirect_uris;
-  console.info(JSON.stringify({
-    event: 'oauth_dcr_request',
-    bodyKeys: Object.keys(body).sort(),
-    redirectUrisType: Array.isArray(rawRedirectUris) ? 'array' : typeof rawRedirectUris,
-    redirectUriCount: Array.isArray(rawRedirectUris) ? rawRedirectUris.length : 0,
-    redirectUriShapes: Array.isArray(rawRedirectUris) ? rawRedirectUris.slice(0, 16).map(redirectUriShape) : [],
-  }));
   const redirectUris = Array.isArray(body.redirect_uris) ? body.redirect_uris.filter((value): value is string => typeof value === 'string') : [];
   if (redirectUris.length === 0 || redirectUris.length > 16 || redirectUris.some((uri) => !isAllowedGoogleRedirect(uri))) return oauthError(request, 'invalid_redirect_uri', 'Only HTTPS Google OAuth redirect URIs are allowed.');
   const clientName = typeof body.client_name === 'string' && body.client_name.trim() ? body.client_name.trim().slice(0, 128) : 'Google';
