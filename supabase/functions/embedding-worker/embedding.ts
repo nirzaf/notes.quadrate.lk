@@ -42,6 +42,15 @@ export async function embeddingInputHash(document: { content: string; sourceTitl
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+export function normalizeEmbedding(value: unknown): number[] {
+  if (!Array.isArray(value) || value.length !== 384 || !value.every((item) => typeof item === 'number' && Number.isFinite(item))) {
+    throw new Error('Embedding runtime returned an invalid vector.');
+  }
+  const magnitude = Math.sqrt(value.reduce((sum, item) => sum + item * item, 0));
+  if (!Number.isFinite(magnitude) || magnitude === 0) throw new Error('Embedding runtime returned a zero-norm vector.');
+  return value.map((item) => item / magnitude);
+}
+
 function getSession(): EmbeddingSession {
   const runtime = globalThis as unknown as { Supabase?: { ai?: { Session?: SessionConstructor } } };
   const Session = runtime.Supabase?.ai?.Session;
@@ -56,7 +65,5 @@ function getSession(): EmbeddingSession {
 export async function createEmbedding(value: string): Promise<number[]> {
   if (Deno.env.get('QNOTES_FAKE_EMBEDDINGS') === '1') return fakeEmbedding(value);
   const result = await getSession().run(value);
-  if (!Array.isArray(result) || result.length !== 384 || !result.every((item) => typeof item === 'number')) throw new Error('Embedding runtime returned an invalid vector.');
-  const magnitude = Math.sqrt(result.reduce((sum, item) => sum + item * item, 0)) || 1;
-  return result.map((item) => item / magnitude);
+  return normalizeEmbedding(result);
 }

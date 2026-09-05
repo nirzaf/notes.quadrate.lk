@@ -115,7 +115,7 @@ export async function listNotes(context: Context): Promise<Response> {
     throw error;
   }
   const { limit, includeDeleted, deletedOnly, unfiled, notebookId, tag } = query;
-  let builder = appDbClient.from('notes').select('*').eq('owner_id', auth.userId);
+  let builder = appDbClient.from('notes').select('id, slug, title, content_plain, tags, notebook_id, version, created_at, updated_at, deleted_at').eq('owner_id', auth.userId);
   if (deletedOnly) builder = builder.not('deleted_at', 'is', null);
   else if (!includeDeleted) builder = builder.is('deleted_at', null);
   if (notebookId) builder = builder.eq('notebook_id', notebookId);

@@ -93,7 +93,7 @@ function protocolClient(overrides = {}) {
     async readNoteContext() { return context; },
     async getBlock(noteRef, blockKey) { return { id: 'block-1', noteId: noteRef, blockKey, blockType: 'command', title: 'Rollback', language: 'bash', content: 'docker compose down', position: 0, copyable: true, contentHash: 'hash' }; },
     async listNotebooks() { return { items: [] }; },
-    async listNotes() { return { items: [{ id: note.id, slug: note.slug, title: note.title }] }; },
+    async listNotes() { return { items: [{ id: note.id, slug: note.slug, title: note.title }], nextCursor: null }; },
     async getNote() { return note; },
     async createNoteDetailed(input) { return { note: { ...note, title: input.title }, outcome: 'created' }; },
     async createNote(input) { return { ...note, title: input.title }; },
@@ -230,5 +230,32 @@ test('MCP resources read notes, documents, and blocks and reject mismatched prov
   assert.equal(JSON.parse(block.contents[0].text).blockKey, 'rollback');
   await assert.rejects(() => client.readResource({ uri: 'qnotes://notes/other/documents/doc-1' }));
   await assert.rejects(() => client.readResource({ uri: 'qnotes://notes/other/blocks/rollback' }));
+  await client.close();
+});
+
+test('MCP note resources advertise a recent partial page and forward its cursor', async () => {
+  const listNotesCalls = [];
+  const { client } = await connectedProtocol('read', protocolClient({
+    async listNotes(params) {
+      listNotesCalls.push(params);
+      return {
+        items: [{ id: 'note-1', slug: 'rollback', title: 'Rollback' }],
+        nextCursor: params.cursor ? null : 'notes-after-1',
+      };
+    },
+  }));
+
+  const firstPage = await client.listResources();
+  const noteResource = firstPage.resources.find((resource) => resource.uri === 'qnotes://notes/note-1');
+  assert.ok(noteResource);
+  assert.equal(firstPage.nextCursor, 'notes-after-1');
+  assert.match(noteResource.description, /recent/i);
+  assert.match(noteResource.description, /partial/i);
+  assert.equal('contentMarkdown' in noteResource, false);
+  assert.deepEqual(listNotesCalls, [{ limit: 50 }]);
+
+  const secondPage = await client.listResources({ cursor: firstPage.nextCursor });
+  assert.equal(secondPage.nextCursor, undefined);
+  assert.deepEqual(listNotesCalls, [{ limit: 50 }, { limit: 50, cursor: 'notes-after-1' }]);
   await client.close();
 });
