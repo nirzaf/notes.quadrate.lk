@@ -326,12 +326,16 @@ export interface SearchIndexMetadata {
   failedDocuments: number;
   oldestPendingAgeSeconds: number | null;
   fresh: boolean;
+  freshness?: 'fresh' | 'stale' | 'unknown';
 }
 
 export interface SearchTiming {
   embeddingMs: number;
   retrievalMs: number;
   totalMs: number;
+  metadataMs?: number;
+  freshnessMs?: number;
+  serializationMs?: number;
 }
 
 export type SearchDegradedReason = 'QUERY_EMBEDDING_UNAVAILABLE' | 'SEMANTIC_SEARCH_UNAVAILABLE' | 'LOCAL_FALLBACK';

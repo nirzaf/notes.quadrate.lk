@@ -150,7 +150,8 @@ test('preserves search items and response metadata inside the success data envel
     modeUsed: 'keyword',
     degraded: true,
     degradedReason: 'QUERY_EMBEDDING_UNAVAILABLE',
-    timing: { embeddingMs: 12, retrievalMs: 4, totalMs: 16 },
+    timing: { embeddingMs: 12, retrievalMs: 4, metadataMs: 2, freshnessMs: 1, serializationMs: 0, totalMs: 16 },
+    index: { model: 'gte-small:v2', pendingDocuments: 2, failedDocuments: 0, oldestPendingAgeSeconds: 4, fresh: false, freshness: 'unknown' },
   };
   const client = new QNotesClient({
     baseUrl: 'http://example.test',

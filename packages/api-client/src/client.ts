@@ -192,13 +192,18 @@ function isSearchResult(value: unknown): value is SearchResult {
 function isSearchResponse(value: unknown): value is SearchResponse {
   if (!isRecord(value) || !isString(value.queryId) || !isString(value.modeUsed) || !SEARCH_MODES.has(value.modeUsed) || typeof value.degraded !== 'boolean'
     || !isRecord(value.timing) || typeof value.timing.embeddingMs !== 'number' || typeof value.timing.retrievalMs !== 'number'
-    || typeof value.timing.totalMs !== 'number' || !Array.isArray(value.items) || !value.items.every(isSearchResult)) return false;
+    || typeof value.timing.totalMs !== 'number'
+    || (value.timing.metadataMs !== undefined && typeof value.timing.metadataMs !== 'number')
+    || (value.timing.freshnessMs !== undefined && typeof value.timing.freshnessMs !== 'number')
+    || (value.timing.serializationMs !== undefined && typeof value.timing.serializationMs !== 'number')
+    || !Array.isArray(value.items) || !value.items.every(isSearchResult)) return false;
   if (value.nextCursor !== undefined && !isNullableString(value.nextCursor)) return false;
   if (value.degradedReason !== undefined && !isString(value.degradedReason)) return false;
   if (value.index !== undefined) {
     if (!isRecord(value.index) || !isString(value.index.model) || typeof value.index.pendingDocuments !== 'number'
       || typeof value.index.failedDocuments !== 'number' || !isNullableNumber(value.index.oldestPendingAgeSeconds)
-      || typeof value.index.fresh !== 'boolean') return false;
+      || typeof value.index.fresh !== 'boolean'
+      || (value.index.freshness !== undefined && !['fresh', 'stale', 'unknown'].includes(value.index.freshness as string))) return false;
   }
   return true;
 }

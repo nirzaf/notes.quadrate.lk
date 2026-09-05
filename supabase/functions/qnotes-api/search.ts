@@ -76,7 +76,28 @@ async function indexMetadata(userId: string): Promise<SearchIndexMetadata> {
     failedDocuments,
     oldestPendingAgeSeconds: Number.isFinite(oldestQueuedAt) ? Math.max(0, Math.floor((Date.now() - oldestQueuedAt) / 1000)) : null,
     fresh: pendingDocuments === 0 && failedDocuments === 0,
+    freshness: pendingDocuments === 0 && failedDocuments === 0 ? 'fresh' : 'stale',
   };
+}
+
+function unknownIndexMetadata(): SearchIndexMetadata {
+  return {
+    model: `${EMBEDDING_MODEL}:${EMBEDDING_MODEL_VERSION}`,
+    pendingDocuments: 0,
+    failedDocuments: 0,
+    oldestPendingAgeSeconds: null,
+    fresh: false,
+    freshness: 'unknown',
+  };
+}
+
+async function measuredIndexMetadata(userId: string): Promise<{ index: SearchIndexMetadata; freshnessMs: number }> {
+  const started = performance.now();
+  try {
+    return { index: await indexMetadata(userId), freshnessMs: elapsedMilliseconds(started) };
+  } catch {
+    return { index: unknownIndexMetadata(), freshnessMs: elapsedMilliseconds(started) };
+  }
 }
 
 function normalizeResult(item: SearchResult, note: SearchNoteRow | undefined, minimumScore: number, maximumScore: number): SearchResult {
@@ -135,7 +156,7 @@ function pageResults(items: SearchResult[], request: SearchRequest, fingerprint:
 function searchResponse(
   context: Context,
   items: SearchResult[],
-  metadata: Omit<SearchResponseMetadata, 'timing'> & { started: number; embeddingMs: number; retrievalMs: number },
+  metadata: Omit<SearchResponseMetadata, 'timing'> & { started: number; embeddingMs: number; retrievalMs: number; metadataMs: number; freshnessMs: number },
   index: SearchIndexMetadata,
   nextCursor: string | null,
   degradedReason?: SearchResponseMetadata['degradedReason'],
@@ -149,9 +170,24 @@ function searchResponse(
       embeddingMs: metadata.embeddingMs,
       retrievalMs: metadata.retrievalMs,
       totalMs: elapsedMilliseconds(metadata.started),
+      metadataMs: metadata.metadataMs,
+      freshnessMs: metadata.freshnessMs,
     },
   };
-  return context.json({ data: { items, ...responseMetadata, index, nextCursor } });
+  const firstPayload = { data: { items, ...responseMetadata, index, nextCursor } };
+  const serializationStarted = performance.now();
+  JSON.stringify(firstPayload);
+  const serializationMs = elapsedMilliseconds(serializationStarted);
+  const payload = {
+    data: {
+      items,
+      ...responseMetadata,
+      timing: { ...responseMetadata.timing, serializationMs },
+      index,
+      nextCursor,
+    },
+  };
+  return context.newResponse(JSON.stringify(payload), 200, { 'Content-Type': 'application/json; charset=UTF-8' });
 }
 
 function validationError(error: unknown): never {
@@ -206,11 +242,14 @@ export async function searchNotes(context: Context): Promise<Response> {
       const retrievalStarted = performance.now();
       const fallbackItems = await keywordSearch(auth.userId, request.query, retrievalLimit, request.filters, offset, request.maxPerNote);
       const retrievalMs = elapsedMilliseconds(retrievalStarted);
+      const metadataStarted = performance.now();
       const fallbackNotes = await noteMetadata(auth.userId, [...new Set(fallbackItems.map((item) => item.noteId))]);
+      const metadataMs = elapsedMilliseconds(metadataStarted);
       const page = pageResults(fallbackItems, request, fingerprint, offset, fallbackNotes);
       // Degraded pages are deliberately not cursor-paginated: a later request
       // must not silently switch from the requested semantic/hybrid ranking.
-      return searchResponse(context, page.items, { queryId, modeUsed: 'keyword', degraded: true, started, embeddingMs, retrievalMs }, await indexMetadata(auth.userId), null, 'QUERY_EMBEDDING_UNAVAILABLE');
+      const freshness = await measuredIndexMetadata(auth.userId);
+      return searchResponse(context, page.items, { queryId, modeUsed: 'keyword', degraded: true, started, embeddingMs, retrievalMs, metadataMs, freshnessMs: freshness.freshnessMs }, freshness.index, null, 'QUERY_EMBEDDING_UNAVAILABLE');
     }
   }
 
@@ -232,16 +271,22 @@ export async function searchNotes(context: Context): Promise<Response> {
     if (mode === 'keyword') throw error;
     const fallbackItems = await keywordSearch(auth.userId, request.query, retrievalLimit, request.filters, offset, request.maxPerNote);
     retrievalMs = elapsedMilliseconds(retrievalStarted);
+    const metadataStarted = performance.now();
     const fallbackNotes = await noteMetadata(auth.userId, [...new Set(fallbackItems.map((item) => item.noteId))]);
+    const metadataMs = elapsedMilliseconds(metadataStarted);
     const page = pageResults(fallbackItems, request, fingerprint, offset, fallbackNotes);
     const degradedReason: SearchResponseMetadata['degradedReason'] = error instanceof ApiError && (error.code === 'SEMANTIC_SEARCH_UNAVAILABLE' || error.code === 'QUERY_EMBEDDING_UNAVAILABLE')
       ? error.code
       : 'SEMANTIC_SEARCH_UNAVAILABLE';
     // Degraded pages are deliberately not cursor-paginated: a later request
     // must not silently switch from the requested semantic/hybrid ranking.
-    return searchResponse(context, page.items, { queryId, modeUsed: 'keyword', degraded: true, started, embeddingMs, retrievalMs }, await indexMetadata(auth.userId), null, degradedReason);
+    const freshness = await measuredIndexMetadata(auth.userId);
+    return searchResponse(context, page.items, { queryId, modeUsed: 'keyword', degraded: true, started, embeddingMs, retrievalMs, metadataMs, freshnessMs: freshness.freshnessMs }, freshness.index, null, degradedReason);
   }
+  const metadataStarted = performance.now();
   const notes = await noteMetadata(auth.userId, [...new Set(rawItems.map((item) => item.noteId))]);
+  const metadataMs = elapsedMilliseconds(metadataStarted);
   const page = pageResults(rawItems, request, fingerprint, offset, notes);
-  return searchResponse(context, page.items, { queryId, modeUsed: mode, degraded: false, started, embeddingMs, retrievalMs }, await indexMetadata(auth.userId), page.nextCursor);
+  const freshness = await measuredIndexMetadata(auth.userId);
+  return searchResponse(context, page.items, { queryId, modeUsed: mode, degraded: false, started, embeddingMs, retrievalMs, metadataMs, freshnessMs: freshness.freshnessMs }, freshness.index, page.nextCursor);
 }
