@@ -44,11 +44,21 @@ export interface NoteMutationResult {
 
 export interface QNotesClientOptions {
   baseUrl: string;
-  getAccessToken: () => string | null | Promise<string | null>;
+  /**
+   * The client passes the request signal to the provider when it can. A
+   * provider that ignores the signal cannot be forcibly cancelled; the client
+   * checks the signal again before sending the HTTP request.
+   */
+  getAccessToken: (signal?: AbortSignal) => string | null | Promise<string | null>;
   fetchImplementation?: typeof fetch;
 }
 
-export interface ListNotesParams {
+export interface RequestOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
+export interface ListNotesParams extends RequestOptions {
   cursor?: string;
   limit?: number;
   includeDeleted?: boolean;
@@ -56,41 +66,74 @@ export interface ListNotesParams {
   notebookId?: UUID;
   unfiled?: boolean;
   tag?: string;
-  signal?: AbortSignal;
 }
 
-export interface GetNoteParams {
+export interface GetNoteParams extends RequestOptions {
   includeDeleted?: boolean;
-  signal?: AbortSignal;
 }
 
-export interface SearchParams {
+export interface SearchParams extends RequestOptions {
   query: string;
   mode?: SearchMode;
   limit?: number;
   cursor?: string;
-  signal?: AbortSignal;
 }
 
-export interface SearchPostOptions {
-  signal?: AbortSignal;
-}
+export interface SearchPostOptions extends RequestOptions {}
 
-export interface NoteContextParams {
+export interface NoteContextParams extends RequestOptions {
   before?: number;
   after?: number;
   maxTokens?: number;
-  signal?: AbortSignal;
-}
-
-export interface RequestOptions {
-  signal?: AbortSignal;
 }
 
 type Success<T> = { data: T };
 
 const SEARCH_SOURCE_TYPES = new Set(['note_metadata', 'note_chunk', 'copy_block', 'code_block', 'attachment_chunk']);
 const SEARCH_MODES = new Set(['keyword', 'semantic', 'hybrid']);
+const MAX_REQUEST_TIMEOUT_MS = 120_000;
+
+interface RequestSignal {
+  signal?: AbortSignal;
+  cleanup: () => void;
+}
+
+function boundedTimeout(timeoutMs: number | undefined): number | undefined {
+  if (timeoutMs === undefined) return undefined;
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new RangeError('timeoutMs must be a finite, non-negative number.');
+  return Math.min(timeoutMs, MAX_REQUEST_TIMEOUT_MS);
+}
+
+function requestTimeoutError(): DOMException {
+  return new DOMException('The request timed out.', 'TimeoutError');
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw signal.reason;
+}
+
+function createRequestSignal(callerSignal: AbortSignal | null | undefined, timeoutMs: number | undefined): RequestSignal {
+  const boundedMs = boundedTimeout(timeoutMs);
+  if (boundedMs === undefined) return callerSignal ? { signal: callerSignal, cleanup: () => {} } : { cleanup: () => {} };
+
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const abortFromCaller = () => controller.abort(callerSignal?.reason);
+
+  if (callerSignal) {
+    if (callerSignal.aborted) controller.abort(callerSignal.reason);
+    else callerSignal.addEventListener('abort', abortFromCaller, { once: true });
+  }
+  if (!controller.signal.aborted) timer = setTimeout(() => controller.abort(requestTimeoutError()), boundedMs);
+
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      if (timer !== undefined) clearTimeout(timer);
+      callerSignal?.removeEventListener('abort', abortFromCaller);
+    },
+  };
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -240,79 +283,105 @@ export class QNotesClient {
     this.fetchImplementation = options.fetchImplementation ?? globalThis.fetch.bind(globalThis);
   }
 
-  private async requestWithResponse<T>(path: string, init: RequestInit = {}): Promise<{ data: T; response: Response }> {
-    const headers = new Headers(init.headers);
-    headers.set('Accept', 'application/json');
-    if (init.body !== undefined && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
-    const token = await this.getAccessToken();
-    if (token) headers.set('Authorization', `Bearer ${token}`);
-    const response = await this.fetchImplementation(`${this.baseUrl}/api${path}`, { ...init, headers });
-    if (!response.ok) {
-      const contentType = response.headers.get('content-type') ?? '';
-      const body: unknown = contentType.includes('application/json') ? await response.json().catch(() => null) : await response.text().catch(() => '');
-      const envelope = typeof body === 'object' && body !== null && 'error' in body ? (body as { error?: unknown }).error : null;
-      const error = typeof envelope === 'object' && envelope !== null ? envelope as { code?: unknown; message?: unknown; requestId?: unknown; details?: unknown } : {};
-      const code = typeof error.code === 'string' ? error.code : 'INTERNAL_ERROR';
-      throw new QNotesHttpError(response.status, code as QNotesHttpError['code'], typeof error.message === 'string' ? error.message : `Request failed with HTTP ${response.status}.`, typeof error.requestId === 'string' ? error.requestId : response.headers.get('x-request-id') ?? '', error.details);
+  private async requestWithResponse<T>(path: string, init: RequestInit = {}, options: RequestOptions = {}): Promise<{ data: T; response: Response }> {
+    const requestSignal = createRequestSignal(options.signal ?? init.signal, options.timeoutMs);
+    try {
+      throwIfAborted(requestSignal.signal);
+      const headers = new Headers(init.headers);
+      headers.set('Accept', 'application/json');
+      if (init.body !== undefined && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+      const token = await this.getAccessToken(requestSignal.signal);
+      throwIfAborted(requestSignal.signal);
+      if (token) headers.set('Authorization', `Bearer ${token}`);
+      const response = await this.fetchImplementation(`${this.baseUrl}/api${path}`, {
+        ...init,
+        headers,
+        ...(requestSignal.signal ? { signal: requestSignal.signal } : {}),
+      });
+      throwIfAborted(requestSignal.signal);
+      if (!response.ok) {
+        const contentType = response.headers.get('content-type') ?? '';
+        const body: unknown = contentType.includes('application/json') ? await response.json().catch(() => null) : await response.text().catch(() => '');
+        throwIfAborted(requestSignal.signal);
+        const envelope = typeof body === 'object' && body !== null && 'error' in body ? (body as { error?: unknown }).error : null;
+        const error = typeof envelope === 'object' && envelope !== null ? envelope as { code?: unknown; message?: unknown; requestId?: unknown; details?: unknown } : {};
+        const code = typeof error.code === 'string' ? error.code : 'INTERNAL_ERROR';
+        throw new QNotesHttpError(response.status, code as QNotesHttpError['code'], typeof error.message === 'string' ? error.message : `Request failed with HTTP ${response.status}.`, typeof error.requestId === 'string' ? error.requestId : response.headers.get('x-request-id') ?? '', error.details);
+      }
+      const body: unknown = await response.json();
+      throwIfAborted(requestSignal.signal);
+      if (typeof body !== 'object' || body === null || !('data' in body)) throw new Error('QNotes API returned an invalid success envelope.');
+      return { data: (body as Success<T>).data, response };
+    } finally {
+      requestSignal.cleanup();
     }
-    const body: unknown = await response.json();
-    if (typeof body !== 'object' || body === null || !('data' in body)) throw new Error('QNotes API returned an invalid success envelope.');
-    return { data: (body as Success<T>).data, response };
   }
 
-  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
-    return (await this.requestWithResponse<T>(path, init)).data;
+  private async request<T>(path: string, init: RequestInit = {}, options: RequestOptions = {}): Promise<T> {
+    return (await this.requestWithResponse<T>(path, init, options)).data;
   }
 
-  private async requestValidated<T>(path: string, validator: (value: unknown) => value is T, resource: string, init: RequestInit = {}): Promise<T> {
-    return isValid(await this.request<unknown>(path, init), validator, resource);
+  private async requestValidated<T>(path: string, validator: (value: unknown) => value is T, resource: string, init: RequestInit = {}, options: RequestOptions = {}): Promise<T> {
+    return isValid(await this.request<unknown>(path, init, options), validator, resource);
   }
 
-  private async binary(path: string): Promise<Response> {
-    const headers = new Headers({ Accept: '*/*' });
-    const token = await this.getAccessToken();
-    if (token) headers.set('Authorization', `Bearer ${token}`);
-    const response = await this.fetchImplementation(`${this.baseUrl}/api${path}`, { headers });
-    if (!response.ok) {
-      const contentType = response.headers.get('content-type') ?? '';
-      const body: unknown = contentType.includes('application/json') ? await response.json().catch(() => null) : await response.text().catch(() => '');
-      const envelope = typeof body === 'object' && body !== null && 'error' in body ? (body as { error?: unknown }).error : null;
-      const error = typeof envelope === 'object' && envelope !== null ? envelope as { code?: unknown; message?: unknown; requestId?: unknown; details?: unknown } : {};
-      throw new QNotesHttpError(response.status, (typeof error.code === 'string' ? error.code : 'INTERNAL_ERROR') as QNotesHttpError['code'], typeof error.message === 'string' ? error.message : `Request failed with HTTP ${response.status}.`, typeof error.requestId === 'string' ? error.requestId : response.headers.get('x-request-id') ?? '', error.details);
+  private async binary(path: string, options: RequestOptions = {}): Promise<Response> {
+    const requestSignal = createRequestSignal(options.signal, options.timeoutMs);
+    try {
+      throwIfAborted(requestSignal.signal);
+      const headers = new Headers({ Accept: '*/*' });
+      const token = await this.getAccessToken(requestSignal.signal);
+      throwIfAborted(requestSignal.signal);
+      if (token) headers.set('Authorization', `Bearer ${token}`);
+      const response = await this.fetchImplementation(`${this.baseUrl}/api${path}`, {
+        headers,
+        ...(requestSignal.signal ? { signal: requestSignal.signal } : {}),
+      });
+      throwIfAborted(requestSignal.signal);
+      if (!response.ok) {
+        const contentType = response.headers.get('content-type') ?? '';
+        const body: unknown = contentType.includes('application/json') ? await response.json().catch(() => null) : await response.text().catch(() => '');
+        throwIfAborted(requestSignal.signal);
+        const envelope = typeof body === 'object' && body !== null && 'error' in body ? (body as { error?: unknown }).error : null;
+        const error = typeof envelope === 'object' && envelope !== null ? envelope as { code?: unknown; message?: unknown; requestId?: unknown; details?: unknown } : {};
+        throw new QNotesHttpError(response.status, (typeof error.code === 'string' ? error.code : 'INTERNAL_ERROR') as QNotesHttpError['code'], typeof error.message === 'string' ? error.message : `Request failed with HTTP ${response.status}.`, typeof error.requestId === 'string' ? error.requestId : response.headers.get('x-request-id') ?? '', error.details);
+      }
+      return response;
+    } finally {
+      requestSignal.cleanup();
     }
-    return response;
   }
 
   listNotes(params: ListNotesParams = {}): Promise<{ items: NoteSummary[]; nextCursor: string | null }> {
-    return this.requestValidated(`/notes${queryString({ cursor: params.cursor, limit: params.limit, includeDeleted: params.includeDeleted, deletedOnly: params.deletedOnly, notebookId: params.notebookId, unfiled: params.unfiled, tag: params.tag })}`, (value): value is { items: NoteSummary[]; nextCursor: string | null } => isRecord(value) && Array.isArray(value.items) && value.items.every(isNoteSummary) && isNullableString(value.nextCursor), 'notes list', params.signal ? { signal: params.signal } : {});
+    return this.requestValidated(`/notes${queryString({ cursor: params.cursor, limit: params.limit, includeDeleted: params.includeDeleted, deletedOnly: params.deletedOnly, notebookId: params.notebookId, unfiled: params.unfiled, tag: params.tag })}`, (value): value is { items: NoteSummary[]; nextCursor: string | null } => isRecord(value) && Array.isArray(value.items) && value.items.every(isNoteSummary) && isNullableString(value.nextCursor), 'notes list', {}, params);
   }
 
   listNotebooks(options: RequestOptions = {}): Promise<{ items: Notebook[] }> {
-    return this.requestValidated('/notebooks', (value): value is { items: Notebook[] } => isRecord(value) && Array.isArray(value.items) && value.items.every(isNotebook), 'notebooks list', options.signal ? { signal: options.signal } : {});
+    return this.requestValidated('/notebooks', (value): value is { items: Notebook[] } => isRecord(value) && Array.isArray(value.items) && value.items.every(isNotebook), 'notebooks list', {}, options);
   }
 
-  createNotebook(input: CreateNotebookInput): Promise<Notebook> {
-    return this.requestValidated('/notebooks', isNotebook, 'notebook', { method: 'POST', body: JSON.stringify(input) });
+  createNotebook(input: CreateNotebookInput, options: RequestOptions = {}): Promise<Notebook> {
+    return this.requestValidated('/notebooks', isNotebook, 'notebook', { method: 'POST', body: JSON.stringify(input) }, options);
   }
 
   getNote(noteRef: string, params: GetNoteParams = {}): Promise<Note> {
-    return this.requestValidated(`/notes/${encodeURIComponent(noteRef)}${queryString({ includeDeleted: params.includeDeleted })}`, isNote, 'note', params.signal ? { signal: params.signal } : {});
+    return this.requestValidated(`/notes/${encodeURIComponent(noteRef)}${queryString({ includeDeleted: params.includeDeleted })}`, isNote, 'note', {}, params);
   }
 
-  createNote(input: CreateNoteInput): Promise<Note> {
-    return this.requestValidated('/notes', isNote, 'note', { method: 'POST', body: JSON.stringify(input) });
+  createNote(input: CreateNoteInput, options: RequestOptions = {}): Promise<Note> {
+    return this.requestValidated('/notes', isNote, 'note', { method: 'POST', body: JSON.stringify(input) }, options);
   }
 
-  async createNoteDetailed(input: CreateNoteInput): Promise<CreateNoteResult> {
-    const result = await this.requestWithResponse<unknown>('/notes', { method: 'POST', body: JSON.stringify(input) });
+  async createNoteDetailed(input: CreateNoteInput, options: RequestOptions = {}): Promise<CreateNoteResult> {
+    const result = await this.requestWithResponse<unknown>('/notes', { method: 'POST', body: JSON.stringify(input) }, options);
     const note = isValid(result.data, isNote, 'note');
     const outcome = result.response.headers.get('x-qnotes-create-outcome');
     if (outcome === 'created' || outcome === 'idempotent' || outcome === 'deduplicated') return { note, outcome };
     return { note, outcome: result.response.status === 201 ? 'created' : 'idempotent' };
   }
 
-  private async noteMutationDetailed(path: string, method: 'PATCH' | 'POST' | 'DELETE', input: unknown): Promise<NoteMutationResult> {
-    const result = await this.requestWithResponse<unknown>(path, { method, body: JSON.stringify(input) });
+  private async noteMutationDetailed(path: string, method: 'PATCH' | 'POST' | 'DELETE', input: unknown, options: RequestOptions = {}): Promise<NoteMutationResult> {
+    const result = await this.requestWithResponse<unknown>(path, { method, body: JSON.stringify(input) }, options);
     const note = isValid(result.data, isNote, 'note');
     const outcome = result.response.headers.get('x-qnotes-mutation-outcome');
     if (outcome === 'applied' || outcome === 'idempotent') return { note, outcome };
@@ -321,103 +390,103 @@ export class QNotesClient {
     return { note, outcome: 'applied' };
   }
 
-  updateNote(noteId: UUID, input: UpdateNoteInput): Promise<Note> {
-    return this.requestValidated(`/notes/${encodeURIComponent(noteId)}`, isNote, 'note', { method: 'PATCH', body: JSON.stringify(input) });
+  updateNote(noteId: UUID, input: UpdateNoteInput, options: RequestOptions = {}): Promise<Note> {
+    return this.requestValidated(`/notes/${encodeURIComponent(noteId)}`, isNote, 'note', { method: 'PATCH', body: JSON.stringify(input) }, options);
   }
 
-  updateNoteDetailed(noteId: UUID, input: UpdateNoteInput): Promise<NoteMutationResult> {
-    return this.noteMutationDetailed(`/notes/${encodeURIComponent(noteId)}`, 'PATCH', input);
+  updateNoteDetailed(noteId: UUID, input: UpdateNoteInput, options: RequestOptions = {}): Promise<NoteMutationResult> {
+    return this.noteMutationDetailed(`/notes/${encodeURIComponent(noteId)}`, 'PATCH', input, options);
   }
 
-  appendNote(noteId: UUID, input: AppendNoteInput): Promise<Note> {
-    return this.requestValidated(`/notes/${encodeURIComponent(noteId)}/append`, isNote, 'note', { method: 'POST', body: JSON.stringify(input) });
+  appendNote(noteId: UUID, input: AppendNoteInput, options: RequestOptions = {}): Promise<Note> {
+    return this.requestValidated(`/notes/${encodeURIComponent(noteId)}/append`, isNote, 'note', { method: 'POST', body: JSON.stringify(input) }, options);
   }
 
-  appendNoteDetailed(noteId: UUID, input: AppendNoteInput): Promise<NoteMutationResult> {
-    return this.noteMutationDetailed(`/notes/${encodeURIComponent(noteId)}/append`, 'POST', input);
+  appendNoteDetailed(noteId: UUID, input: AppendNoteInput, options: RequestOptions = {}): Promise<NoteMutationResult> {
+    return this.noteMutationDetailed(`/notes/${encodeURIComponent(noteId)}/append`, 'POST', input, options);
   }
 
-  moveNoteToNotebook(noteId: UUID, input: { notebookId: UUID | null; expectedVersion: number; deviceId: UUID; mutationId: UUID }): Promise<Note> {
-    return this.requestValidated(`/notes/${encodeURIComponent(noteId)}/notebook`, isNote, 'note', { method: 'PATCH', body: JSON.stringify(input) });
+  moveNoteToNotebook(noteId: UUID, input: { notebookId: UUID | null; expectedVersion: number; deviceId: UUID; mutationId: UUID }, options: RequestOptions = {}): Promise<Note> {
+    return this.requestValidated(`/notes/${encodeURIComponent(noteId)}/notebook`, isNote, 'note', { method: 'PATCH', body: JSON.stringify(input) }, options);
   }
 
-  deleteNote(noteId: UUID, input: VersionedNoteMutationInput): Promise<Note> {
-    return this.requestValidated(`/notes/${encodeURIComponent(noteId)}`, isNote, 'note', { method: 'DELETE', body: JSON.stringify(input) });
+  deleteNote(noteId: UUID, input: VersionedNoteMutationInput, options: RequestOptions = {}): Promise<Note> {
+    return this.requestValidated(`/notes/${encodeURIComponent(noteId)}`, isNote, 'note', { method: 'DELETE', body: JSON.stringify(input) }, options);
   }
 
-  deleteNoteDetailed(noteId: UUID, input: VersionedNoteMutationInput): Promise<NoteMutationResult> {
-    return this.noteMutationDetailed(`/notes/${encodeURIComponent(noteId)}`, 'DELETE', input);
+  deleteNoteDetailed(noteId: UUID, input: VersionedNoteMutationInput, options: RequestOptions = {}): Promise<NoteMutationResult> {
+    return this.noteMutationDetailed(`/notes/${encodeURIComponent(noteId)}`, 'DELETE', input, options);
   }
 
-  restoreNote(noteId: UUID, input: VersionedNoteMutationInput): Promise<Note> {
-    return this.requestValidated(`/notes/${encodeURIComponent(noteId)}/restore`, isNote, 'note', { method: 'POST', body: JSON.stringify(input) });
+  restoreNote(noteId: UUID, input: VersionedNoteMutationInput, options: RequestOptions = {}): Promise<Note> {
+    return this.requestValidated(`/notes/${encodeURIComponent(noteId)}/restore`, isNote, 'note', { method: 'POST', body: JSON.stringify(input) }, options);
   }
 
-  restoreNoteDetailed(noteId: UUID, input: VersionedNoteMutationInput): Promise<NoteMutationResult> {
-    return this.noteMutationDetailed(`/notes/${encodeURIComponent(noteId)}/restore`, 'POST', input);
+  restoreNoteDetailed(noteId: UUID, input: VersionedNoteMutationInput, options: RequestOptions = {}): Promise<NoteMutationResult> {
+    return this.noteMutationDetailed(`/notes/${encodeURIComponent(noteId)}/restore`, 'POST', input, options);
   }
 
   listBlocks(noteRef: string, options: RequestOptions = {}): Promise<NoteBlock[]> {
-    return this.requestValidated(`/notes/${encodeURIComponent(noteRef)}/blocks`, (value): value is NoteBlock[] => Array.isArray(value) && value.every(isNoteBlock), 'note blocks', options.signal ? { signal: options.signal } : {});
+    return this.requestValidated(`/notes/${encodeURIComponent(noteRef)}/blocks`, (value): value is NoteBlock[] => Array.isArray(value) && value.every(isNoteBlock), 'note blocks', {}, options);
   }
 
   getBlock(noteRef: string, blockKey: string, options: RequestOptions = {}): Promise<NoteBlock> {
-    return this.requestValidated(`/notes/${encodeURIComponent(noteRef)}/blocks/${encodeURIComponent(blockKey)}`, isNoteBlock, 'note block', options.signal ? { signal: options.signal } : {});
+    return this.requestValidated(`/notes/${encodeURIComponent(noteRef)}/blocks/${encodeURIComponent(blockKey)}`, isNoteBlock, 'note block', {}, options);
   }
 
   search(params: SearchParams): Promise<SearchResponse> {
-    return this.requestValidated(`/search${queryString({ q: params.query, mode: params.mode, limit: params.limit, cursor: params.cursor })}`, isSearchResponse, 'search', params.signal ? { signal: params.signal } : {});
+    return this.requestValidated(`/search${queryString({ q: params.query, mode: params.mode, limit: params.limit, cursor: params.cursor })}`, isSearchResponse, 'search', {}, params);
   }
 
   searchPost(input: SearchRequest, options: SearchPostOptions = {}): Promise<SearchResponse> {
-    return this.requestValidated('/search', isSearchResponse, 'search', { method: 'POST', body: JSON.stringify(input), ...(options.signal ? { signal: options.signal } : {}) });
+    return this.requestValidated('/search', isSearchResponse, 'search', { method: 'POST', body: JSON.stringify(input) }, options);
   }
 
   readNoteContext(documentId: UUID, params: NoteContextParams = {}): Promise<SearchContext> {
-    return this.requestValidated(`/search/documents/${encodeURIComponent(documentId)}/context${queryString({ before: params.before ?? 1, after: params.after ?? 1, maxTokens: params.maxTokens ?? 1800 })}`, isSearchContext, 'search context', params.signal ? { signal: params.signal } : {});
+    return this.requestValidated(`/search/documents/${encodeURIComponent(documentId)}/context${queryString({ before: params.before ?? 1, after: params.after ?? 1, maxTokens: params.maxTokens ?? 1800 })}`, isSearchContext, 'search context', {}, params);
   }
 
   sync(cursor?: string, limit?: number, options: RequestOptions = {}): Promise<SyncPage> {
-    return this.requestValidated(`/sync${queryString({ cursor, limit })}`, isSyncPage, 'sync', options.signal ? { signal: options.signal } : {});
+    return this.requestValidated(`/sync${queryString({ cursor, limit })}`, isSyncPage, 'sync', {}, options);
   }
 
   listAttachments(noteRef: string, options: RequestOptions = {}): Promise<Attachment[]> {
-    return this.requestValidated(`/notes/${encodeURIComponent(noteRef)}/attachments`, (value): value is Attachment[] => Array.isArray(value) && value.every(isAttachment), 'attachments', options.signal ? { signal: options.signal } : {});
+    return this.requestValidated(`/notes/${encodeURIComponent(noteRef)}/attachments`, (value): value is Attachment[] => Array.isArray(value) && value.every(isAttachment), 'attachments', {}, options);
   }
 
-  requestAttachmentUpload(input: { noteId: UUID; fileName: string; mimeType: string; sizeBytes: number }): Promise<{ attachment: Attachment; path: string; token: string }> {
-    return this.requestValidated('/attachments/upload-url', (value): value is { attachment: Attachment; path: string; token: string } => isRecord(value) && isAttachment(value.attachment) && isString(value.path) && isString(value.token), 'attachment upload', { method: 'POST', body: JSON.stringify(input) });
+  requestAttachmentUpload(input: { noteId: UUID; fileName: string; mimeType: string; sizeBytes: number }, options: RequestOptions = {}): Promise<{ attachment: Attachment; path: string; token: string }> {
+    return this.requestValidated('/attachments/upload-url', (value): value is { attachment: Attachment; path: string; token: string } => isRecord(value) && isAttachment(value.attachment) && isString(value.path) && isString(value.token), 'attachment upload', { method: 'POST', body: JSON.stringify(input) }, options);
   }
 
-  finalizeAttachment(attachmentId: UUID): Promise<Attachment> {
-    return this.requestValidated(`/attachments/${encodeURIComponent(attachmentId)}/finalize`, isAttachment, 'attachment', { method: 'POST' });
+  finalizeAttachment(attachmentId: UUID, options: RequestOptions = {}): Promise<Attachment> {
+    return this.requestValidated(`/attachments/${encodeURIComponent(attachmentId)}/finalize`, isAttachment, 'attachment', { method: 'POST' }, options);
   }
 
-  async deleteAttachment(attachmentId: UUID): Promise<void> {
-    await this.request(`/attachments/${encodeURIComponent(attachmentId)}`, { method: 'DELETE' });
+  async deleteAttachment(attachmentId: UUID, options: RequestOptions = {}): Promise<void> {
+    await this.request(`/attachments/${encodeURIComponent(attachmentId)}`, { method: 'DELETE' }, options);
   }
 
-  getAttachmentDownloadUrl(attachmentId: UUID): Promise<{ signedUrl: string; expiresInSeconds: 60 }> {
-    return this.requestValidated(`/attachments/${encodeURIComponent(attachmentId)}`, (value): value is { signedUrl: string; expiresInSeconds: 60 } => isRecord(value) && isString(value.signedUrl) && value.expiresInSeconds === 60, 'attachment download', {});
+  getAttachmentDownloadUrl(attachmentId: UUID, options: RequestOptions = {}): Promise<{ signedUrl: string; expiresInSeconds: 60 }> {
+    return this.requestValidated(`/attachments/${encodeURIComponent(attachmentId)}`, (value): value is { signedUrl: string; expiresInSeconds: 60 } => isRecord(value) && isString(value.signedUrl) && value.expiresInSeconds === 60, 'attachment download', {}, options);
   }
 
   listTokens(options: RequestOptions = {}): Promise<ApiTokenMetadata[]> {
-    return this.requestValidated('/tokens', (value): value is ApiTokenMetadata[] => Array.isArray(value) && value.every(isTokenMetadata), 'tokens', options.signal ? { signal: options.signal } : {});
+    return this.requestValidated('/tokens', (value): value is ApiTokenMetadata[] => Array.isArray(value) && value.every(isTokenMetadata), 'tokens', {}, options);
   }
 
-  createToken(input: CreateApiTokenInput): Promise<CreateApiTokenResult> {
-    return this.requestValidated('/tokens', (value): value is CreateApiTokenResult => isRecord(value) && isString(value.token) && isTokenMetadata(value.metadata), 'token', { method: 'POST', body: JSON.stringify(input) });
+  createToken(input: CreateApiTokenInput, options: RequestOptions = {}): Promise<CreateApiTokenResult> {
+    return this.requestValidated('/tokens', (value): value is CreateApiTokenResult => isRecord(value) && isString(value.token) && isTokenMetadata(value.metadata), 'token', { method: 'POST', body: JSON.stringify(input) }, options);
   }
 
-  async revokeToken(tokenId: UUID): Promise<void> {
-    await this.request(`/tokens/${encodeURIComponent(tokenId)}`, { method: 'DELETE' });
+  async revokeToken(tokenId: UUID, options: RequestOptions = {}): Promise<void> {
+    await this.request(`/tokens/${encodeURIComponent(tokenId)}`, { method: 'DELETE' }, options);
   }
 
-  exportNote(noteRef: string): Promise<Response> {
-    return this.binary(`/export/note/${encodeURIComponent(noteRef)}`);
+  exportNote(noteRef: string, options: RequestOptions = {}): Promise<Response> {
+    return this.binary(`/export/note/${encodeURIComponent(noteRef)}`, options);
   }
 
-  exportWorkspace(): Promise<Response> {
-    return this.binary('/export/workspace');
+  exportWorkspace(options: RequestOptions = {}): Promise<Response> {
+    return this.binary('/export/workspace', options);
   }
 }
