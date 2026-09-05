@@ -1,96 +1,213 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Note, SyncStatus } from '@qnotes/shared';
 import { QNotesHttpError } from '@qnotes/api-client';
 import { AutosaveCoordinator } from '@qnotes/sync';
 import { api } from '../api';
-import { draftStore, getDeviceId, rememberNote } from '../indexed-db';
+import { getAccountDraftStore, getDeviceId, rememberNote } from '../indexed-db';
+import { useAuth } from '../auth-context';
 
-interface SavePayload { markdown: string; editRevision: number; }
+interface DraftValues {
+  markdown: string;
+  title: string;
+  tags: string[];
+  notebookId: string | null;
+}
+
+interface SavePayload extends DraftValues {
+  editRevision: number;
+  noteId: string;
+  userId: string;
+}
 
 interface UseNoteAutosaveOptions {
   note: Note;
   onSaved: (note: Note) => void;
   onConflict: (error: QNotesHttpError) => void;
   onDirtyChange?: (dirty: boolean) => void;
+  readOnly?: boolean;
+  enabled?: boolean;
 }
 
-export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange }: UseNoteAutosaveOptions) {
+function valuesFromNote(note: Note): DraftValues {
+  return { markdown: note.contentMarkdown, title: note.title, tags: [...note.tags], notebookId: note.notebookId };
+}
+
+function tagsEqual(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((tag, index) => tag === right[index]);
+}
+
+function valuesEqual(left: DraftValues, right: DraftValues): boolean {
+  return left.markdown === right.markdown && left.title === right.title && tagsEqual(left.tags, right.tags) && left.notebookId === right.notebookId;
+}
+
+export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, readOnly = false, enabled = true }: UseNoteAutosaveOptions) {
+  const { session } = useAuth();
+  const userId = session?.user.id ?? null;
+  const store = useMemo(() => userId ? getAccountDraftStore(userId) : null, [userId]);
   const [value, setValue] = useState(note.contentMarkdown);
+  const [title, setTitle] = useState(note.title);
+  const [tags, setTags] = useState<string[]>(note.tags);
   const [status, setStatus] = useState<SyncStatus>('saved');
   const [dirty, setDirty] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [acknowledgedMutationId, setAcknowledgedMutationId] = useState<string | null>(null);
   const authoritative = useRef(note);
+  const draftRef = useRef<DraftValues>(valuesFromNote(note));
   const valueRef = useRef(value);
   const noteIdRef = useRef(note.id);
   const acknowledgedMutationIdRef = useRef<string | null>(null);
   const saveRevision = useRef(0);
   const editRevision = useRef(0);
   const dirtyRef = useRef(false);
+  const draftPersistedRef = useRef(false);
+  const draftStorageFailedRef = useRef(false);
+  const mountedRef = useRef(true);
+  const statusRef = useRef<SyncStatus>('saved');
+  const readOnlyRef = useRef(readOnly);
+  const enabledRef = useRef(enabled);
+  const userIdRef = useRef(userId);
   const saveHandler = useRef<((payload: SavePayload) => Promise<void>) | null>(null);
   const onSavedRef = useRef(onSaved);
   const onConflictRef = useRef(onConflict);
   const onDirtyRef = useRef(onDirtyChange);
+  const draftWriteChainRef = useRef<Promise<void>>(Promise.resolve());
   onSavedRef.current = onSaved;
   onConflictRef.current = onConflict;
   onDirtyRef.current = onDirtyChange;
+  readOnlyRef.current = readOnly;
+  enabledRef.current = enabled;
+  userIdRef.current = userId;
+  statusRef.current = status;
 
+  const online = () => typeof navigator === 'undefined' || navigator.onLine;
   const sleep = (milliseconds: number) => new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
+  const currentPayload = (): SavePayload => ({ ...draftRef.current, tags: [...draftRef.current.tags], editRevision: editRevision.current, noteId: authoritative.current.id, userId: userIdRef.current ?? '' });
+  const markDirty = (next: DraftValues): boolean => {
+    const isDirty = !valuesEqual(next, valuesFromNote(authoritative.current));
+    draftRef.current = next;
+    valueRef.current = next.markdown;
+    setValue(next.markdown);
+    setTitle(next.title);
+    setTags([...next.tags]);
+    dirtyRef.current = isDirty;
+    setDirty(isDirty);
+    onDirtyRef.current?.(isDirty);
+    return isDirty;
+  };
 
-  saveHandler.current = async ({ markdown, editRevision: payloadRevision }) => {
+  const persistDraft = (revision: number): Promise<void> => {
+    const base = authoritative.current;
+    const local = draftRef.current;
+    const write = draftWriteChainRef.current.then(async () => {
+      if (!store || !userIdRef.current) throw new Error('Local draft storage is unavailable for this account.');
+      await store.put({
+        noteId: base.id,
+        baseVersion: base.version,
+        baseMarkdown: base.contentMarkdown,
+        localMarkdown: local.markdown,
+        baseTitle: base.title,
+        localTitle: local.title,
+        baseTags: [...base.tags],
+        localTags: [...local.tags],
+        baseNotebookId: base.notebookId,
+        localNotebookId: local.notebookId,
+        updatedAt: new Date().toISOString(),
+      });
+    }).then(() => {
+      if (!mountedRef.current || revision !== editRevision.current) return;
+      draftPersistedRef.current = true;
+      draftStorageFailedRef.current = false;
+      if (!online()) setStatus('offline');
+    }).catch((error: unknown) => {
+      if (!mountedRef.current || revision !== editRevision.current) return;
+      draftPersistedRef.current = false;
+      draftStorageFailedRef.current = true;
+      setErrorMessage(error instanceof Error ? error.message : 'Local draft storage is unavailable.');
+      setStatus('storage-error');
+      throw error;
+    });
+    draftWriteChainRef.current = write.catch(() => undefined);
+    return write;
+  };
+  const deleteDraft = (noteId: string): Promise<void> => {
+    const deletion = draftWriteChainRef.current.then(async () => {
+      if (store) await store.delete(noteId);
+    });
+    draftWriteChainRef.current = deletion.catch(() => undefined);
+    return deletion;
+  };
+
+  saveHandler.current = async (payload) => {
+    if (!mountedRef.current || readOnlyRef.current || !enabledRef.current || !userIdRef.current) throw new Error('This note session is no longer authenticated.');
     const revision = saveRevision.current;
     const current = authoritative.current;
+    if (payload.noteId !== current.id || payload.userId !== userIdRef.current) throw new Error('This note save belongs to an inactive session.');
     const mutationId = crypto.randomUUID();
-    const payload = {
-      title: current.title,
+    const requestPayload = {
+      title: payload.title.trim() || 'Untitled note',
       slug: current.slug,
-      contentMarkdown: markdown,
-      tags: current.tags,
+      contentMarkdown: payload.markdown,
+      tags: payload.tags,
       expectedVersion: current.version,
       deviceId: getDeviceId(),
       mutationId,
     };
-    const retryDelays = [0, 1000, 2000, 4000, 8000, 16000, 30000];
+    const retryDelays = [0, 1000, 3000];
     for (let attempt = 0; attempt < retryDelays.length; attempt += 1) {
       if (revision !== saveRevision.current) return;
       if (retryDelays[attempt]! > 0) {
-        setStatus('error');
+        setStatus('network-error');
         await sleep(retryDelays[attempt]!);
       }
       if (revision !== saveRevision.current) return;
+      if (!online()) throw new Error('Network unavailable.');
+      setStatus('saving');
       try {
-        const saved = await api.updateNote(current.id, payload);
-        if (revision !== saveRevision.current) return;
+        const saved = await api.updateNote(current.id, requestPayload);
+        if (!mountedRef.current || revision !== saveRevision.current) return;
         authoritative.current = saved;
         setAcknowledgedMutationId(mutationId);
         acknowledgedMutationIdRef.current = mutationId;
-        void rememberNote(saved).catch(() => undefined);
-        if (payloadRevision === editRevision.current || valueRef.current === saved.contentMarkdown) {
+        void rememberNote(saved, userIdRef.current).catch(() => undefined);
+        if (payload.editRevision === editRevision.current) {
+          draftRef.current = valuesFromNote(saved);
           valueRef.current = saved.contentMarkdown;
           dirtyRef.current = false;
           setValue(saved.contentMarkdown);
+          setTitle(saved.title);
+          setTags([...saved.tags]);
           coordinatorRef.current?.cancelPending();
-          void draftStore.delete(saved.id).catch(() => undefined);
+          void deleteDraft(saved.id).catch(() => undefined);
+          draftPersistedRef.current = false;
+          draftStorageFailedRef.current = false;
           setDirty(false);
           onDirtyRef.current?.(false);
+          setErrorMessage(null);
           setStatus('saved');
         } else {
           dirtyRef.current = true;
           setDirty(true);
           onDirtyRef.current?.(true);
-          setStatus(navigator.onLine ? 'saving' : 'offline');
-          coordinatorRef.current?.schedule({ markdown: valueRef.current, editRevision: editRevision.current });
+          setStatus(online() ? 'pending' : draftPersistedRef.current ? 'offline' : 'storage-error');
+          void persistDraft(editRevision.current).catch(() => undefined);
+          coordinatorRef.current?.schedule(currentPayload());
         }
         onSavedRef.current(saved);
         return;
       } catch (error: unknown) {
         if (revision !== saveRevision.current) return;
         if (error instanceof QNotesHttpError && error.code === 'NOTE_VERSION_CONFLICT') {
+          setErrorMessage(error.message);
           setStatus('conflict');
           onConflictRef.current(error);
           throw error;
         }
-        const transient = !(error instanceof QNotesHttpError) || error.status >= 500;
-        if (!transient || attempt === retryDelays.length - 1) throw error;
+        if (error instanceof QNotesHttpError && error.status < 500) {
+          setErrorMessage(error.message);
+          setStatus('validation-error');
+          throw error;
+        }
+        if (attempt === retryDelays.length - 1) throw error;
       }
     }
   };
@@ -100,114 +217,198 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange }: Us
     coordinatorRef.current = new AutosaveCoordinator({
       delayMs: 800,
       save: async (payload) => {
-        if (!saveHandler.current) return;
-        await saveHandler.current(payload);
+        if (saveHandler.current) await saveHandler.current(payload);
       },
       onError: (error: unknown) => {
+        if (!mountedRef.current) return;
         if (error instanceof QNotesHttpError && error.code === 'NOTE_VERSION_CONFLICT') return;
-        setStatus(navigator.onLine ? 'error' : 'offline');
+        if (error instanceof QNotesHttpError && error.status < 500) return;
+        if (draftStorageFailedRef.current) {
+          setErrorMessage('Local draft storage is unavailable.');
+          setStatus('storage-error');
+          return;
+        }
+        if (!online()) {
+          setStatus(draftStorageFailedRef.current ? 'storage-error' : draftPersistedRef.current ? 'offline' : 'storage-error');
+          return;
+        }
+        setErrorMessage(error instanceof Error ? error.message : 'The note could not be saved.');
+        setStatus('network-error');
       },
     });
   }
 
   useEffect(() => {
     if (note.id !== noteIdRef.current) {
-      void coordinatorRef.current?.flush();
+      coordinatorRef.current?.cancelPending();
       saveRevision.current += 1;
       noteIdRef.current = note.id;
       authoritative.current = note;
+      draftRef.current = valuesFromNote(note);
       valueRef.current = note.contentMarkdown;
       editRevision.current = 0;
       dirtyRef.current = false;
+      draftPersistedRef.current = false;
+      draftStorageFailedRef.current = false;
       setValue(note.contentMarkdown);
+      setTitle(note.title);
+      setTags([...note.tags]);
       setDirty(false);
       setAcknowledgedMutationId(null);
       acknowledgedMutationIdRef.current = null;
+      setErrorMessage(null);
       setStatus('saved');
       onDirtyRef.current?.(false);
-    } else if (!dirty) {
+    } else if (!dirtyRef.current) {
       authoritative.current = note;
-      if (!dirty && valueRef.current !== note.contentMarkdown) {
+      const next = valuesFromNote(note);
+      draftRef.current = next;
+      if (valueRef.current !== note.contentMarkdown) {
         valueRef.current = note.contentMarkdown;
         setValue(note.contentMarkdown);
       }
+      setTitle(note.title);
+      setTags([...note.tags]);
     }
-  }, [dirty, note]);
+  }, [note]);
 
   useEffect(() => {
     let active = true;
     const requestedNoteId = note.id;
-    const requestedMarkdown = note.contentMarkdown;
     const requestedVersion = note.version;
-    void draftStore.get(note.id).then((draft) => {
-      if (active && noteIdRef.current === requestedNoteId && !dirtyRef.current && valueRef.current === requestedMarkdown && draft && draft.localMarkdown !== requestedMarkdown && draft.baseVersion <= requestedVersion) {
-        editRevision.current += 1;
-        valueRef.current = draft.localMarkdown;
-        dirtyRef.current = true;
-        setValue(draft.localMarkdown);
-        setDirty(true);
-        onDirtyRef.current?.(true);
-        setStatus(navigator.onLine ? 'saving' : 'offline');
-        coordinatorRef.current?.schedule({ markdown: draft.localMarkdown, editRevision: editRevision.current });
-      }
-    }).catch(() => undefined);
+    if (!store || !userId) return () => { active = false; };
+    void store.get(note.id).then((draft) => {
+      if (!active || !enabledRef.current || readOnlyRef.current || noteIdRef.current !== requestedNoteId || dirtyRef.current || !draft || draft.baseVersion > requestedVersion) return;
+      const restored: DraftValues = {
+        markdown: draft.localMarkdown,
+        title: draft.localTitle ?? note.title,
+        tags: draft.localTags ? [...draft.localTags] : [...note.tags],
+        notebookId: draft.localNotebookId ?? note.notebookId,
+      };
+      if (valuesEqual(restored, valuesFromNote(note))) return;
+      editRevision.current += 1;
+      draftPersistedRef.current = true;
+      markDirty(restored);
+      setErrorMessage(null);
+      setStatus(online() ? 'pending' : 'offline');
+      coordinatorRef.current?.schedule(currentPayload());
+    }).catch((error: unknown) => {
+      if (!active || noteIdRef.current !== requestedNoteId) return;
+      setErrorMessage(error instanceof Error ? error.message : 'Local draft storage is unavailable.');
+      setStatus('storage-error');
+    });
     return () => { active = false; };
-  }, [note.id, note.contentMarkdown, note.version]);
+  }, [enabled, note.id, note.version]);
 
   useEffect(() => {
-    const updateOnline = () => setStatus((current) => current === 'saved' ? current : navigator.onLine ? 'saving' : 'offline');
+    const updateOnline = () => {
+      if (!dirtyRef.current) return;
+      if (navigator.onLine) {
+        if (statusRef.current !== 'offline' && statusRef.current !== 'network-error' && statusRef.current !== 'error') return;
+        setStatus('pending');
+        coordinatorRef.current?.schedule(currentPayload());
+      } else if (draftPersistedRef.current) {
+        setStatus('offline');
+      } else {
+        setStatus('storage-error');
+      }
+    };
     window.addEventListener('online', updateOnline);
     window.addEventListener('offline', updateOnline);
     return () => {
+      mountedRef.current = false;
+      saveRevision.current += 1;
       window.removeEventListener('online', updateOnline);
       window.removeEventListener('offline', updateOnline);
       const coordinator = coordinatorRef.current;
-      if (coordinator) void coordinator.flush().finally(() => coordinator.dispose());
+      coordinator?.dispose();
     };
   }, []);
 
   const change = useCallback((next: string) => {
+    if (readOnlyRef.current) return;
     editRevision.current += 1;
-    valueRef.current = next;
-    setValue(next);
-    const isDirty = next !== authoritative.current.contentMarkdown;
-    dirtyRef.current = isDirty;
-    setDirty(isDirty);
-    onDirtyRef.current?.(isDirty);
+    const nextValues = { ...draftRef.current, markdown: next, tags: [...draftRef.current.tags] };
+    const isDirty = markDirty(nextValues);
+    setErrorMessage(null);
     if (!isDirty) {
       coordinatorRef.current?.cancelPending();
-      void draftStore.delete(authoritative.current.id).catch(() => undefined);
+      void deleteDraft(authoritative.current.id).catch(() => undefined);
+      draftPersistedRef.current = false;
+      draftStorageFailedRef.current = false;
       setStatus('saved');
       return;
     }
-    setStatus(navigator.onLine ? 'saving' : 'offline');
-    const revision = editRevision.current;
-    void draftStore.put({ noteId: authoritative.current.id, baseVersion: authoritative.current.version, baseMarkdown: authoritative.current.contentMarkdown, localMarkdown: next, updatedAt: new Date().toISOString() }).catch(() => {
-      if (revision === editRevision.current) setStatus('offline');
-    });
-    coordinatorRef.current?.schedule({ markdown: next, editRevision: revision });
+    setStatus('pending');
+    void persistDraft(editRevision.current).catch(() => undefined);
+    coordinatorRef.current?.schedule(currentPayload());
   }, []);
 
-  const flush = useCallback(() => coordinatorRef.current?.flush() ?? Promise.resolve(), []);
+  const changeMetadata = useCallback((next: { title?: string; tags?: string[] }) => {
+    if (readOnlyRef.current) return;
+    editRevision.current += 1;
+    const nextValues = {
+      ...draftRef.current,
+      title: next.title ?? draftRef.current.title,
+      tags: next.tags ? [...next.tags] : [...draftRef.current.tags],
+    };
+    const isDirty = markDirty(nextValues);
+    setErrorMessage(null);
+    if (!isDirty) {
+      coordinatorRef.current?.cancelPending();
+      void deleteDraft(authoritative.current.id).catch(() => undefined);
+      draftPersistedRef.current = false;
+      setStatus('saved');
+      return;
+    }
+    setStatus('pending');
+    void persistDraft(editRevision.current).catch(() => undefined);
+    coordinatorRef.current?.schedule(currentPayload());
+  }, []);
+
+  const flush = useCallback(async () => {
+    try {
+      await (coordinatorRef.current?.flush() ?? Promise.resolve());
+    } catch (error: unknown) {
+      await draftWriteChainRef.current;
+      throw error;
+    }
+  }, []);
+  const preserveDraft = useCallback(async () => {
+    if (!dirtyRef.current) return;
+    await persistDraft(editRevision.current);
+  }, []);
+  const retry = useCallback(() => {
+    if (!dirtyRef.current || readOnlyRef.current) return;
+    setErrorMessage(null);
+    setStatus('pending');
+    coordinatorRef.current?.schedule(currentPayload());
+  }, []);
   const adoptRemote = useCallback((nextNote: Note) => {
     saveRevision.current += 1;
     coordinatorRef.current?.cancelPending();
     authoritative.current = nextNote;
+    draftRef.current = valuesFromNote(nextNote);
     valueRef.current = nextNote.contentMarkdown;
     editRevision.current = 0;
     dirtyRef.current = false;
+    draftPersistedRef.current = false;
+    draftStorageFailedRef.current = false;
     setValue(nextNote.contentMarkdown);
+    setTitle(nextNote.title);
+    setTags([...nextNote.tags]);
     setDirty(false);
     setAcknowledgedMutationId(null);
     acknowledgedMutationIdRef.current = null;
     onDirtyRef.current?.(false);
+    setErrorMessage(null);
     setStatus('saved');
-    void draftStore.delete(nextNote.id).catch(() => undefined);
-  }, []);
+    void deleteDraft(nextNote.id).catch(() => undefined);
+  }, [store]);
   const acknowledgeMutation = useCallback((mutationId: string) => {
     acknowledgedMutationIdRef.current = mutationId;
     setAcknowledgedMutationId(mutationId);
   }, []);
   const isMutationAcknowledged = useCallback((mutationId: string) => acknowledgedMutationIdRef.current === mutationId, []);
-  return { value, status, dirty, acknowledgedMutationId, change, flush, adoptRemote, acknowledgeMutation, isMutationAcknowledged };
+  return { value, title, tags, status, dirty, errorMessage, acknowledgedMutationId, change, changeMetadata, flush, preserveDraft, retry, adoptRemote, acknowledgeMutation, isMutationAcknowledged };
 }

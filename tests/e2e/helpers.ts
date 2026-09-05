@@ -68,7 +68,7 @@ export async function signInPage(page: Page, user: TestUser = OWNER): Promise<vo
   await page.getByLabel('Password').fill(user.password);
   await page.getByRole('button', { name: 'Sign in' }).click();
   await expect(page).toHaveURL(/\/$/);
-  await expect(page.getByRole('heading', { name: /Think clearly/ })).toBeVisible();
+  await expect(page.locator('.q-working-header h2')).toBeVisible();
 }
 
 export async function createDevice(browser: Browser, user: TestUser = OWNER): Promise<{ context: BrowserContext; page: Page }> {

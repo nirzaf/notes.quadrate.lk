@@ -1,5 +1,5 @@
 begin;
-select plan(13);
+select plan(14);
 
 select ok(to_regclass('notesdb.notebooks') is not null, 'notebooks table exists');
 select is(
@@ -28,6 +28,7 @@ select is(
   'note can be moved into an owned notebook'
 );
 select is((select notebook_id from notesdb.notes where id = '66666666-6666-4666-8666-666666666666')::text, '77777777-7777-4777-8777-777777777777', 'moving a note stores its notebook');
+select is((public.qnotes_note_json((select n from notesdb.notes n where n.id = '66666666-6666-4666-8666-666666666666'))->>'notebookId'), '77777777-7777-4777-8777-777777777777', 'mutation note responses preserve notebook identity');
 select is((public.qnotes_move_note_to_notebook((select id from auth.users where email = 'owner@qnotes.local'), '66666666-6666-4666-8666-666666666666', '77777777-7777-4777-8777-777777777777', 1, '66666666-6666-4666-8666-666666666669', '66666666-6666-4666-8666-666666666670', 'notebook-move-hash')->>'status'), 'idempotent', 'moving the same mutation is idempotent');
 select is((public.qnotes_move_note_to_notebook((select id from auth.users where email = 'owner@qnotes.local'), '66666666-6666-4666-8666-666666666666', '88888888-8888-4888-8888-888888888888', 2, '66666666-6666-4666-8666-666666666669', '66666666-6666-4666-8666-666666666671', 'notebook-invalid-hash')->>'status'), 'notebook_not_found', 'a note cannot be moved into another owner notebook');
 select is((public.qnotes_move_note_to_notebook((select id from auth.users where email = 'owner@qnotes.local'), '66666666-6666-4666-8666-666666666666', null, 1, '66666666-6666-4666-8666-666666666669', '66666666-6666-4666-8666-666666666672', 'notebook-stale-hash')->>'status'), 'version_conflict', 'notebook moves use optimistic versions');

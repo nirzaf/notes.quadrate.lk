@@ -52,18 +52,6 @@ export function createClientFromEnvironment(): QNotesClient {
   return new Client({ baseUrl, getAccessToken: () => token });
 }
 
-function notePayload(note: Note, contentMarkdown: string) {
-  return {
-    title: note.title,
-    slug: note.slug,
-    contentMarkdown,
-    tags: note.tags,
-    expectedVersion: note.version,
-    deviceId: randomUUID(),
-    mutationId: randomUUID(),
-  };
-}
-
 function textFromArgs(args: string[]): string {
   return args.filter((value) => !value.startsWith('--')).join(' ').trim();
 }
@@ -193,8 +181,7 @@ export async function runCommand(args: string[], io: CommandIo, api?: QNotesClie
     if (!reference || !content) usage('Usage: qnotes append <note-id-or-slug> "Text to append"');
     const client = api ?? createClientFromEnvironment();
     const note = await client.getNote(reference);
-    const next = note.contentMarkdown.trim() ? `${note.contentMarkdown.trimEnd()}\n\n${content}\n` : `${content}\n`;
-    io.stdout(`${JSON.stringify(await client.updateNote(note.id, notePayload(note, next)), null, 2)}\n`);
+    io.stdout(`${JSON.stringify(await client.appendNote(note.id, { contentMarkdown: content, expectedVersion: note.version, deviceId: randomUUID(), mutationId: randomUUID() }), null, 2)}\n`);
     return;
   }
 

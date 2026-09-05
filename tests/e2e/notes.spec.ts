@@ -56,11 +56,15 @@ test('creates, edits, renders, copies, deletes, restores, and isolates notes', a
   await expect(page.getByRole('status')).toContainText('Save failed', { timeout: 10_000 });
   await expect.poll(async () => (await getNoteApi(session.access_token, noteId)).version).toBe(current.version);
 
-  await page.getByRole('button', { name: 'Delete', exact: true }).click();
+  await page.getByRole('button', { name: 'More note actions' }).click();
+  await page.getByRole('menuitem', { name: 'Move to Trash' }).click();
+  await expect(page.getByRole('heading', { name: 'Save is blocked' })).toBeVisible();
+  await page.getByRole('button', { name: 'Delete anyway' }).click();
   await expect(page.getByText('Note moved to the trash.')).toBeVisible();
   await expect.poll(async () => (await listNotesApi(session.access_token, true)).find((item) => item.id === noteId)?.deletedAt ?? null).not.toBeNull();
 
-  await page.getByRole('button', { name: 'Restore' }).click();
+  await page.getByRole('button', { name: 'More note actions' }).click();
+  await page.getByRole('menuitem', { name: 'Restore note' }).click();
   await expect(page.getByText('Note restored.')).toBeVisible();
   await expect.poll(async () => (await listNotesApi(session.access_token, true)).find((item) => item.id === noteId)?.deletedAt ?? null).toBeNull();
 
@@ -132,4 +136,41 @@ test('rejects duplicate named block IDs through the API contract', async () => {
   });
   expect(response.status).toBe(422);
   expect(JSON.stringify(body)).toContain('DUPLICATE_BLOCK_KEY');
+});
+
+test('saves editable metadata and copies the exact current draft before autosave', async ({ page }) => {
+  await signInPage(page);
+  await page.getByRole('button', { name: 'New note' }).first().click();
+  await expect(page).toHaveURL(/\/notes\/[0-9a-f-]+$/);
+  const noteId = noteIdFromUrl(page.url());
+  await page.getByLabel('Title').fill('Renamed workflow note');
+  await page.getByLabel('Add a tag').fill('Operations');
+  await page.getByLabel('Add a tag').press('Enter');
+  const exactDraft = '# Immediate copy\n\nThe body is newer than the server response.\n';
+  await page.locator('.cm-content').fill(exactDraft);
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://127.0.0.1:5173' });
+  await page.getByRole('button', { name: 'Copy Markdown' }).click();
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(exactDraft);
+  const session = await signInSession();
+  await expect.poll(() => getNoteApi(session.access_token, noteId), { timeout: 15_000 }).toMatchObject({ title: 'Renamed workflow note', tags: ['operations'], contentMarkdown: exactDraft });
+  await page.reload();
+  await expect(page.getByLabel('Title')).toHaveValue('Renamed workflow note');
+  await expect(page.getByText('operations', { exact: true })).toBeVisible();
+});
+
+test('opens a deleted note from Trash and restores it without a duplicate active entry', async ({ page }) => {
+  await signInPage(page);
+  await page.getByRole('button', { name: 'New note' }).first().click();
+  await expect(page).toHaveURL(/\/notes\/[0-9a-f-]+$/);
+  const noteId = noteIdFromUrl(page.url());
+  await page.getByRole('button', { name: 'More note actions' }).click();
+  await page.getByRole('menuitem', { name: 'Move to Trash' }).click();
+  await expect(page.getByText('Note moved to the trash.')).toBeVisible();
+  await page.getByRole('link', { name: 'Trash' }).first().click();
+  await expect(page).toHaveURL(/\/trash$/);
+  await expect(page.locator('.q-trash-item')).toContainText('Untitled note');
+  await page.locator('.q-trash-item').filter({ hasText: 'Untitled note' }).getByRole('button', { name: 'Restore' }).click();
+  await expect(page.getByText('Note restored.')).toBeVisible();
+  await expect.poll(async () => (await listNotesApi((await signInSession()).access_token, false)).filter((item) => item.id === noteId)).toHaveLength(1);
+  await expect(page.locator('.q-trash-item').filter({ hasText: 'Untitled note' })).toHaveCount(0);
 });

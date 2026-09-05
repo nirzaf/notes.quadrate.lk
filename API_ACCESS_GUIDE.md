@@ -39,11 +39,11 @@ Keep personal tokens in a process environment, password manager, or secret manag
 Create a token in the web app:
 
 1. Sign in to [Quadrate Notes](https://notes.quadrate.lk/).
-2. Open [Personal API tokens](https://notes.quadrate.lk/settings/tokens).
-3. Enter a name and select the smallest set of scopes the client needs.
+2. Open [Integrations](https://notes.quadrate.lk/settings/integrations) (the legacy `/settings/tokens` route remains available).
+3. Choose the read-only profile unless the client must write notes, then select the smallest optional scopes and a real expiry.
 4. Create the token and copy the complete `qnt_...` value immediately.
 
-The full token is returned only once. The settings page shows only its prefix afterward. Tokens may be expirable and revocable; the web form currently creates tokens without an expiry, while the REST endpoint accepts an optional ISO `expiresAt`.
+The full token is returned only once and is held only in the Integrations page’s transient state; the settings page shows only its prefix afterward. The guided form offers 7-day, 30-day, 90-day, 1-year, and no-expiry choices and sends the corresponding ISO `expiresAt` (or `null`) to the existing token API. Tokens remain revocable.
 
 ### Scopes
 
@@ -109,6 +109,7 @@ For JSON requests, send `Content-Type: application/json`. `deviceId`, `mutationI
 - `deviceId` and `mutationId` must be UUIDs.
 - `expectedVersion` must be a positive integer and must match the note’s current version for update, move, delete, and restore operations.
 - Use a new `mutationId` for every logical mutation. Retrying the exact same request with the same mutation ID is idempotent; reusing the ID for a different request returns `MUTATION_REUSE_CONFLICT`.
+- `POST /api/notes/:noteId/append` accepts `contentMarkdown`, optional `expectedVersion`, `deviceId`, and `mutationId`. The API computes the appended document inside the request, while the receipt identity is the owner, note, original addition, device ID, and mutation ID. If the response is lost, retry the same logical append with the same `deviceId` and `mutationId`; it returns the committed note once, even if the note version has advanced since the first attempt. A new append after a stale version requires a fresh mutation ID and an intentional re-read.
 - A version mismatch returns HTTP `409` with `NOTE_VERSION_CONFLICT`, including the current version and note in `error.details`.
 
 The main validation limits are:
@@ -292,6 +293,23 @@ curl -fsS -X PATCH \
     "mutationId": "33333333-3333-4333-8333-333333333333"
   }'
 ```
+
+Append a Markdown fragment as one logical mutation. The server reads the current note, applies its normal blank-line boundaries, and stores the resulting blocks/documents transactionally:
+
+```bash
+curl -fsS -X POST \
+  -H "Authorization: Bearer $QNOTES_TOKEN" \
+  -H 'Content-Type: application/json' \
+  "$QNOTES_URL/api/notes/NOTE_UUID/append" \
+  --data '{
+    "contentMarkdown": "## Release confirmation\n\nThe release is confirmed.\n",
+    "expectedVersion": 3,
+    "deviceId": "11111111-1111-4111-8111-111111111111",
+    "mutationId": "77777777-7777-4777-8777-777777777777"
+  }'
+```
+
+If the response is ambiguous, resend the same logical fragment with the same `deviceId` and `mutationId`. Do not resend a whole-document replacement and do not create a new mutation ID until you intentionally start another append.
 
 Move a note to a notebook. The target notebook must belong to the same owner. Set `notebookId` to `null` to return the note to Unfiled:
 
@@ -500,7 +518,7 @@ console.log(response.items);
 console.log(response.timing);
 ```
 
-The client exposes `listNotes`, `listNotebooks`, `createNotebook`, `getNote`, `createNote`, `createNoteDetailed`, `updateNote`, `moveNoteToNotebook`, `deleteNote`, `restoreNote`, `listBlocks`, `getBlock`, `search`, `searchPost`, `readNoteContext`, `sync`, `listAttachments`, `requestAttachmentUpload`, `finalizeAttachment`, `getAttachmentDownloadUrl`, `deleteAttachment`, `listTokens`, `createToken`, `revokeToken`, `exportNote`, and `exportWorkspace`. `createNote` remains the note-only API; `createNoteDetailed` additionally returns the `created`, `idempotent`, or `deduplicated` outcome. Export methods return the raw `Response`; attachment upload still requires uploading the bytes to Supabase Storage with the signed path/token returned by `requestAttachmentUpload`.
+The client exposes `listNotes`, `listNotebooks`, `createNotebook`, `getNote`, `createNote`, `createNoteDetailed`, `updateNote`, `appendNote`, `moveNoteToNotebook`, `deleteNote`, `restoreNote`, `listBlocks`, `getBlock`, `search`, `searchPost`, `readNoteContext`, `sync`, `listAttachments`, `requestAttachmentUpload`, `finalizeAttachment`, `getAttachmentDownloadUrl`, `deleteAttachment`, `listTokens`, `createToken`, `revokeToken`, `exportNote`, and `exportWorkspace`. `createNote` remains the note-only API; `createNoteDetailed` additionally returns the `created`, `idempotent`, or `deduplicated` outcome. Export methods return the raw `Response`; attachment upload still requires uploading the bytes to Supabase Storage with the signed path/token returned by `requestAttachmentUpload`.
 
 ## Native MCP server
 
@@ -517,7 +535,7 @@ The default read profile exposes only `search_notes`, `read_note_context`, and `
 - `qnotes://notes/{noteId}/documents/{documentId}`
 - `qnotes://notes/{noteId}/blocks/{blockKey}`
 
-Use a separate write profile and token for `capture_note`, `append_note`, and `update_note`. The server generates one stable device ID per process and fresh mutation IDs internally; callers never need to put mutation IDs or tokens in tool arguments. `capture_note` accepts optional `notebookId` and `dedupeKey` and returns `{ note, outcome }`, where the outcome distinguishes creation, an idempotent retry, and a deduplicated existing note. `append_note` preserves Markdown boundaries but repeated calls append repeatedly; it is not claimed to be idempotent. `update_note` preserves tags when `tags` is omitted. Updates still require the expected note version.
+Use a separate write profile and token for `capture_note`, `append_note`, and `update_note`. The server keeps reads as the default profile and only registers write tools when `QNOTES_MCP_PROFILE=write`; API scopes still enforce the token boundary. `mutationId` is optional in each write tool for compatibility, but a caller that may retry after an ambiguous transport result must supply the same mutation ID for the same logical operation. Keep the generated `QNOTES_MCP_DEVICE_ID` unchanged across process restarts; the existing owner-scoped `(owner_id, mutation_id)` receipt key plus the device ID in the request hash makes retry behavior durable across MCP processes. Omitted identity fields remain supported and receive fresh values, so those calls are new operations rather than durable retries. `capture_note` accepts optional `notebookId` and `dedupeKey` and returns `{ note, outcome }`, where the outcome distinguishes creation, an idempotent retry, and a deduplicated existing note. `append_note` preserves Markdown boundaries and uses the dedicated logical append endpoint, so a lost response can be retried without duplicating the addition. `update_note` preserves tags when `tags` is omitted and still requires the expected note version for a new update.
 
 ```yaml
 mcp_servers:
@@ -546,6 +564,7 @@ mcp_servers:
       QNOTES_URL: "${QNOTES_URL}"
       QNOTES_MCP_PROFILE: "write"
       QNOTES_WRITE_TOKEN: "${QNOTES_WRITE_TOKEN}"
+      QNOTES_MCP_DEVICE_ID: "replace-with-the-stable-uuid-from-Integrations"
     connect_timeout: 10
     timeout: 20
     supports_parallel_tool_calls: false
@@ -571,6 +590,8 @@ The endpoint exposes `search_notes`, `read_note_context`, and `get_block`, plus 
 
 To connect it in Gemini Spark, open Connected Apps, enter the endpoint under **Custom apps for Spark**, and choose **Next**. If Gemini shows **Advanced features** because this server does not use Dynamic Client Registration, enter the personal token as the server credential. The token is shown in full only once, so revoke it from [Personal API tokens](https://notes.quadrate.lk/settings/tokens) if it is exposed or no longer needed.
 
+After building the server and saving the generated config, verify the two layers separately. A browser “Verify token/API access” check only proves that the token can call the API; it does not start Hermes. Run `hermes mcp test quadrate_notes_read` or `hermes mcp test quadrate_notes_write` to exercise Hermes’ real stdio configuration. For an ambiguous write result, repeat the tool call with the same `mutationId`; do not generate a new ID until starting a new logical mutation.
+
 ## Endpoint reference
 
 All routes except health require a bearer credential. Personal tokens must have the listed scope; `/api/tokens` requires a Supabase user JWT even though it has no personal-token scope.
@@ -582,6 +603,7 @@ All routes except health require a bearer credential. Personal tokens must have 
 | `GET` | `/api/notes/:noteRef` | `notes:read` |
 | `POST` | `/api/notes` | `notes:write` |
 | `PATCH` | `/api/notes/:noteId` | `notes:write` |
+| `POST` | `/api/notes/:noteId/append` | `notes:write` |
 | `PATCH` | `/api/notes/:noteId/notebook` | `notes:write` |
 | `DELETE` | `/api/notes/:noteId` | `notes:write` |
 | `POST` | `/api/notes/:noteId/restore` | `notes:write` |
@@ -612,7 +634,7 @@ All routes except health require a bearer credential. Personal tokens must have 
 - `401 TOKEN_EXPIRED`: the personal token expiry has passed.
 - `403 INSUFFICIENT_SCOPE`: the personal token does not include the required scope, or a token-management route was called with a personal token instead of a Supabase JWT.
 - `404 NOTE_NOT_FOUND`, `NOTEBOOK_NOT_FOUND`, or `ATTACHMENT_NOT_FOUND`: the resource is missing or belongs to another owner.
-- `409 NOTE_VERSION_CONFLICT`: re-read the note and retry intentionally with its current version and a new mutation ID.
+- `409 NOTE_VERSION_CONFLICT`: for a new logical write, re-read the note and retry intentionally with its current version and a new mutation ID; for an ambiguous append response, retry the same logical request with the original mutation ID first.
 - `409 NOTE_SLUG_CONFLICT`: choose a slug not used by another active note.
 - `409 NOTE_DEDUPE_CONFLICT`: another active note already uses the dedupe key of a note being restored.
 - `409 NOTEBOOK_NAME_CONFLICT`: choose a notebook name not used by another notebook for the owner.
@@ -625,4 +647,4 @@ All routes except health require a bearer credential. Personal tokens must have 
 - `403 CORS_ORIGIN_DENIED`: send the request from an origin in the server’s exact `QNOTES_ALLOWED_ORIGIN` allow-list.
 - `503 SEMANTIC_SEARCH_UNAVAILABLE`: embedding-backed retrieval or its database RPC failed; use `mode=keyword` temporarily or verify the embedding runtime and worker deployment. Query-embedding failures are returned as degraded keyword results instead.
 
-Do not use the Supabase database password, service-role key, publishable key, or an Auth session token as a replacement for a personal `qnt_...` token in a script or MCP adapter. If a personal token is exposed, revoke it immediately from [Personal API tokens](https://notes.quadrate.lk/settings/tokens) and create a replacement.
+Do not use the Supabase database password, service-role key, publishable key, or an Auth session token as a replacement for a personal `qnt_...` token in a script or MCP adapter. If a personal token is exposed, revoke it immediately from [Integrations](https://notes.quadrate.lk/settings/integrations) and create a replacement.

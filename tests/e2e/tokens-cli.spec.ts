@@ -21,11 +21,12 @@ test('manages scoped tokens and exercises the built CLI', async ({ page }) => {
   const note = await createNoteApi(session.access_token, `CLI fixture ${crypto.randomUUID()}`, `:::copy{id="cli-block" title="CLI Block" lang="bash" type="command"}\n${blockContent}\n:::\n`);
 
   await signInPage(page);
-  await page.goto('/settings/tokens');
+  await page.goto('/settings/integrations');
   const readName = `read-${crypto.randomUUID().slice(0, 8)}`;
   await page.getByLabel('Token name').fill(readName);
-  await page.getByRole('button', { name: 'Create token' }).click();
-  const readToken = (await page.locator('code').textContent())?.trim();
+  await page.getByLabel('Token expiry').selectOption('7d');
+  await page.getByRole('button', { name: 'Create read-only token' }).click();
+  const readToken = (await page.getByTestId('issued-token').textContent())?.trim();
   if (!readToken) throw new Error('The browser did not display the read token.');
 
   const searchOutput = await runCli(readToken, 'search', 'cli-block', '--json');
@@ -40,13 +41,13 @@ test('manages scoped tokens and exercises the built CLI', async ({ page }) => {
 
   const writeName = `write-${crypto.randomUUID().slice(0, 8)}`;
   await page.getByLabel('Token name').fill(writeName);
-  const writeScope = page.locator('label').filter({ hasText: 'notes:write' }).locator('input[type="checkbox"]');
-  await writeScope.check();
+  await page.getByRole('radio', { name: 'Writing' }).check();
+  await expect(page.locator('label').filter({ hasText: 'notes:write' }).locator('input[type="checkbox"]')).toBeChecked();
   const writeTokenResponse = page.waitForResponse((response) => response.request().method() === 'POST' && response.url().includes('/functions/v1/qnotes-api/api/tokens'));
-  await page.getByRole('button', { name: 'Create token' }).click();
+  await page.getByRole('button', { name: 'Create writing token' }).click();
   await writeTokenResponse;
-  await expect.poll(async () => (await page.locator('code').textContent())?.trim() ?? '').not.toBe(readToken);
-  const writeToken = (await page.locator('code').textContent())?.trim();
+  await expect.poll(async () => (await page.getByTestId('issued-token').textContent())?.trim() ?? '').not.toBe(readToken);
+  const writeToken = (await page.getByTestId('issued-token').textContent())?.trim();
   if (!writeToken) throw new Error('The browser did not display the write token.');
 
   const captureText = `Captured by CLI ${crypto.randomUUID()}`;

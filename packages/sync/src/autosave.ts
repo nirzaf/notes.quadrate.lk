@@ -4,6 +4,11 @@ export interface AutosaveCoordinatorOptions<T> {
   onError: (error: unknown) => void;
 }
 
+export interface AutosaveFlushOptions {
+  /** Set to false only for background cleanup where the caller cannot act on a failure. */
+  throwOnError?: boolean;
+}
+
 export class AutosaveCoordinator<T> {
   private readonly options: AutosaveCoordinatorOptions<T>;
   private pending: T | undefined;
@@ -11,6 +16,7 @@ export class AutosaveCoordinator<T> {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running: Promise<void> | null = null;
   private disposed = false;
+  private lastError: unknown = null;
 
   constructor(options: AutosaveCoordinatorOptions<T>) {
     this.options = options;
@@ -35,7 +41,9 @@ export class AutosaveCoordinator<T> {
     this.running = (async () => {
       try {
         await this.options.save(value);
+        this.lastError = null;
       } catch (error: unknown) {
+        this.lastError = error;
         this.options.onError(error);
       } finally {
         this.running = null;
@@ -45,7 +53,7 @@ export class AutosaveCoordinator<T> {
     if (this.hasPending && !this.disposed) await this.drain();
   }
 
-  async flush(): Promise<void> {
+  async flush(options: AutosaveFlushOptions = {}): Promise<void> {
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
@@ -54,6 +62,7 @@ export class AutosaveCoordinator<T> {
       if (this.running) await this.running;
       else await this.drain();
     }
+    if (options.throwOnError !== false && this.lastError !== null) throw this.lastError;
   }
 
   cancelPending(): void {

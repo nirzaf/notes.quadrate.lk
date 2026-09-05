@@ -1,8 +1,10 @@
 import type {
   ApiTokenScope,
+  AppendNoteInput,
   CreateApiTokenInput,
   CreateNotebookInput,
   CreateNoteInput,
+  ListNotesQuery,
   MoveNoteToNotebookInput,
   ResolvedSearchMode,
   SearchFilters,
@@ -144,6 +146,16 @@ export function validateUpdateNoteInput(value: unknown): UpdateNoteInput {
   return { title, slug, contentMarkdown, ...(tags !== undefined ? { tags } : {}), expectedVersion, deviceId, mutationId };
 }
 
+export function validateAppendNoteInput(value: unknown): AppendNoteInput {
+  if (!isRecord(value)) throw new QNotesValidationError('Request body must be an object.');
+  const contentMarkdown = normalizeMarkdown(value.contentMarkdown);
+  const expectedVersion = value.expectedVersion;
+  if (expectedVersion !== undefined && (typeof expectedVersion !== 'number' || !Number.isSafeInteger(expectedVersion) || expectedVersion < 1)) {
+    throw new QNotesValidationError('expectedVersion must be a positive integer.');
+  }
+  return { contentMarkdown, ...(expectedVersion !== undefined ? { expectedVersion } : {}), deviceId: requireUUID(value.deviceId, 'deviceId'), mutationId: requireUUID(value.mutationId, 'mutationId') };
+}
+
 export function validateVersionedMutation(value: unknown): VersionedNoteMutationInput {
   if (!isRecord(value)) throw new QNotesValidationError('Request body must be an object.');
   const expectedVersion = value.expectedVersion;
@@ -240,6 +252,28 @@ export function validateLimit(value: unknown, max: number, fallback: number): nu
   const parsed = typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : value;
   if (typeof parsed !== 'number' || !Number.isSafeInteger(parsed) || parsed < 1 || parsed > max) throw new QNotesValidationError(`limit must be an integer from 1 to ${max}.`);
   return parsed;
+}
+
+function validateQueryFlag(value: unknown, name: string): boolean {
+  if (value === undefined || value === false || value === 'false') return false;
+  if (value === true || value === 'true') return true;
+  throw new QNotesValidationError(`${name} must be true or false.`);
+}
+
+export function validateListNotesQuery(value: unknown): ListNotesQuery {
+  if (!isRecord(value)) throw new QNotesValidationError('Query parameters must be an object.');
+  const includeDeleted = validateQueryFlag(value.includeDeleted, 'includeDeleted');
+  const deletedOnly = validateQueryFlag(value.deletedOnly, 'deletedOnly');
+  const unfiled = validateQueryFlag(value.unfiled, 'unfiled');
+  const notebookId = value.notebookId === undefined ? undefined : requireUUID(value.notebookId, 'notebookId');
+  if (notebookId && unfiled) throw new QNotesValidationError('notebookId and unfiled cannot be used together.');
+  const tag = value.tag === undefined ? undefined : normalizeTags([value.tag], false)[0];
+  let cursor: string | undefined;
+  if (value.cursor !== undefined) {
+    if (typeof value.cursor !== 'string' || !value.cursor.trim()) throw new QNotesValidationError('cursor must be a non-empty string.');
+    cursor = value.cursor;
+  }
+  return { limit: validateLimit(value.limit, MAX_NOTE_LIST_LIMIT, DEFAULT_NOTE_LIST_LIMIT), includeDeleted, deletedOnly, unfiled, ...(cursor ? { cursor } : {}), ...(notebookId ? { notebookId } : {}), ...(tag ? { tag } : {}) };
 }
 
 export function validateTokenInput(value: unknown): CreateApiTokenInput {

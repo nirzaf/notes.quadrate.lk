@@ -13,6 +13,7 @@ The repository is a pnpm monorepo. The web app is a Vite/React PWA, the API is a
 - Private attachments stored in Supabase Storage. Plain text, Markdown, and text-bearing PDFs are indexed asynchronously; PNG, JPEG, and WebP files are stored but report that image OCR is unsupported.
 - Versioned mutations, private Realtime Broadcast invalidation, reconnect recovery, IndexedDB draft persistence, and a conflict resolver for concurrent edits.
 - Personal API tokens with least-privilege scopes for scripts, agents, backups, and the CLI.
+- A guided Integrations page for read-only-by-default Hermes setup, explicit write scopes, real token expiry choices, one-time secret/config display, and separate API versus Hermes verification.
 - Note Markdown exports and workspace ZIP exports containing active notes, attachments, and a manifest.
 
 The repository ships a native stdio MCP server in `packages/mcp-server` and a hosted, read-only Streamable HTTP MCP endpoint for Gemini Spark at `https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-mcp`. See [API_ACCESS_GUIDE.md](API_ACCESS_GUIDE.md) for the REST API, CLI, JavaScript client, and MCP setup.
@@ -137,7 +138,7 @@ pnpm exec supabase functions deploy qnotes-api embedding-worker attachment-worke
   --import-map supabase/functions/deno.json
 ```
 
-The hosted database must contain the migrations through `20260903000500_embedding_recovery.sql`. That release adds request-safe search functions, embedding input/version invariants, stale-vector requeueing, attachment page provenance, safe capture deduplication, and the daily embedding recovery schedule. The worker cron jobs read the project URL and internal worker secret from Supabase Vault, so those Vault secrets and the Edge Function secrets must be configured before expecting asynchronous embeddings or attachment extraction.
+The hosted database must contain the migrations through `20260905000200_stage3_append_idempotency.sql`. The Stage 3 migration adds the transaction-safe logical append receipt used by the REST API, CLI, and MCP write profile; the preceding migrations add request-safe search functions, embedding input/version invariants, stale-vector requeueing, attachment page provenance, safe capture deduplication, and the daily embedding recovery schedule. The worker cron jobs read the project URL and internal worker secret from Supabase Vault, so those Vault secrets and the Edge Function secrets must be configured before expecting asynchronous embeddings or attachment extraction.
 
 Build and deploy the web package to Cloudflare Pages with the hosted Supabase values:
 
@@ -160,7 +161,7 @@ Autosave-level synchronization deliberately stops short of character-level colla
 
 ## API and CLI quick start
 
-Create a scoped personal token at `/settings/tokens`, then configure a client with the Edge Function root (without `/api`):
+Create a scoped personal token at `/settings/integrations` (the legacy `/settings/tokens` route remains available), then configure a client with the Edge Function root (without `/api`):
 
 ```bash
 pnpm --filter @qnotes/api-client build
@@ -181,4 +182,4 @@ pnpm --filter @qnotes/cli exec node dist/index.js append erpnext-production "Con
 pnpm --filter @qnotes/cli exec node dist/index.js export --workspace --output notes-backup.zip --force
 ```
 
-The CLI uses native `fetch`, never connects directly to PostgreSQL, and does not automatically retry failed requests. Mutation requests carry UUID `deviceId`, UUID `mutationId`, and (for updates) `expectedVersion`. For complete REST and JavaScript-client examples, read [API_ACCESS_GUIDE.md](API_ACCESS_GUIDE.md).
+The CLI uses native `fetch`, never connects directly to PostgreSQL, and does not automatically retry failed requests. Mutation requests carry UUID `deviceId`, UUID `mutationId`, and (for updates) `expectedVersion`; the append command uses the logical append endpoint rather than rewriting a fetched whole document. For complete REST, retry-identity, JavaScript-client, and Hermes examples, read [API_ACCESS_GUIDE.md](API_ACCESS_GUIDE.md).
