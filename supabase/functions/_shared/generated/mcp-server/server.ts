@@ -59,7 +59,6 @@ export function createQNotesMcpServer(client: QNotesClient & ReadQNotesClient, p
       before: z.number().int().min(0).max(5).optional(),
       after: z.number().int().min(0).max(5).optional(),
       maxTokens: z.number().int().min(1).max(4000).optional(),
-      continuation: z.string().max(8192).optional(),
     },
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, (args: Record<string, unknown>) => readNoteContextTool(client, args as Parameters<typeof readNoteContextTool>[1]));

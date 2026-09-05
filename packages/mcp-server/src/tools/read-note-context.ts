@@ -1,4 +1,4 @@
-import { toolResult, type ReadQNotesClient } from './common.js';
+import { toolResult, type ReadQNotesClient } from './common.ts';
 
 export async function readNoteContextTool(client: ReadQNotesClient, args: { documentId: string; before?: number; after?: number; maxTokens?: number; continuation?: string }) {
   const params: { before: number; after: number; maxTokens: number; continuation?: string } = {

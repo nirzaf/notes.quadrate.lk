@@ -2,6 +2,12 @@
   "imports": {
     "@qnotes/shared": "./_shared/generated/shared/index.ts",
     "@qnotes/markdown": "./_shared/generated/markdown/index.ts",
+    "@qnotes/api-client": "./_shared/generated/api-client/index.ts",
+    "@modelcontextprotocol/sdk": "npm:@modelcontextprotocol/sdk@1.30.0",
+    "@modelcontextprotocol/sdk/server/mcp.js": "npm:@modelcontextprotocol/sdk@1.30.0/server/mcp.js",
+    "@modelcontextprotocol/sdk/server/stdio.js": "npm:@modelcontextprotocol/sdk@1.30.0/server/stdio.js",
+    "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js": "npm:@modelcontextprotocol/sdk@1.30.0/server/webStandardStreamableHttp.js",
+    "zod": "npm:zod@4.5.4",
     "@supabase/supabase-js": "npm:@supabase/supabase-js@2.56.0",
     "hono": "npm:hono@4.6.20",
     "markdown-it": "npm:markdown-it@14.1.0",
