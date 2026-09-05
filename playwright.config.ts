@@ -1,6 +1,21 @@
 import { defineConfig, devices } from '@playwright/test';
 
 const servedFunctions = ['qnotes-api', ...(process.env.QNOTES_E2E_SERVE_WORKERS === '0' ? [] : ['embedding-worker', 'attachment-worker'])].join(' ');
+const webServers = [
+  {
+    command: 'pnpm --filter @qnotes/web dev --host 127.0.0.1',
+    url: 'http://127.0.0.1:5173',
+    reuseExistingServer: true,
+  },
+  ...(process.env.QNOTES_E2E_EXTERNAL_API === '1'
+    ? []
+    : [{
+        command: `pnpm exec supabase functions serve ${servedFunctions} --env-file supabase/functions/.env.test --no-verify-jwt`,
+        url: 'http://127.0.0.1:54321/functions/v1/qnotes-api/api/health',
+        reuseExistingServer: true,
+        timeout: 120_000,
+      }]),
+];
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -14,19 +29,7 @@ export default defineConfig({
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
-  webServer: [
-    {
-      command: 'pnpm --filter @qnotes/web dev --host 127.0.0.1',
-      url: 'http://127.0.0.1:5173',
-      reuseExistingServer: true,
-    },
-    {
-      command: `pnpm exec supabase functions serve ${servedFunctions} --env-file supabase/functions/.env.test --no-verify-jwt`,
-      url: 'http://127.0.0.1:54321/functions/v1/qnotes-api/api/health',
-      reuseExistingServer: true,
-      timeout: 120_000,
-    },
-  ],
+  webServer: webServers,
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'], channel: 'chrome' } },
   ],

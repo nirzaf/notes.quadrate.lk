@@ -34,7 +34,7 @@ jobs:
           done
           exit 1
       - run: pnpm exec playwright install --with-deps chrome
-      - run: QNOTES_E2E_SERVE_WORKERS=0 pnpm exec playwright test tests/e2e/navigation.spec.ts --project=chromium
+      - run: QNOTES_E2E_EXTERNAL_API=1 QNOTES_E2E_SERVE_WORKERS=0 pnpm exec playwright test tests/e2e/navigation.spec.ts --project=chromium
       - name: Stop the configured local functions
         if: always()
         run: |
