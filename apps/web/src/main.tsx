@@ -16,7 +16,7 @@ async function boot(): Promise<void> {
     const [{ AuthProvider }, { router }, { ToastProvider }] = await Promise.all([import('./auth-context'), import('./router'), import('./components/ui/toast')]);
     if (!rootElement) throw new Error('The application root element is missing.');
     createRoot(rootElement).render(<QueryClientProvider client={queryClient}><AuthProvider><ToastProvider><RouterProvider router={router} /></ToastProvider></AuthProvider></QueryClientProvider>);
-    if ('serviceWorker' in navigator) void navigator.serviceWorker.register('/sw.js').catch(() => undefined);
+    if (import.meta.env.PROD && 'serviceWorker' in navigator) void navigator.serviceWorker.register('/sw.js').catch(() => undefined);
   } catch (error: unknown) {
     showFatal(error);
   }

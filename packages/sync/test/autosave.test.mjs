@@ -48,7 +48,22 @@ test('reports one error per failed save attempt', async () => {
   const errors = [];
   const coordinator = new AutosaveCoordinator({ delayMs: 0, save: async () => { throw new Error('failed'); }, onError: (error) => errors.push(error.message) });
   coordinator.schedule('bad');
-  await coordinator.flush();
+  await assert.rejects(() => coordinator.flush(), /failed/);
   assert.deepEqual(errors, ['failed']);
+  coordinator.dispose();
+});
+
+test('rejects a failed flush so callers cannot treat it as persisted', async () => {
+  const coordinator = new AutosaveCoordinator({ delayMs: 0, save: async () => { throw new Error('blocked'); }, onError: () => undefined });
+  coordinator.schedule('blocked');
+  await assert.rejects(() => coordinator.flush(), /blocked/);
+  coordinator.dispose();
+});
+
+test('retains a background failure for the next explicit flush', async () => {
+  const coordinator = new AutosaveCoordinator({ delayMs: 0, save: async () => { throw new Error('background failure'); }, onError: () => undefined });
+  coordinator.schedule('background');
+  await wait(10);
+  await assert.rejects(() => coordinator.flush(), /background failure/);
   coordinator.dispose();
 });

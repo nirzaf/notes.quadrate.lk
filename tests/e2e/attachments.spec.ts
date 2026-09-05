@@ -73,3 +73,18 @@ test('keeps attachment objects private between owners', async () => {
   const result = await apiJson(`/api/attachments/${attachmentId}`, other.access_token);
   expect(result.response.status).toBe(404);
 });
+
+test('refreshes attachment processing stages in the open note without a reload', async ({ page }) => {
+  const session = await signInSession();
+  const note = await createNoteApi(session.access_token, `Attachment UI ${crypto.randomUUID()}`);
+  await signInPage(page);
+  await page.goto(`/notes/${note.id}`);
+  await page.getByText('Attachments', { exact: true }).click();
+  await page.locator(`#attachment-upload-${note.id}`).setInputFiles('tests/e2e/fixtures/sample.txt');
+  const row = page.locator('.q-attachment-row').first();
+  await expect(row).toBeVisible({ timeout: 15_000 });
+  await expect.poll(async () => {
+    await invokeWorker('attachment-worker');
+    return row.textContent();
+  }, { timeout: 20_000 }).toContain('Ready and searchable.');
+});

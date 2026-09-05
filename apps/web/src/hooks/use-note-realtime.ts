@@ -16,17 +16,17 @@ export function useNoteRealtime(onEvent: (event: RealtimeNoteEvent) => void, onR
     let connected = false;
     let active = true;
     channel.on('broadcast', { event: 'note.changed' }, (payload) => {
-      if (isRealtimeNoteEvent(payload.payload)) onEvent(payload.payload);
+      if (active && isRealtimeNoteEvent(payload.payload)) void Promise.resolve(onEvent(payload.payload)).catch(() => undefined);
     });
     void supabase.realtime.setAuth(session.access_token).then(() => {
       if (!active) return;
       channel.subscribe((status) => {
         if (status === 'SUBSCRIBED') {
-          if (connected) onReconnect?.();
+          if (connected) void Promise.resolve(onReconnect?.()).catch(() => undefined);
           connected = true;
         }
       });
-    });
+    }).catch(() => undefined);
     return () => {
       active = false;
       void supabase.removeChannel(channel);

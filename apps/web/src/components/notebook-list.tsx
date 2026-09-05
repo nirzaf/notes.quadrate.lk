@@ -7,16 +7,14 @@ import { Input } from './ui/input';
 export const UNFILED_NOTEBOOK_ID = '__unfiled__';
 
 interface NotebookListProps {
+  idPrefix?: string;
   notebooks: Notebook[];
   selectedNotebookId: string | null;
-  allCount: number;
-  unfiledCount: number;
-  noteCounts: Readonly<Record<string, number>>;
   onSelect: (notebookId: string | null) => void;
   onCreate: (name: string) => Promise<void>;
 }
 
-export function NotebookList({ notebooks, selectedNotebookId, allCount, unfiledCount, noteCounts, onSelect, onCreate }: NotebookListProps): JSX.Element {
+export function NotebookList({ idPrefix = 'notebook', notebooks, selectedNotebookId, onSelect, onCreate }: NotebookListProps): JSX.Element {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -46,18 +44,18 @@ export function NotebookList({ notebooks, selectedNotebookId, allCount, unfiledC
     </div>
     <div className="q-notebook-items">
       <button className="q-notebook-item" data-active={selectedNotebookId === null} type="button" onClick={() => onSelect(null)} aria-pressed={selectedNotebookId === null}>
-        <Library size={16} aria-hidden="true" /><span className="q-notebook-name">All notes</span><span className="q-notebook-count">{allCount}</span>
+        <Library size={16} aria-hidden="true" /><span className="q-notebook-name">All notes</span>
       </button>
       <button className="q-notebook-item" data-active={selectedNotebookId === UNFILED_NOTEBOOK_ID} type="button" onClick={() => onSelect(UNFILED_NOTEBOOK_ID)} aria-pressed={selectedNotebookId === UNFILED_NOTEBOOK_ID}>
-        <Inbox size={16} aria-hidden="true" /><span className="q-notebook-name">Unfiled</span><span className="q-notebook-count">{unfiledCount}</span>
+        <Inbox size={16} aria-hidden="true" /><span className="q-notebook-name">Unfiled</span>
       </button>
       {notebooks.map((notebook) => <button className="q-notebook-item" data-active={selectedNotebookId === notebook.id} type="button" key={notebook.id} onClick={() => onSelect(notebook.id)} aria-pressed={selectedNotebookId === notebook.id}>
-        <BookOpen size={16} aria-hidden="true" /><span className="q-notebook-name">{notebook.name}</span><span className="q-notebook-count">{noteCounts[notebook.id] ?? 0}</span>
+        <BookOpen size={16} aria-hidden="true" /><span className="q-notebook-name">{notebook.name}</span>
       </button>)}
     </div>
     {creating ? <form className="q-notebook-creator" onSubmit={(event) => void submit(event)}>
-      <label className="q-label" htmlFor="new-notebook-name">New notebook</label>
-      <div className="q-notebook-creator-row"><Input id="new-notebook-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Work" maxLength={80} autoFocus disabled={submitting} /><Button type="submit" size="sm" disabled={submitting || !name.trim()}>{submitting ? 'Adding…' : 'Add'}</Button></div>
+      <label className="q-label" htmlFor={`${idPrefix}-new-notebook-name`}>New notebook</label>
+      <div className="q-notebook-creator-row"><Input id={`${idPrefix}-new-notebook-name`} value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Work" maxLength={80} autoFocus disabled={submitting} /><Button type="submit" size="sm" disabled={submitting || !name.trim()}>{submitting ? 'Adding…' : 'Add'}</Button></div>
     </form> : null}
   </section>;
 }

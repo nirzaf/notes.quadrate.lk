@@ -55,11 +55,13 @@ test('MCP write helpers preserve markdown boundaries and omitted tags', async ()
   const calls = [];
   const client = {
     async getNote() { return { id: 'note-1', title: 'Title', slug: 'title', contentMarkdown: '# Existing\n', contentPlain: 'Existing', tags: ['ops'], notebookId: null, version: 3, createdAt: '2026-01-01', updatedAt: '2026-01-01', deletedAt: null }; },
+    async appendNote(noteId, input) { calls.push({ noteId, input }); return { id: noteId, ...input }; },
     async updateNote(noteId, input) { calls.push({ noteId, input }); return { id: noteId, ...input }; },
   };
   await appendNoteTool(client, { noteId: 'note-1', contentMarkdown: '\n## Added\n' });
   await updateNoteTool(client, { noteId: 'note-1', title: 'Title', slug: 'title', contentMarkdown: '# Replaced', expectedVersion: 3 });
-  assert.equal(calls[0].input.contentMarkdown, '# Existing\n\n## Added\n');
+  assert.equal(calls[0].input.contentMarkdown, '\n## Added\n');
+  assert.equal(calls[0].input.expectedVersion, 3);
   assert.deepEqual(calls[1].input.tags, ['ops']);
   assert.match(calls[0].input.deviceId, /^[0-9a-f-]{36}$/);
   assert.match(calls[0].input.mutationId, /^[0-9a-f-]{36}$/);
@@ -86,13 +88,14 @@ function protocolClient(overrides = {}) {
     async getNote() { return note; },
     async createNoteDetailed(input) { return { note: { ...note, title: input.title }, outcome: 'created' }; },
     async createNote(input) { return { ...note, title: input.title }; },
+    async appendNote(noteId, input) { return { ...note, id: noteId, version: note.version + 1, contentMarkdown: `${note.contentMarkdown}\n\n${input.contentMarkdown}\n` }; },
     async updateNote(noteId, input) { return { ...note, id: noteId, ...input }; },
     ...overrides,
   };
 }
 
-async function connectedProtocol(profile, apiClient) {
-  const server = createQNotesMcpServer(apiClient, profile);
+async function connectedProtocol(profile, apiClient, options = {}) {
+  const server = createQNotesMcpServer(apiClient, profile, options);
   const client = new Client({ name: 'qnotes-test-client', version: '1.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
@@ -109,6 +112,36 @@ test('MCP protocol advertises the exact read and write tool profiles', async () 
   const writeTools = await write.client.listTools();
   assert.deepEqual(writeTools.tools.map((tool) => tool.name), [...READ_TOOL_NAMES, ...WRITE_TOOL_NAMES]);
   await write.client.close();
+});
+
+test('MCP append exposes a caller-owned retry identity and expected version', async () => {
+  let appendInput;
+  const { client } = await connectedProtocol('write', protocolClient({
+    async appendNote(_noteId, input) { appendInput = input; return { id: 'note-1', version: 4, contentMarkdown: '# Rollback\n\nAdded\n' }; },
+  }));
+  const result = await client.callTool({ name: 'append_note', arguments: {
+    noteId: '550e8400-e29b-41d4-a716-446655440000', contentMarkdown: 'Added', expectedVersion: 3, mutationId: '660e8400-e29b-41d4-a716-446655440000',
+  } });
+  assert.equal(result.structuredContent.version, 4);
+  assert.deepEqual(appendInput, {
+    contentMarkdown: 'Added', expectedVersion: 3, deviceId: appendInput.deviceId, mutationId: '660e8400-e29b-41d4-a716-446655440000',
+  });
+  assert.match(appendInput.deviceId, /^[0-9a-f-]{36}$/);
+  await client.close();
+});
+
+test('MCP write options preserve the configured device identity', async () => {
+  let appendInput;
+  const stableDeviceId = '770e8400-e29b-41d4-a716-446655440000';
+  const { client } = await connectedProtocol('write', protocolClient({
+    async appendNote(_noteId, input) { appendInput = input; return { id: 'note-1', version: 4, contentMarkdown: '# Rollback\n\nAdded\n' }; },
+  }), { deviceId: stableDeviceId });
+  await client.callTool({ name: 'append_note', arguments: {
+    noteId: '550e8400-e29b-41d4-a716-446655440000', contentMarkdown: 'Added', mutationId: '660e8400-e29b-41d4-a716-446655440000',
+  } });
+  assert.equal(appendInput.deviceId, stableDeviceId);
+  assert.equal(appendInput.mutationId, '660e8400-e29b-41d4-a716-446655440000');
+  await client.close();
 });
 
 test('MCP protocol calls preserve filters, structured content, outcomes, and validation limits', async () => {

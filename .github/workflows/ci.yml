@@ -18,3 +18,12 @@ jobs:
       - run: pnpm run typecheck
       - run: pnpm run build
       - run: pnpm run test:unit
+      - name: Start the ephemeral local stack for navigation smoke
+        run: pnpm exec supabase start
+      - run: pnpm run local:env
+      - run: pnpm run seed:test-users
+      - run: pnpm exec playwright install --with-deps chrome
+      - run: pnpm exec playwright test tests/e2e/navigation.spec.ts --project=chromium
+      - name: Stop the ephemeral local stack
+        if: always()
+        run: pnpm exec supabase stop

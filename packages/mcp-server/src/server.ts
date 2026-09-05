@@ -9,13 +9,15 @@ import type { ReadQNotesClient } from './tools/common.js';
 import { registerNotesResources } from './resources/notes.js';
 import { appendNoteTool } from './tools/append-note.js';
 import { captureNoteTool, type WriteQNotesClient } from './tools/capture-note.js';
+import type { WriteToolOptions } from './tools/write-notes.js';
 import { updateNoteTool } from './tools/update-note.js';
 
 export type McpProfile = 'read' | 'write';
 export const READ_TOOL_NAMES = ['search_notes', 'read_note_context', 'get_block'] as const;
 export const WRITE_TOOL_NAMES = ['capture_note', 'append_note', 'update_note'] as const;
+export interface QNotesMcpServerOptions extends WriteToolOptions {}
 
-export function createQNotesMcpServer(client: QNotesClient & ReadQNotesClient, profile: McpProfile = 'read'): McpServer {
+export function createQNotesMcpServer(client: QNotesClient & ReadQNotesClient, profile: McpProfile = 'read', options: QNotesMcpServerOptions = {}): McpServer {
   const server = new McpServer(
     { name: 'quadrate-notes', version: '0.1.0' },
     { instructions: 'Search first, then read bounded note context. Full note reads are explicit.' },
@@ -60,7 +62,7 @@ export function createQNotesMcpServer(client: QNotesClient & ReadQNotesClient, p
   if (profile === 'write') {
     const writeClient = client as QNotesClient & WriteQNotesClient;
     server.registerTool('capture_note', {
-      description: 'Create one note with process-scoped idempotency and optional notebook/dedupe provenance.',
+      description: 'Create one note. For an ambiguous retry, pass the same mutationId; omitted mutationId values are fresh operations.',
       inputSchema: {
         title: z.string().min(1).max(MAX_TITLE_LENGTH),
         contentMarkdown: z.string().max(MAX_MARKDOWN_CODE_UNITS),
@@ -68,17 +70,20 @@ export function createQNotesMcpServer(client: QNotesClient & ReadQNotesClient, p
         slug: z.string().min(1).max(MAX_SLUG_LENGTH).optional(),
         notebookId: z.string().uuid().nullable().optional(),
         dedupeKey: z.string().min(1).max(MAX_DEDUPE_KEY_LENGTH).optional(),
+        mutationId: z.string().uuid().optional(),
       },
       annotations: { readOnlyHint: false, openWorldHint: false },
-    }, (args) => captureNoteTool(writeClient, args as Parameters<typeof captureNoteTool>[1]));
+    }, (args) => captureNoteTool(writeClient, args as Parameters<typeof captureNoteTool>[1], options));
     server.registerTool('append_note', {
-      description: 'Append content with an optimistic versioned update while preserving Markdown boundaries.',
+      description: 'Append content as one logical operation. Retry an ambiguous result with the same mutationId; keep QNOTES_MCP_DEVICE_ID stable across process restarts for durable receipt identity.',
       inputSchema: {
         noteId: z.string().uuid(),
-        contentMarkdown: z.string().min(1).max(MAX_MARKDOWN_CODE_UNITS),
+        contentMarkdown: z.string().max(MAX_MARKDOWN_CODE_UNITS),
+        expectedVersion: z.number().int().min(1).optional(),
+        mutationId: z.string().uuid().optional(),
       },
       annotations: { readOnlyHint: false, openWorldHint: false },
-    }, (args) => appendNoteTool(writeClient, args as Parameters<typeof appendNoteTool>[1]));
+    }, (args) => appendNoteTool(writeClient, args as Parameters<typeof appendNoteTool>[1], options));
     server.registerTool('update_note', {
       description: 'Replace one note using an explicit expected version while preserving omitted tags.',
       inputSchema: {
@@ -88,14 +93,15 @@ export function createQNotesMcpServer(client: QNotesClient & ReadQNotesClient, p
         contentMarkdown: z.string().max(MAX_MARKDOWN_CODE_UNITS),
         tags: z.array(z.string().min(1).max(MAX_TAG_LENGTH)).max(MAX_TAG_COUNT).optional(),
         expectedVersion: z.number().int().min(1),
+        mutationId: z.string().uuid().optional(),
       },
       annotations: { readOnlyHint: false, openWorldHint: false },
-    }, (args) => updateNoteTool(writeClient, args as Parameters<typeof updateNoteTool>[1]));
+    }, (args) => updateNoteTool(writeClient, args as Parameters<typeof updateNoteTool>[1], options));
   }
   return server;
 }
 
-export async function runQNotesMcpServer(client: QNotesClient & ReadQNotesClient, profile: McpProfile = 'read'): Promise<void> {
+export async function runQNotesMcpServer(client: QNotesClient & ReadQNotesClient, profile: McpProfile = 'read', options: QNotesMcpServerOptions = {}): Promise<void> {
   const { StdioServerTransport } = await import('@modelcontextprotocol/sdk/server/stdio.js');
-  await createQNotesMcpServer(client, profile).connect(new StdioServerTransport());
+  await createQNotesMcpServer(client, profile, options).connect(new StdioServerTransport());
 }

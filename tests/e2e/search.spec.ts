@@ -43,3 +43,28 @@ test('filters notes by title and partial body matches, then covers semantic, hyb
   const env = await localEnv();
   expect(env.apiUrl).toContain('/functions/v1/qnotes-api');
 });
+
+test('paginates ranked results and preserves the exact result context in navigation', async ({ page }) => {
+  const session = await signInSession();
+  const marker = `paged-search-${crypto.randomUUID().slice(0, 8)}`;
+  const notes = await Promise.all(Array.from({ length: 21 }, (_, index) => createNoteApi(session.access_token, `${marker} note ${index + 1}`, `# Section ${index + 1}\n\n${marker} searchable context.`)));
+  await signInPage(page);
+  const search = page.getByRole('textbox', { name: 'Search notes' });
+  await search.fill(marker);
+  const results = page.getByRole('list', { name: 'Matched search results' });
+  await expect(results.getByRole('listitem')).toHaveCount(20, { timeout: 15_000 });
+  await expect(page.getByRole('button', { name: 'Load more results' })).toBeVisible();
+  await page.getByRole('button', { name: 'Load more results' }).click();
+  await expect(results.getByRole('listitem')).toHaveCount(21, { timeout: 15_000 });
+
+  const target = results.getByRole('listitem').filter({ hasText: notes[0]!.title }).first();
+  await target.getByRole('button', { name: 'Open matching section' }).click();
+  await expect(page).toHaveURL(/\/notes\/[0-9a-f-]+\?/);
+  const noteUrl = new URL(page.url());
+  expect(noteUrl.searchParams.get('q')).toBe(marker);
+  expect(noteUrl.searchParams.get('documentId')).toBeTruthy();
+  await expect(page.getByRole('link', { name: /Back to search results/ })).toBeVisible();
+  await page.getByRole('link', { name: /Back to search results/ }).click();
+  await expect(page).toHaveURL(/\/\?q=/);
+  expect(new URL(page.url()).searchParams.get('q')).toBe(marker);
+});

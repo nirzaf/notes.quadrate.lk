@@ -53,7 +53,12 @@ export type NoteSyncAction =
 
 export type SyncStatus =
   | 'saved'
+  | 'pending'
   | 'saving'
+  | 'draft'
+  | 'validation-error'
+  | 'network-error'
+  | 'storage-error'
   | 'remote-change'
   | 'syncing'
   | 'offline'
@@ -104,6 +109,16 @@ export interface NoteSummary {
   deletedAt: ISODateTime | null;
 }
 
+export interface ListNotesQuery {
+  cursor?: string;
+  limit: number;
+  includeDeleted: boolean;
+  deletedOnly: boolean;
+  notebookId?: UUID;
+  unfiled: boolean;
+  tag?: string;
+}
+
 export interface Notebook {
   id: UUID;
   name: string;
@@ -136,6 +151,13 @@ export interface UpdateNoteInput {
   contentMarkdown: string;
   tags?: string[];
   expectedVersion: number;
+  deviceId: UUID;
+  mutationId: UUID;
+}
+
+export interface AppendNoteInput {
+  contentMarkdown: string;
+  expectedVersion?: number;
   deviceId: UUID;
   mutationId: UUID;
 }

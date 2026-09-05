@@ -110,7 +110,7 @@ pnpm run test:unit
 pnpm exec supabase db push --linked --dry-run
 ```
 
-The current search hardening release includes the additive migrations through `20260903000500_embedding_recovery.sql`. Review them in the dry-run output before applying; the latest migrations fix pagination and embedding queue races, preserve legacy RPC wrappers on the v2 contract, add restore dedupe conflict reporting, keep incompatible vectors out of semantic search, and add the daily stale-embedding recovery schedule.
+The current release includes the additive migrations through `20260905000200_stage3_append_idempotency.sql`. Review them in the dry-run output before applying; the latest migrations add the transaction-safe logical append receipt for the REST API, CLI, and MCP write profile, while the preceding migrations fix pagination and embedding queue races, preserve legacy RPC wrappers on the v2 contract, add restore dedupe conflict reporting, keep incompatible vectors out of semantic search, and add the daily stale-embedding recovery schedule.
 
 ### 3. Apply pending production migrations
 

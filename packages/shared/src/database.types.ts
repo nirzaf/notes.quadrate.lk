@@ -384,6 +384,21 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      qnotes_append_note: {
+        Args: {
+          p_blocks: Json
+          p_content_markdown: string
+          p_content_plain: string
+          p_device_id: string
+          p_documents: Json
+          p_expected_version: number
+          p_mutation_id: string
+          p_note_id: string
+          p_owner_id: string
+          p_request_hash: string
+        }
+        Returns: Json
+      }
       qnotes_archive_queue_message: {
         Args: { p_message_id: number; p_queue_name: string }
         Returns: boolean
