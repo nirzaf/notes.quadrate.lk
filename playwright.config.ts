@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const servedFunctions = ['qnotes-api', ...(process.env.QNOTES_E2E_SERVE_WORKERS === '0' ? [] : ['embedding-worker', 'attachment-worker'])].join(' ');
+
 export default defineConfig({
   testDir: './tests/e2e',
   timeout: 30_000,
@@ -19,7 +21,7 @@ export default defineConfig({
       reuseExistingServer: true,
     },
     {
-      command: 'pnpm exec supabase functions serve qnotes-api embedding-worker attachment-worker --env-file supabase/functions/.env.test --no-verify-jwt',
+      command: `pnpm exec supabase functions serve ${servedFunctions} --env-file supabase/functions/.env.test --no-verify-jwt`,
       url: 'http://127.0.0.1:54321/functions/v1/qnotes-api/api/health',
       reuseExistingServer: true,
       timeout: 120_000,
