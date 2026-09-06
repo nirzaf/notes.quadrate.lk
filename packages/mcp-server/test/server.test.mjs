@@ -58,7 +58,7 @@ test('MCP read context forwards an opaque continuation only when supplied', asyn
 test('default MCP profile exposes only the read surface', () => {
   const server = createQNotesMcpServer(mockClient());
   assert.ok(server);
-  assert.deepEqual(READ_TOOL_NAMES, ['search_notes', 'read_note_context', 'get_block', 'list_notebooks']);
+  assert.deepEqual(READ_TOOL_NAMES, ['search_notes', 'read_note_context', 'get_block', 'list_notebooks', 'resolve_public_share']);
 });
 
 test('MCP list_notebooks is available in the read profile and delegates to the API client', async () => {
@@ -72,6 +72,22 @@ test('MCP list_notebooks is available in the read profile and delegates to the A
   const result = await client.callTool({ name: 'list_notebooks', arguments: {} });
   assert.deepEqual(result.structuredContent, { items: [{ id: 'notebook-1', name: 'Operations', createdAt: '2026-01-01', updatedAt: '2026-01-01' }] });
   assert.equal(calls, 1);
+  await client.close();
+});
+
+test('MCP resolve_public_share is read-only and delegates to the public API-client operation', async () => {
+  let receivedToken;
+  const token = 'qns_' + 'A'.repeat(43);
+  const sharedNote = { title: 'Shared', contentMarkdown: '# Shared', updatedAt: '2026-01-01T00:00:00Z' };
+  const { client } = await connectedProtocol('read', protocolClient({
+    async resolvePublicShare(value) {
+      receivedToken = value;
+      return sharedNote;
+    },
+  }));
+  const result = await client.callTool({ name: 'resolve_public_share', arguments: { token } });
+  assert.equal(receivedToken, token);
+  assert.deepEqual(result.structuredContent, sharedNote);
   await client.close();
 });
 

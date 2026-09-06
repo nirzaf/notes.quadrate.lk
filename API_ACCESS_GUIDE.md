@@ -123,6 +123,8 @@ curl -fsS --get \
 
 The Markdown GET endpoint is unauthenticated, accepts no private JWT, and returns the same generic `404 PUBLIC_SHARE_NOT_FOUND` response for invalid, expired, revoked, deleted, malformed, or wrong-format tokens. It sends `Cache-Control: no-store`, `X-Robots-Tag: noindex`, `Referrer-Policy: no-referrer`, and a restrictive content security policy. Because the token is a bearer capability, treat the complete GET URL as secret; use HTTPS and avoid placing it in public indexes or persistent logs. The web share dialog shows this endpoint only immediately after creating a link; it is not retained when the dialog closes.
 
+See [AI_AGENTS_SHARED_LINKS.md](AI_AGENTS_SHARED_LINKS.md) for an agent-oriented explanation of browser share URLs, raw Markdown retrieval, JSON metadata retrieval, and safe token handling.
+
 ## Request and response conventions
 
 Successful JSON responses use one envelope:
@@ -572,14 +574,14 @@ The repository ships `@qnotes/mcp-server`, a local stdio MCP server built on `@q
 pnpm --filter @qnotes/mcp-server build
 ```
 
-The default read profile exposes only `search_notes`, `read_note_context`, and `get_block`, plus optional resources:
+The default read profile exposes `search_notes`, `read_note_context`, `get_block`, `list_notebooks`, and `resolve_public_share`, plus optional resources:
 
 - `qnotes://notebooks`
 - `qnotes://notes/{noteId}`
 - `qnotes://notes/{noteId}/documents/{documentId}`
 - `qnotes://notes/{noteId}/blocks/{blockKey}`
 
-Use a separate write profile and token for `capture_note`, `append_note`, `update_note`, `delete_note`, and `restore_note`. The server keeps reads as the default profile and only registers write tools when `QNOTES_MCP_PROFILE=write`; API scopes still enforce the token boundary. `mutationId` is optional in each write tool for compatibility, but a caller that may retry after an ambiguous transport result must supply the same mutation ID for the same logical operation. Keep the generated `QNOTES_MCP_DEVICE_ID` unchanged across process restarts; the existing owner-scoped `(owner_id, mutation_id)` receipt key plus the device ID in the request hash makes retry behavior durable across MCP processes. Omitted identity fields remain supported and receive fresh values, so those calls are new operations rather than durable retries. All write tools return a compact acknowledgment containing the note ID, title, resulting version, mutation ID, outcome, and note URI—never the full Markdown body. `capture_note` accepts optional `notebookId` and `dedupeKey`; its outcome distinguishes creation, an idempotent retry, and a deduplicated existing note. `append_note` preserves Markdown boundaries and uses the dedicated logical append endpoint, so a lost response can be retried without duplicating the addition. `update_note` preserves tags when `tags` is omitted and still requires the expected note version for a new update. `delete_note` and `restore_note` require an exact note ID, expected version, mutation ID when retry identity is needed, and `confirm: true`; deletion is soft-only and there is no permanent purge tool.
+`resolve_public_share` is the read-only MCP bridge for AI agents that already have a `qns_...` share secret. It delegates to the same unauthenticated `QNotesClient.resolvePublicShare` operation documented above and returns `title`, `contentMarkdown`, and `updatedAt`; it does not expose attachments or private metadata. Use a separate write profile and token for `capture_note`, `append_note`, `update_note`, `delete_note`, `restore_note`, and `move_note_to_notebook`. The server keeps reads as the default profile and only registers write tools when `QNOTES_MCP_PROFILE=write`; API scopes still enforce the token boundary. `mutationId` is optional in each write tool for compatibility, but a caller that may retry after an ambiguous transport result must supply the same mutation ID for the same logical operation. Keep the generated `QNOTES_MCP_DEVICE_ID` unchanged across process restarts; the existing owner-scoped `(owner_id, mutation_id)` receipt key plus the device ID in the request hash makes retry behavior durable across MCP processes. Omitted identity fields remain supported and receive fresh values, so those calls are new operations rather than durable retries. All write tools return a compact acknowledgment containing the note ID, title, resulting version, mutation ID, outcome, and note URI—never the full Markdown body. `capture_note` accepts optional `notebookId` and `dedupeKey`; its outcome distinguishes creation, an idempotent retry, and a deduplicated existing note. `append_note` preserves Markdown boundaries and uses the dedicated logical append endpoint, so a lost response can be retried without duplicating the addition. `update_note` preserves tags when `tags` is omitted and still requires the expected note version for a new update. `delete_note`, `restore_note`, and `move_note_to_notebook` require the expected version; deletion and restoration require `confirm: true`, deletion is soft-only, and there is no permanent purge tool. Public share creation and revocation remain owner-session REST operations because they require a Supabase user JWT rather than a personal MCP token.
 
 ```yaml
 mcp_servers:
@@ -598,6 +600,8 @@ mcp_servers:
         - search_notes
         - read_note_context
         - get_block
+        - list_notebooks
+        - resolve_public_share
       prompts: false
 
   quadrate_notes_write:
@@ -619,6 +623,7 @@ mcp_servers:
         - update_note
         - delete_note
         - restore_note
+        - move_note_to_notebook
       prompts: false
 ```
 

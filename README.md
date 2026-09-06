@@ -17,7 +17,7 @@ The repository is a pnpm monorepo. The web app is a Vite/React PWA, the API is a
 - A guided Integrations page for read-only-by-default Hermes setup, explicit write scopes, real token expiry choices, one-time secret/config display, and separate API versus Hermes verification.
 - Note Markdown exports and workspace ZIP exports containing active notes, attachments, and a manifest.
 
-The repository ships a native stdio MCP server in `packages/mcp-server` and a hosted, read-only Streamable HTTP MCP endpoint for Gemini Spark at `https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-mcp`, including standard OAuth discovery, dynamic client registration, and PKCE consent. See [API_ACCESS_GUIDE.md](API_ACCESS_GUIDE.md) for the REST API, CLI, JavaScript client, and MCP setup.
+The repository ships a native stdio MCP server in `packages/mcp-server` and a hosted, read-only Streamable HTTP MCP endpoint for Gemini Spark at `https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-mcp`, including standard OAuth discovery, dynamic client registration, PKCE consent, and public-share resolution through `resolve_public_share`. See [API_ACCESS_GUIDE.md](API_ACCESS_GUIDE.md) for the REST API, CLI, JavaScript client, and MCP setup.
 
 ## Using the web app
 
@@ -30,6 +30,8 @@ Use the `+` action in the Notebooks section to create a notebook. Names are trim
 Inside a note, Edit opens the CodeMirror Markdown editor and Preview renders sanitized Markdown with copy buttons for fenced code and named copy blocks. The note is saved after 800 ms without changes. Open Attachments to upload a supported file, preview it in-app, or choose Screenshot: Visible Area asks the browser for a display/window capture, Entire Page captures the current Quadrate Notes page, and Cropped Zone opens an accessible keyboard- and pointer-driven crop selection. Attachment previews request a short-lived signed URL only when opened; Open remains available for the original file, and text previews are capped at 1 MB. Screenshot capture requires browser permission and never uploads until the selected image is explicitly attached; image OCR remains unsupported. Delete is a soft delete that moves the note to the trash; the same note view exposes Restore for a deleted note. Export downloads the current note as `<slug>.md`.
 
 Use Share in an active note to create a read-only public link. Choose a 1-, 7-, 30-, or 90-day lifetime, or no expiry. The raw link is shown once while the dialog is open; close it after copying. Reopening Share shows only a safe prefix and expiry metadata, and lets you rotate or revoke the active link. Creating or rotating a link flushes pending autosave first, so public readers see only saved content. Open `/share#qns_...` to view a link without signing in; the public page renders the same sanitized Markdown preview but never loads attachments, AppShell data, or private note queries.
+
+AI agents can fetch the saved note body directly as Markdown over HTTPS; see [AI_AGENTS_SHARED_LINKS.md](AI_AGENTS_SHARED_LINKS.md) for the endpoint, examples, and bearer-token handling rules.
 
 If another device changes a note while a local draft is dirty, the conflict dialog can use the local version, use the remote version, save a manually edited merge, or cancel while retaining the local draft. If the remote note was deleted, the local draft can be saved as a new note.
 
