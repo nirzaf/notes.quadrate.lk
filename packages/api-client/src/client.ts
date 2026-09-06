@@ -92,6 +92,31 @@ export interface NoteContextParams extends RequestOptions {
   continuation?: string;
 }
 
+export interface WorkspaceImportOptions extends RequestOptions {
+  confirm?: boolean;
+}
+
+export interface WorkspaceImportSummary {
+  dryRun: boolean;
+  ready: boolean;
+  message: string;
+  format: string;
+  formatVersion: number;
+  backupId: UUID;
+  compressedBytes: number;
+  declaredUncompressedBytes: number;
+  entries: number;
+  uncompressedBytes: number;
+  noteMarkdownBytes: number;
+  attachmentBytes: number;
+  conflicts: unknown[];
+  unsupportedFiles: string[];
+  validationFailures: string[];
+  notebooks: number;
+  notes: number;
+  attachments: number;
+}
+
 type Success<T> = { data: T };
 
 const SEARCH_SOURCE_TYPES = new Set(['note_metadata', 'note_chunk', 'copy_block', 'code_block', 'attachment_chunk']);
@@ -178,6 +203,19 @@ function isAttachment(value: unknown): value is Attachment {
   return isRecord(value) && isString(value.id) && isString(value.noteId) && isString(value.originalFileName)
     && isString(value.mimeType) && typeof value.sizeBytes === 'number' && Number.isSafeInteger(value.sizeBytes)
     && isString(value.status) && isNullableString(value.extractionError) && isString(value.createdAt) && isString(value.updatedAt);
+}
+
+function isWorkspaceImportSummary(value: unknown): value is WorkspaceImportSummary {
+  return isRecord(value) && typeof value.dryRun === 'boolean' && typeof value.ready === 'boolean'
+    && isString(value.message) && isString(value.format) && typeof value.formatVersion === 'number'
+    && isString(value.backupId) && Number.isSafeInteger(value.compressedBytes)
+    && Number.isSafeInteger(value.declaredUncompressedBytes) && Number.isSafeInteger(value.entries)
+    && Number.isSafeInteger(value.uncompressedBytes) && Number.isSafeInteger(value.noteMarkdownBytes)
+    && Number.isSafeInteger(value.attachmentBytes) && Array.isArray(value.conflicts)
+    && Array.isArray(value.unsupportedFiles) && value.unsupportedFiles.every(isString)
+    && Array.isArray(value.validationFailures) && value.validationFailures.every(isString)
+    && Number.isSafeInteger(value.notebooks) && Number.isSafeInteger(value.notes)
+    && Number.isSafeInteger(value.attachments);
 }
 
 function isSearchResult(value: unknown): value is SearchResult {
@@ -575,5 +613,15 @@ export class QNotesClient {
 
   exportWorkspace(options: RequestOptions = {}): Promise<Response> {
     return this.binary('/export/workspace', options);
+  }
+
+  importWorkspace(archive: Uint8Array, options: WorkspaceImportOptions = {}): Promise<WorkspaceImportSummary> {
+    const path = options.confirm ? '/import/workspace?confirm=true' : '/import/workspace';
+    const { confirm: _confirm, ...requestOptions } = options;
+    return this.requestValidated(path, isWorkspaceImportSummary, 'workspace import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/zip' },
+      body: archive as unknown as BodyInit,
+    }, requestOptions);
   }
 }

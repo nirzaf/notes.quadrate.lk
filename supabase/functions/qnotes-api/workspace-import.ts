@@ -1,10 +1,13 @@
 import { strFromU8, unzipSync } from 'fflate';
+import { sha256Hex } from '@qnotes/markdown';
 import { MAX_MARKDOWN_CODE_UNITS, isUUID } from '@qnotes/shared';
 import { MAX_EXPORT_ENTRIES } from './export-preflight.ts';
 
 const SAFE_PATH = /^(?:manifest\.json|notes\/[^/]+\.md|attachments\/[^/]+\/[^/]+)$/;
 const SAFE_SLUG = /^[a-z0-9][a-z0-9_-]{0,79}$/;
 const MIME_TYPES = new Set(['text/plain', 'text/markdown', 'application/pdf', 'image/png', 'image/jpeg', 'image/webp']);
+
+export type WorkspaceImportItemKind = 'notebook' | 'note' | 'attachment';
 
 export interface WorkspaceBackupManifestAttachment {
   id: string;
@@ -70,18 +73,39 @@ export interface WorkspaceArchiveInspection {
   uncompressedBytes: number;
   noteMarkdownBytes: number;
   attachmentBytes: number;
+  files: Readonly<Record<string, Uint8Array>>;
 }
 
 export interface WorkspaceImportConflict {
-  kind: 'notebook' | 'note';
+  kind: 'notebook' | 'note' | 'attachment';
   sourceId: string;
   value: string;
-  reason: 'duplicate_in_backup' | 'name_exists' | 'slug_exists';
+  reason: 'duplicate_in_backup' | 'name_exists' | 'slug_exists' | 'import_identity_conflict';
 }
 
 export interface ExistingWorkspaceIdentity {
   notebookNames: string[];
   noteSlugs: string[];
+}
+
+/**
+ * Derive a stable UUID for one logical item in one owner's backup. The
+ * resulting UUID is never restored as the source item's identity; it is only
+ * an import identity that makes retries converge on the same target record.
+ */
+export async function workspaceImportUuid(ownerId: string, backupId: string, kind: WorkspaceImportItemKind, sourceId: string): Promise<string> {
+  const digest = await sha256Hex(`qnotes:workspace-import:${kind}:${ownerId}:${backupId}:${sourceId}`);
+  const hex = digest.slice(0, 32).split('');
+  hex[12] = '5';
+  hex[16] = ['8', '9', 'a', 'b'][Number.parseInt(hex[16] ?? '8', 16) % 4] ?? '8';
+  return `${hex.slice(0, 8).join('')}-${hex.slice(8, 12).join('')}-${hex.slice(12, 16).join('')}-${hex.slice(16, 20).join('')}-${hex.slice(20).join('')}`;
+}
+
+export function safeImportFileName(value: string): string {
+  const basename = value.replaceAll('\\', '/').split('/').at(-1)?.trim() ?? '';
+  const safe = basename.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/^\.+/, '').slice(0, 160);
+  if (!safe) throw new WorkspaceArchiveError('The backup contains an invalid attachment file name.');
+  return safe;
 }
 
 export function workspaceImportConflicts(manifest: WorkspaceBackupManifest, existing: ExistingWorkspaceIdentity): WorkspaceImportConflict[] {
@@ -198,5 +222,5 @@ export function inspectWorkspaceArchive(archive: Uint8Array, maxBytes: number, m
   });
   for (const path of Object.keys(files)) if (!paths.has(path)) throw new WorkspaceArchiveError('The backup contains an unexpected archive entry.');
   if (notes.length + notes.reduce((count, note) => count + note.attachments.length, 0) + 1 !== entries) throw new WorkspaceArchiveError('The backup manifest does not account for every archive entry.');
-  return { manifest: { format: 'quadrate-notes-workspace', formatVersion: 2, backupId: String(root.backupId), exportedAt: stringField(root.exportedAt, 'exportedAt', 64), notebooks, notes }, entries, uncompressedBytes, noteMarkdownBytes, attachmentBytes };
+  return { manifest: { format: 'quadrate-notes-workspace', formatVersion: 2, backupId: String(root.backupId), exportedAt: stringField(root.exportedAt, 'exportedAt', 64), notebooks, notes }, entries, uncompressedBytes, noteMarkdownBytes, attachmentBytes, files };
 }

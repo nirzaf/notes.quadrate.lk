@@ -503,7 +503,17 @@ curl -fsS -X POST \
   "$QNOTES_URL/api/import/workspace?dryRun=true"
 ```
 
-The response reports the manifest format/version, backup ID, compressed and declared-uncompressed byte totals, record counts, `conflicts`, `unsupportedFiles`, `validationFailures`, and `ready: false`; conflicts identify existing active note slugs, existing notebook names, and duplicate identities inside the backup. It never creates, updates, deletes, or uploads anything. A request with `dryRun=false` or `confirm=true` fails closed because note/database writes and Storage writes are not yet atomic across one restore transaction. Do not treat the dry-run endpoint as a restore operation or bypass its path, size, file-count, manifest, and attachment-byte checks; a future mutating restore must re-check these owner conflicts immediately before enabling writes.
+The response reports the manifest format/version, backup ID, compressed and declared-uncompressed byte totals, record counts, `conflicts`, `unsupportedFiles`, `validationFailures`, and whether `ready` is true. It never creates, updates, deletes, or uploads anything. A ready dry run can be explicitly applied by sending the same archive again with `confirm=true`:
+
+```bash
+curl -fsS -X POST \
+  -H "Authorization: Bearer $QNOTES_TOKEN" \
+  -H 'Content-Type: application/zip' \
+  --data-binary @quadrate-notes-backup.zip \
+  "$QNOTES_URL/api/import/workspace?confirm=true"
+```
+
+Confirmation re-runs validation and owner-conflict checks before creating any records. The import is non-destructive: it creates new note and notebook identities, preserves Markdown, tags, notebook relationships, and private attachments, and rejects existing conflicts rather than overwriting them. Retries use stable owner/backup/item identities and the existing note mutation receipts, so an interrupted import can be safely retried. Imported attachments are byte-checked before they are queued for processing. Do not bypass the path, size, file-count, manifest, attachment-byte, or owner-conflict checks. API clients can call `importWorkspace(archive)` for a dry run and `importWorkspace(archive, { confirm: true })` only after reviewing a ready result.
 
 ## Use the `qnotes` CLI
 
@@ -578,7 +588,7 @@ console.log(response.items);
 console.log(response.timing);
 ```
 
-The client exposes `listNotes`, `listNotebooks`, `createNotebook`, `getNote`, `createNote`, `createNoteDetailed`, `updateNote`, `updateNoteDetailed`, `appendNote`, `appendNoteDetailed`, `moveNoteToNotebook`, `deleteNote`, `deleteNoteDetailed`, `restoreNote`, `restoreNoteDetailed`, `listBlocks`, `getBlock`, `search`, `searchPost`, `readNoteContext`, `sync`, `listAttachments`, `requestAttachmentUpload`, `finalizeAttachment`, `getAttachmentDownloadUrl`, `deleteAttachment`, `listTokens`, `createToken`, `revokeToken`, `exportNote`, and `exportWorkspace`. The note-only mutation methods preserve the existing REST response shape; the `Detailed` variants additionally return a compact mutation outcome. `createNoteDetailed` returns `created`, `idempotent`, or `deduplicated`; the other detailed note mutations return `applied` or `idempotent`. Export methods return the raw `Response`; attachment upload still requires uploading the bytes to Supabase Storage with the signed path/token returned by `requestAttachmentUpload`.
+The client exposes `listNotes`, `listNotebooks`, `createNotebook`, `getNote`, `createNote`, `createNoteDetailed`, `updateNote`, `updateNoteDetailed`, `appendNote`, `appendNoteDetailed`, `moveNoteToNotebook`, `deleteNote`, `deleteNoteDetailed`, `restoreNote`, `restoreNoteDetailed`, `listBlocks`, `getBlock`, `search`, `searchPost`, `readNoteContext`, `sync`, `listAttachments`, `requestAttachmentUpload`, `finalizeAttachment`, `getAttachmentDownloadUrl`, `deleteAttachment`, `listTokens`, `createToken`, `revokeToken`, `exportNote`, `exportWorkspace`, and `importWorkspace`. The note-only mutation methods preserve the existing REST response shape; the `Detailed` variants additionally return a compact mutation outcome. `createNoteDetailed` returns `created`, `idempotent`, or `deduplicated`; the other detailed note mutations return `applied` or `idempotent`. Export methods return the raw `Response`; attachment upload still requires uploading the bytes to Supabase Storage with the signed path/token returned by `requestAttachmentUpload`.
 
 ## Native MCP server
 
@@ -672,7 +682,8 @@ All `/api` routes except health require a bearer credential. The public share re
 | `PATCH` | `/api/notes/:noteId/notebook` | `notes:write` |
 | `DELETE` | `/api/notes/:noteId` | `notes:write` |
 | `POST` | `/api/notes/:noteId/restore` | `notes:write` |
-| `POST` | `/api/import/workspace?dryRun=true` | `notes:read`, `notes:write`, `attachments:read`, `attachments:write` |
+| `POST` | `/api/import/workspace` | `notes:read`, `notes:write`, `attachments:read`, `attachments:write` (dry run) |
+| `POST` | `/api/import/workspace?confirm=true` | `notes:read`, `notes:write`, `attachments:read`, `attachments:write` (explicit restore) |
 | `GET` | `/api/notebooks` | `notes:read` |
 | `POST` | `/api/notebooks` | `notes:write` |
 | `GET` | `/api/notes/:noteRef/blocks` | `notes:read` |

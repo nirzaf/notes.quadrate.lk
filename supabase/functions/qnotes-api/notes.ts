@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import { deriveSlug, isUUID, normalizeSlug, QNotesValidationError, validateAppendNoteInput, validateCreateNoteInput, validateListNotesQuery, validateMoveNoteToNotebookInput, validateUpdateNoteInput, validateVersionedMutation } from '@qnotes/shared';
+import { deriveSlug, isUUID, normalizeSlug, QNotesValidationError, validateAppendNoteInput, validateCreateNoteInput, validateListNotesQuery, validateMoveNoteToNotebookInput, validateUpdateNoteInput, validateVersionedMutation, type CreateNoteInput } from '@qnotes/shared';
 import { MarkdownParseError, parseMarkdown } from '@qnotes/markdown';
 import { authFromContext, requireScope } from '../_shared/auth.ts';
 import { ApiError } from '../_shared/errors.ts';
@@ -142,11 +142,7 @@ export async function getNote(context: Context): Promise<Response> {
   return dataBody(context, await findOwnedNote(auth.userId, context.req.param('noteRef') ?? '', context.req.query('includeDeleted') === 'true'));
 }
 
-export async function createNote(context: Context): Promise<Response> {
-  const auth = authFromContext(context);
-  requireScope(auth, 'notes:write');
-  const input = validateCreateNoteInput(await context.req.json());
-  const noteId = crypto.randomUUID();
+export async function createNoteMutation(ownerId: string, input: CreateNoteInput, noteId: string): Promise<NoteResult> {
   const slug = input.slug ?? deriveSlug(input.title);
   const parsed = await parsedContent(input.contentMarkdown ?? '', input.title);
   const normalizedBody = {
@@ -159,13 +155,20 @@ export async function createNote(context: Context): Promise<Response> {
     deviceId: input.deviceId,
     mutationId: input.mutationId,
   };
-  const hash = await requestHash({ userId: auth.userId, operation: 'created', body: normalizedBody });
+  const hash = await requestHash({ userId: ownerId, operation: 'created', body: normalizedBody });
   const result = assertSupabase(await serviceClient.rpc('qnotes_create_note', {
-    p_owner_id: auth.userId, p_note_id: noteId, p_slug: slug, p_title: input.title, p_content_markdown: parsed.parsed.normalizedMarkdown,
+    p_owner_id: ownerId, p_note_id: noteId, p_slug: slug, p_title: input.title, p_content_markdown: parsed.parsed.normalizedMarkdown,
     p_content_plain: parsed.parsed.plainText, p_tags: input.tags ?? [], p_device_id: input.deviceId, p_mutation_id: input.mutationId,
     p_request_hash: hash, p_blocks: parsed.blocks, p_documents: parsed.documents, p_notebook_id: input.notebookId ?? null, p_dedupe_key: input.dedupeKey ?? null,
   }));
-  const mapped = mapMutationResult(result);
+  return mapMutationResult(result);
+}
+
+export async function createNote(context: Context): Promise<Response> {
+  const auth = authFromContext(context);
+  requireScope(auth, 'notes:write');
+  const input = validateCreateNoteInput(await context.req.json());
+  const mapped = await createNoteMutation(auth.userId, input, crypto.randomUUID());
   const outcome = mapped.status === 'ok' ? 'created' : mapped.status === 'idempotent' ? 'idempotent' : 'deduplicated';
   const response = dataBody(context, mapped.note, outcome === 'created' ? 201 : 200);
   response.headers.set('x-qnotes-create-outcome', outcome);

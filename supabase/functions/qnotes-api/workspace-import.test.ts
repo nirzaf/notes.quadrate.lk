@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { strToU8, Zip, ZipPassThrough, zipSync } from 'fflate';
-import { inspectWorkspaceArchive, WorkspaceArchiveError, workspaceImportConflicts, type WorkspaceBackupManifest } from './workspace-import.ts';
+import { inspectWorkspaceArchive, safeImportFileName, WorkspaceArchiveError, workspaceImportConflicts, workspaceImportUuid, type WorkspaceBackupManifest } from './workspace-import.ts';
 
 function duplicateArchive(): Promise<Uint8Array> {
   return new Promise((resolve, reject) => {
@@ -47,6 +47,21 @@ test('validates a version-two workspace archive and its byte manifest', () => {
   const inspection = inspectWorkspaceArchive(archive, 1_000);
   assert.equal(inspection.entries, 2);
   assert.equal(inspection.noteMarkdownBytes, 8);
+  assert.equal(new TextDecoder().decode(inspection.files[manifest.notes[0].markdownPath]), '# Hello\n');
+});
+
+test('derives stable owner-scoped identities for retryable imports', async () => {
+  const owner = '550e8400-e29b-41d4-a716-446655440010';
+  const notebook = await workspaceImportUuid(owner, manifest.backupId, 'notebook', '550e8400-e29b-41d4-a716-446655440011');
+  const notebookRetry = await workspaceImportUuid(owner, manifest.backupId, 'notebook', '550e8400-e29b-41d4-a716-446655440011');
+  const note = await workspaceImportUuid(owner, manifest.backupId, 'note', '550e8400-e29b-41d4-a716-446655440011');
+  const otherOwner = await workspaceImportUuid('550e8400-e29b-41d4-a716-446655440012', manifest.backupId, 'notebook', '550e8400-e29b-41d4-a716-446655440011');
+  assert.match(notebook, /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  assert.equal(notebook, notebookRetry);
+  assert.notEqual(notebook, note);
+  assert.notEqual(notebook, otherOwner);
+  assert.equal(safeImportFileName('../screenshots/test image.png'), 'test_image.png');
+  assert.throws(() => safeImportFileName('..'), WorkspaceArchiveError);
 });
 
 test('rejects path traversal and attachment size mismatches before any restore action', () => {

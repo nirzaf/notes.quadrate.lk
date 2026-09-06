@@ -209,4 +209,14 @@ pnpm --filter @qnotes/cli exec node dist/index.js append erpnext-production "Con
 pnpm --filter @qnotes/cli exec node dist/index.js export --workspace --output notes-backup.zip --force
 ```
 
+Workspace backups can be validated first and then explicitly restored through the API. The restore creates new owner-scoped identities, preserves Markdown, tags, notebooks, and private attachments, rejects conflicts instead of overwriting existing data, and can be retried safely with the same archive:
+
+```bash
+curl -fsS -X POST -H "Authorization: Bearer $QNOTES_TOKEN" -H 'Content-Type: application/zip' \
+  --data-binary @notes-backup.zip "$QNOTES_URL/api/import/workspace" > restore-plan.json
+# Review restore-plan.json and continue only when ready=true and conflicts=[]
+curl -fsS -X POST -H "Authorization: Bearer $QNOTES_TOKEN" -H 'Content-Type: application/zip' \
+  --data-binary @notes-backup.zip "$QNOTES_URL/api/import/workspace?confirm=true"
+```
+
 The CLI uses native `fetch`, never connects directly to PostgreSQL, and does not automatically retry failed requests. Mutation requests carry UUID `deviceId`, UUID `mutationId`, and (for updates) `expectedVersion`; the append command uses the logical append endpoint rather than rewriting a fetched whole document. For complete REST, retry-identity, JavaScript-client, and Hermes examples, read [API_ACCESS_GUIDE.md](API_ACCESS_GUIDE.md).

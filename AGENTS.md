@@ -25,4 +25,4 @@ Use short imperative Conventional Commit-style subjects such as `feat: ...`, `fi
 
 ## Security and Configuration
 
-Never commit tokens, service-role keys, production Vite values, or ignored `.env` files. Local E2E setup is restricted to loopback Supabase and dedicated test users. Do not run database resets against production; follow `deployment.md` for linked migrations and releases. Run the full-history scan in `SECURITY.md` before visibility changes. Workspace backup imports are dry-run and fail closed for mutation until note and Storage writes can be atomic.
+Never commit tokens, service-role keys, production Vite values, or ignored `.env` files. Local E2E setup is restricted to loopback Supabase and dedicated test users. Do not run database resets against production; follow `deployment.md` for linked migrations and releases. Run the full-history scan in `SECURITY.md` before visibility changes. Workspace backup imports require a dry run followed by explicit `confirm=true`, reject conflicts without overwriting existing data, use stable retry identities, and keep attachments private.

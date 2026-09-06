@@ -73,6 +73,29 @@ test('returns successful binary exports without JSON conversion', async () => {
   assert.deepEqual([...new Uint8Array(await response.arrayBuffer())], [80, 75, 3, 4]);
 });
 
+test('supports dry-run and explicit workspace import requests', async () => {
+  const calls = [];
+  const summary = {
+    dryRun: true, ready: true, message: 'valid', format: 'quadrate-notes-workspace', formatVersion: 2,
+    backupId: '550e8400-e29b-41d4-a716-446655440000', compressedBytes: 10, declaredUncompressedBytes: 20,
+    entries: 2, uncompressedBytes: 20, noteMarkdownBytes: 8, attachmentBytes: 0, conflicts: [],
+    unsupportedFiles: [], validationFailures: [], notebooks: 0, notes: 1, attachments: 0,
+  };
+  const client = new QNotesClient({ baseUrl: 'http://example.test', getAccessToken: () => 'token', fetchImplementation: async (url, init) => {
+    calls.push({ url, init });
+    return jsonResponse({ data: { ...summary, dryRun: url.endsWith('/import/workspace'), ready: true } });
+  } });
+  const archive = new Uint8Array([80, 75]);
+  await client.importWorkspace(archive);
+  await client.importWorkspace(archive, { confirm: true });
+  assert.equal(calls[0].url, 'http://example.test/api/import/workspace');
+  assert.equal(calls[1].url, 'http://example.test/api/import/workspace?confirm=true');
+  assert.equal(calls[0].init.method, 'POST');
+  assert.equal(calls[0].init.headers.get('Content-Type'), 'application/zip');
+  assert.equal(calls[0].init.headers.get('Authorization'), 'Bearer token');
+  assert.deepEqual([...new Uint8Array(await new Response(calls[0].init.body).arrayBuffer())], [80, 75]);
+});
+
 test('supports notebook listing, creation, and versioned note moves', async () => {
   const calls = [];
   const client = new QNotesClient({ baseUrl: 'http://example.test', getAccessToken: () => null, fetchImplementation: async (url, init) => {
