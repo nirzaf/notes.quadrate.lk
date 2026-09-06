@@ -1,4 +1,4 @@
-import { Camera, Crop, Maximize2 } from 'lucide-react';
+import { Camera, Crop, Eye, Maximize2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { Attachment, UUID } from '@qnotes/shared';
 import { api } from '../api';
@@ -14,6 +14,7 @@ import {
   type ScreenshotMode,
 } from '../lib/screenshot';
 import { Button } from './ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu';
 import { ScreenshotCropDialog } from './screenshot-crop-dialog';
 import { useToast } from './ui/toast';
@@ -26,6 +27,23 @@ interface AttachmentPanelProps {
 }
 
 const terminalStatuses = new Set<Attachment['status']>(['ready', 'failed', 'unsupported', 'deleted']);
+const maxTextPreviewCharacters = 1_000_000;
+
+type PreviewKind = 'image' | 'pdf' | 'text' | 'unsupported';
+
+interface AttachmentPreview {
+  attachment: Attachment;
+  kind: PreviewKind;
+  signedUrl: string;
+  text?: string;
+}
+
+function previewKind(attachment: Attachment): PreviewKind {
+  if (attachment.mimeType.startsWith('image/')) return 'image';
+  if (attachment.mimeType === 'application/pdf') return 'pdf';
+  if (attachment.mimeType === 'text/plain' || attachment.mimeType === 'text/markdown') return 'text';
+  return 'unsupported';
+}
 
 function statusMessage(attachment: Attachment): string {
   switch (attachment.status) {
@@ -61,8 +79,12 @@ export function AttachmentPanel({ noteId, attachments, onRefresh, onCaptureFullP
   const [refreshing, setRefreshing] = useState(false);
   const [fallbackUrls, setFallbackUrls] = useState<Record<string, string>>({});
   const [cropSource, setCropSource] = useState<Blob | null>(null);
+  const [preview, setPreview] = useState<AttachmentPreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
   const { toast } = useToast();
   const refreshRef = useRef(onRefresh);
+  const previewRequestRef = useRef(0);
   refreshRef.current = onRefresh;
   const waiting = attachments.some((attachment) => !terminalStatuses.has(attachment.status));
   const displayCaptureSupported = isDisplayCaptureSupported();
@@ -159,6 +181,38 @@ export function AttachmentPanel({ noteId, attachments, onRefresh, onCaptureFullP
     } catch { toast('Unable to open attachment.', 'error'); }
   };
 
+  const closePreview = () => {
+    previewRequestRef.current += 1;
+    setPreview(null);
+    setPreviewLoading(false);
+    setPreviewError(null);
+  };
+
+  const openPreview = async (attachment: Attachment) => {
+    const requestId = ++previewRequestRef.current;
+    const kind = previewKind(attachment);
+    setPreview({ attachment, kind, signedUrl: '' });
+    setPreviewLoading(true);
+    setPreviewError(null);
+    try {
+      const result = await api.getAttachmentDownloadUrl(attachment.id);
+      if (requestId !== previewRequestRef.current) return;
+      if (kind === 'text') {
+        const response = await fetch(result.signedUrl, { referrerPolicy: 'no-referrer' });
+        if (!response.ok) throw new Error(`Preview request failed (${response.status}).`);
+        const text = await response.text();
+        const truncated = text.length > maxTextPreviewCharacters;
+        setPreview({ attachment, kind, signedUrl: result.signedUrl, text: truncated ? `${text.slice(0, maxTextPreviewCharacters)}\n\n[Preview truncated at 1 MB. Use Open for the full file.]` : text });
+      } else {
+        setPreview({ attachment, kind, signedUrl: result.signedUrl });
+      }
+    } catch {
+      if (requestId === previewRequestRef.current) setPreviewError('Unable to load this private preview. Use Open to access the original file.');
+    } finally {
+      if (requestId === previewRequestRef.current) setPreviewLoading(false);
+    }
+  };
+
   return <>
     <section className="q-card q-panel q-attachment-panel" aria-label="Attachments">
       <details open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
@@ -182,10 +236,26 @@ export function AttachmentPanel({ noteId, attachments, onRefresh, onCaptureFullP
             {busy && <span className="q-screenshot-status" role="status">Capturing or uploading screenshot…</span>}
           </div>
           {waiting && <div className="q-attachment-monitor" role="status">{monitoringExpired ? 'Processing is taking longer than expected.' : 'Checking extraction and indexing status…'}<Button type="button" variant="outline" size="sm" onClick={() => void refreshNow()} disabled={refreshing}>{refreshing ? 'Refreshing…' : 'Refresh status'}</Button></div>}
-          <div className="q-attachment-list">{attachments.length ? attachments.map((attachment) => <div className="q-attachment-row" key={attachment.id}><div><div className="q-attachment-name">{attachment.originalFileName}</div><div className="q-small">{statusMessage(attachment)}</div>{errorMessage(attachment.extractionError) && <div className="q-field-error">{errorMessage(attachment.extractionError)}</div>}</div><div className="q-attachment-actions"><Button variant="ghost" size="sm" onClick={() => void open(attachment)} disabled={attachment.status === 'pending_upload'}>Open</Button>{fallbackUrls[attachment.id] && <a className="q-search-temporary-link" href={fallbackUrls[attachment.id]} target="_blank" rel="noreferrer">Open temporary link</a>}</div></div>) : <p>No attachments yet.</p>}</div>
+          <div className="q-attachment-list">{attachments.length ? attachments.map((attachment) => <div className="q-attachment-row" key={attachment.id}><div><div className="q-attachment-name">{attachment.originalFileName}</div><div className="q-small">{statusMessage(attachment)}</div>{errorMessage(attachment.extractionError) && <div className="q-field-error">{errorMessage(attachment.extractionError)}</div>}</div><div className="q-attachment-actions"><Button variant="outline" size="sm" onClick={() => void openPreview(attachment)} disabled={attachment.status === 'pending_upload'}><Eye size={14} aria-hidden="true" />Preview</Button><Button variant="ghost" size="sm" onClick={() => void open(attachment)} disabled={attachment.status === 'pending_upload'}>Open</Button>{fallbackUrls[attachment.id] && <a className="q-search-temporary-link" href={fallbackUrls[attachment.id]} target="_blank" rel="noreferrer">Open temporary link</a>}</div></div>) : <p>No attachments yet.</p>}</div>
         </div>
       </details>
     </section>
     <ScreenshotCropDialog open={Boolean(cropSource)} source={cropSource} onOpenChange={(open) => { if (!open) cancelCrop(); }} onConfirm={confirmCrop} />
+    <Dialog open={Boolean(preview)} onOpenChange={(open) => { if (!open) closePreview(); }}>
+      <DialogContent className="q-attachment-preview-dialog">
+        <DialogHeader>
+          <DialogTitle>{preview?.attachment.originalFileName ?? 'Attachment preview'}</DialogTitle>
+          <DialogDescription>{preview ? `${preview.attachment.mimeType} · private preview link expires shortly.` : 'Loading private attachment preview.'}</DialogDescription>
+        </DialogHeader>
+        <div className={`q-attachment-preview q-attachment-preview-${preview?.kind ?? 'empty'}`} aria-busy={previewLoading}>
+          {previewLoading && <p className="q-small">Loading private preview…</p>}
+          {!previewLoading && previewError && <div className="q-error" role="alert">{previewError}</div>}
+          {!previewLoading && !previewError && preview?.kind === 'image' && <img src={preview.signedUrl} alt={`Preview of ${preview.attachment.originalFileName}`} referrerPolicy="no-referrer" />}
+          {!previewLoading && !previewError && preview?.kind === 'pdf' && <iframe src={preview.signedUrl} title={`Preview of ${preview.attachment.originalFileName}`} referrerPolicy="no-referrer" />}
+          {!previewLoading && !previewError && preview?.kind === 'text' && <pre>{preview.text}</pre>}
+          {!previewLoading && !previewError && preview?.kind === 'unsupported' && <p className="q-small">Preview is not available for this file type. Use Open to access the original.</p>}
+        </div>
+      </DialogContent>
+    </Dialog>
   </>;
 }

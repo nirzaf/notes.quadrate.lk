@@ -89,6 +89,22 @@ test('refreshes attachment processing stages in the open note without a reload',
   }, { timeout: 20_000 }).toContain('Ready and searchable.');
 });
 
+test('previews a private text attachment in the open note', async ({ page }) => {
+  const session = await signInSession();
+  const note = await createNoteApi(session.access_token, `Attachment preview ${crypto.randomUUID()}`);
+  const bytes = new TextEncoder().encode('Private attachment preview marker 5172');
+  await uploadAndFinalize(session.access_token, note.id, 'preview.txt', 'text/plain', bytes);
+  await signInPage(page);
+  await page.goto(`/notes/${note.id}`);
+  await page.getByText('Attachments', { exact: true }).click();
+  const row = page.locator('.q-attachment-row').first();
+  await expect(row).toContainText('preview.txt');
+  await row.getByRole('button', { name: 'Preview', exact: true }).click();
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page.locator('.q-attachment-preview-text')).toContainText('Private attachment preview marker 5172');
+  await expect(page).toHaveURL(new RegExp(`/notes/${note.id}$`));
+});
+
 test('offers the screenshot modes and leaves attachments unchanged when capture is cancelled', async ({ page }) => {
   const session = await signInSession();
   const note = await createNoteApi(session.access_token, `Screenshot cancel ${crypto.randomUUID()}`);
