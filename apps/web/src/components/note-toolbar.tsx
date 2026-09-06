@@ -47,10 +47,10 @@ export function NoteToolbar({ note, onDelete, onRestore, onExport, onShare }: No
       toast(error instanceof MarkdownParseError ? 'This draft could not be converted for copying. Check the Markdown blocks and try again.' : 'Clipboard access was unavailable.', 'error');
     }
   };
-  return <div className="q-toolbar" aria-label="Note actions">
-    <Button onClick={() => void copy('markdown')}><Copy size={16} aria-hidden="true" />Copy Markdown</Button>
+  return <div className="q-toolbar q-note-toolbar" aria-label="Note actions">
+    <Button className="q-note-copy-markdown" onClick={() => void copy('markdown')} aria-label="Copy Markdown"><Copy size={16} aria-hidden="true" /><span className="q-note-action-label">Copy Markdown</span></Button>
     <DropdownMenu><DropdownMenuTrigger asChild><Button variant="outline" size="icon" aria-label="More copy options"><MoreHorizontal size={18} aria-hidden="true" /></Button></DropdownMenuTrigger><DropdownMenuContent align="start"><DropdownMenuItem onSelect={() => void copy('plain')}>Copy Plain Text</DropdownMenuItem><DropdownMenuItem onSelect={() => void copy('rendered')}>Copy Rendered Content</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
-    {!note.deletedAt && onShare ? <Button variant="outline" onClick={onShare}><Share2 size={16} aria-hidden="true" />Share</Button> : null}
+    {!note.deletedAt && onShare ? <Button className="q-note-share" variant="outline" onClick={onShare} aria-label="Share note"><Share2 size={16} aria-hidden="true" /><span className="q-note-action-label">Share</span></Button> : null}
     <DropdownMenu><DropdownMenuTrigger asChild><Button variant="outline" size="icon" aria-label="More note actions"><MoreHorizontal size={18} aria-hidden="true" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={onExport}><Download size={15} aria-hidden="true" />Export current draft</DropdownMenuItem>{note.deletedAt ? <DropdownMenuItem onSelect={onRestore}><RotateCcw size={15} aria-hidden="true" />Restore note</DropdownMenuItem> : <DropdownMenuItem onSelect={onDelete}><Trash2 size={15} aria-hidden="true" />Move to Trash</DropdownMenuItem>}</DropdownMenuContent></DropdownMenu>
   </div>;
 }

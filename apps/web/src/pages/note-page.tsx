@@ -23,6 +23,7 @@ import { useNoteAutosave } from '../hooks/use-note-autosave';
 import { useCreateNote } from '../hooks/use-create-note';
 import { useSyncRecovery } from '../hooks/use-sync-recovery';
 import { formatUpdatedAt } from '../lib/utils';
+import { consumeEditorFocus, requestEditorFocus } from '../lib/editor-focus';
 import { captureFullPageScreenshot, screenshotFile, waitForScreenshotLayout } from '../lib/screenshot';
 import { noteQueryKeys, refreshNoteViews, type WorkspaceQueryKeys } from '../note-query-keys';
 import { withoutSearchMatch, type AppSearchParams } from '../navigation-context';
@@ -91,6 +92,7 @@ function LoadedNoteSession({ note, userId, search, queryKeys }: LoadedNoteSessio
   const [movingNotebook, setMovingNotebook] = useState(false);
   const [deleteBlocked, setDeleteBlocked] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [focusEditor] = useState(() => consumeEditorFocus(note.id));
   const notesQuery = useQuery({ queryKey: queryKeys.sidebar, queryFn: ({ signal }) => api.listNotes({ limit: 50, signal }) });
   const notebooksQuery = useQuery({ queryKey: queryKeys.notebooks, queryFn: ({ signal }) => api.listNotebooks({ signal }) });
   const attachmentsQuery = useQuery({ queryKey: queryKeys.attachments(note.id), queryFn: ({ signal }) => api.listAttachments(note.id, { signal }) });
@@ -115,7 +117,7 @@ function LoadedNoteSession({ note, userId, search, queryKeys }: LoadedNoteSessio
   }, [autosave]);
   const { create } = useCreateNote({
     notebookId: note.notebookId,
-    onCreated: async (created) => { await queryClient.invalidateQueries({ queryKey: queryKeys.all }); await navigate({ to: '/notes/$noteId', params: { noteId: created.id } }); },
+    onCreated: async (created) => { await queryClient.invalidateQueries({ queryKey: queryKeys.all }); requestEditorFocus(created.id); await navigate({ to: '/notes/$noteId', params: { noteId: created.id } }); },
     onError: (error) => toast(error instanceof Error ? error.message : 'Unable to create note. Try again.', 'error'),
   });
   const { syncing, recover } = useSyncRecovery();
@@ -268,13 +270,13 @@ function LoadedNoteSession({ note, userId, search, queryKeys }: LoadedNoteSessio
     }
   }, [view]);
   const noteForCopy = { ...note, title: autosave.title, tags: autosave.tags, contentMarkdown: autosave.value };
-  return <AppShell title={autosave.title || 'Untitled note'} notes={notesQuery.data?.items ?? []} activeNoteId={note.id} onNew={() => void create()} onSelectNote={(id) => void navigate({ to: '/notes/$noteId', params: { noteId: id }, search: withoutSearchMatch(search) })} onRealtimeEvent={event} onRealtimeReconnect={reconnect}>
-    <div className="q-main-body q-main-body-wide"><Link to="/" search={withoutSearchMatch(search)} className="q-note-back">← Back to {search.q ? 'search results' : 'notes'}</Link>
+  return <AppShell title={autosave.title || 'Untitled note'} notes={notesQuery.data?.items ?? []} activeNoteId={note.id} mobileBack mobileBackLabel={search.q ? 'Search' : 'Notes'} onNew={() => void create()} onSelectNote={(id) => void navigate({ to: '/notes/$noteId', params: { noteId: id }, search: withoutSearchMatch(search) })} onRealtimeEvent={event} onRealtimeReconnect={reconnect}>
+    <div className="q-main-body q-main-body-wide"><Link to="/" search={withoutSearchMatch(search)} className="q-note-back q-note-back-body">← Back to {search.q ? 'search results' : 'notes'}</Link>
       {searchContextQuery.data && <section className="q-search-context" aria-label="Matching search context"><div className="q-search-context-heading"><div><span className="q-eyebrow">Opened from search</span><strong>{searchContextQuery.data.headingPath ?? searchContextQuery.data.sourceTitle ?? 'Matching section'}</strong><span className="q-small">{searchContextQuery.data.sourceType === 'attachment_chunk' ? `Attachment excerpt${searchContextQuery.data.pageNumber ? ` · page ${searchContextQuery.data.pageNumber}` : ''}` : 'Authoritative current context'}{note.version !== searchContextQuery.data.noteVersion ? ' · The note changed since this result was indexed.' : ''}</span></div>{searchContextQuery.data.attachmentId && <Button type="button" variant="outline" size="sm" onClick={() => void openContextAttachment()}>Open attachment</Button>}</div><p>{[...searchContextQuery.data.previous, searchContextQuery.data.content, ...searchContextQuery.data.next].join('\n\n')}</p></section>}
       <div className="q-editor-page"><section className="q-card q-editor-card">{note.deletedAt ? <div className="q-deleted-banner" role="status">This note is in Trash. Restore it to continue editing.</div> : null}
         <div className="q-editor-meta"><div className="q-editor-metadata"><NoteMetadataEditor title={autosave.title} tags={autosave.tags} disabled={Boolean(note.deletedAt)} onTitleChange={(nextTitle) => autosave.changeMetadata({ title: nextTitle })} onTitleBlur={() => autosave.changeMetadata({ title: autosave.title.trim() || 'Untitled note' })} onTagsChange={(nextTags) => autosave.changeMetadata({ tags: nextTags })} /><div className="q-small">{note.slug} · updated {formatUpdatedAt(note.updatedAt)}</div>{autosave.errorMessage ? <div className="q-error q-editor-save-error" role="alert">{autosave.errorMessage}</div> : null}</div><SyncStatus status={syncing ? 'syncing' : autosave.status} savedAt={autosave.savedAt} onRetry={autosave.retry} /></div>
-        <div className="q-editor-controls"><div className="q-toolbar" aria-label="Note view"><Button variant={view === 'edit' ? 'secondary' : 'ghost'} size="sm" onClick={() => setView('edit')}>Edit</Button><Button variant={view === 'preview' ? 'secondary' : 'ghost'} size="sm" onClick={() => setView('preview')}>Preview</Button></div><NotebookPicker notebooks={notebooksQuery.data?.items ?? []} value={note.notebookId} disabled={Boolean(note.deletedAt) || movingNotebook || autosave.dirty || autosave.status === 'saving' || autosave.status === 'pending'} onChange={(notebookId) => void moveNotebook(notebookId)} /><div className="q-editor-actions"><NoteToolbar note={noteForCopy} onDelete={() => void updateDeletion('delete')} onRestore={() => void updateDeletion('restore')} onExport={() => void exportNote()} onShare={() => setShareOpen(true)} /></div></div>
-        {view === 'edit' ? <EditorErrorBoundary><Suspense fallback={<div className="q-empty">Loading editor…</div>}><NoteEditor key={note.id} value={autosave.value} onChange={autosave.change} readOnly={Boolean(note.deletedAt)} /></Suspense></EditorErrorBoundary> : <NotePreview markdown={autosave.value} />}
+        <div className="q-editor-controls"><div className="q-toolbar q-editor-view-toggle" aria-label="Note view"><Button variant={view === 'edit' ? 'secondary' : 'ghost'} size="sm" onClick={() => setView('edit')}>Edit</Button><Button variant={view === 'preview' ? 'secondary' : 'ghost'} size="sm" onClick={() => setView('preview')}>Preview</Button></div><NotebookPicker notebooks={notebooksQuery.data?.items ?? []} value={note.notebookId} disabled={Boolean(note.deletedAt) || movingNotebook || autosave.dirty || autosave.status === 'saving' || autosave.status === 'pending'} onChange={(notebookId) => void moveNotebook(notebookId)} /><div className="q-editor-actions"><NoteToolbar note={noteForCopy} onDelete={() => void updateDeletion('delete')} onRestore={() => void updateDeletion('restore')} onExport={() => void exportNote()} onShare={() => setShareOpen(true)} /></div></div>
+        {view === 'edit' ? <EditorErrorBoundary><Suspense fallback={<div className="q-empty">Loading editor…</div>}><NoteEditor key={note.id} value={autosave.value} onChange={autosave.change} readOnly={Boolean(note.deletedAt)} autoFocus={focusEditor} /></Suspense></EditorErrorBoundary> : <NotePreview markdown={autosave.value} />}
         <div className="q-editor-footer"><span className="q-small">{note.deletedAt ? 'Read-only note in Trash.' : 'Markdown is saved after 800ms of quiet.'}</span></div>
       </section>{!note.deletedAt ? <aside className="q-panel-stack"><AttachmentPanel noteId={note.id} attachments={attachmentsQuery.data ?? []} onRefresh={() => attachmentsQuery.refetch()} onCaptureFullPage={captureEntirePage} /></aside> : null}</div>
     </div>

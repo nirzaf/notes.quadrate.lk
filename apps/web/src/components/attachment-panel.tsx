@@ -66,6 +66,32 @@ function errorMessage(error: string | null): string | null {
   return 'The file was kept, but its text could not be indexed.';
 }
 
+function formatFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return 'Unknown size';
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let value = bytes;
+  let unitIndex = -1;
+  do {
+    value /= 1024;
+    unitIndex += 1;
+  } while (value >= 1024 && unitIndex < units.length - 1);
+  const precision = value >= 10 || Number.isInteger(value) ? 0 : 1;
+  return `${value.toFixed(precision)} ${units[unitIndex]}`;
+}
+
+function attachmentType(attachment: Attachment): string {
+  const knownTypes: Record<string, string> = {
+    'application/pdf': 'PDF',
+    'text/plain': 'TXT',
+    'text/markdown': 'Markdown',
+    'image/png': 'PNG',
+    'image/jpeg': 'JPEG',
+    'image/webp': 'WebP',
+  };
+  return knownTypes[attachment.mimeType] ?? attachment.mimeType.split('/').at(-1)?.toUpperCase() ?? 'File';
+}
+
 function screenshotErrorMessage(error: unknown): { message: string; kind: 'error' | 'info' } {
   if (isScreenshotCancellation(error)) return { message: 'Screenshot capture cancelled.', kind: 'info' };
   if (error instanceof ScreenshotCaptureError) return { message: error.message, kind: error.code === 'unsupported' ? 'info' : 'error' };
@@ -74,6 +100,7 @@ function screenshotErrorMessage(error: unknown): { message: string; kind: 'error
 
 export function AttachmentPanel({ noteId, attachments, onRefresh, onCaptureFullPage }: AttachmentPanelProps): JSX.Element {
   const [busy, setBusy] = useState(false);
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(attachments.length > 0);
   const [monitoringExpired, setMonitoringExpired] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -116,6 +143,7 @@ export function AttachmentPanel({ noteId, attachments, onRefresh, onCaptureFullP
 
   const uploadAttachment = async (file: File, screenshot = false) => {
     setExpanded(true);
+    setBusyLabel(screenshot ? 'Uploading screenshot…' : 'Uploading attachment…');
     try {
       const request = await api.requestAttachmentUpload({ noteId, fileName: file.name, mimeType: file.type || 'application/octet-stream', sizeBytes: file.size });
       const uploaded = await getSupabase().storage.from('note-attachments').uploadToSignedUrl(request.path, request.token, file);
@@ -130,12 +158,14 @@ export function AttachmentPanel({ noteId, attachments, onRefresh, onCaptureFullP
 
   const uploadFile = async (file: File) => {
     setBusy(true);
-    try { await uploadAttachment(file); } finally { setBusy(false); }
+    setBusyLabel('Uploading attachment…');
+    try { await uploadAttachment(file); } finally { setBusy(false); setBusyLabel(null); }
   };
 
   const startScreenshot = async (mode: ScreenshotMode) => {
     if (busy) return;
     setBusy(true);
+    setBusyLabel('Capturing screenshot…');
     let waitingForCrop = false;
     try {
       if (mode === 'full-page') {
@@ -146,6 +176,7 @@ export function AttachmentPanel({ noteId, attachments, onRefresh, onCaptureFullP
         if (mode === 'crop') {
           waitingForCrop = true;
           setCropSource(source);
+          setBusyLabel('Choose a crop to continue.');
         } else {
           await uploadAttachment(screenshotFile(source, 'visible'), true);
         }
@@ -154,11 +185,11 @@ export function AttachmentPanel({ noteId, attachments, onRefresh, onCaptureFullP
       const result = screenshotErrorMessage(error);
       toast(result.message, result.kind);
     } finally {
-      if (!waitingForCrop) setBusy(false);
+      if (!waitingForCrop) { setBusy(false); setBusyLabel(null); }
     }
   };
 
-  const cancelCrop = () => { setCropSource(null); setBusy(false); };
+  const cancelCrop = () => { setCropSource(null); setBusy(false); setBusyLabel(null); };
   const confirmCrop = async (crop: CropRect) => {
     if (!cropSource) return;
     try {
@@ -170,6 +201,7 @@ export function AttachmentPanel({ noteId, attachments, onRefresh, onCaptureFullP
     } finally {
       setCropSource(null);
       setBusy(false);
+      setBusyLabel(null);
     }
   };
 
@@ -233,10 +265,10 @@ export function AttachmentPanel({ noteId, attachments, onRefresh, onCaptureFullP
               </DropdownMenu>
               {!displayCaptureSupported && <span className="q-field-help">Screen capture is unavailable here. You can still upload an image file or capture the current page.</span>}
             </div>
-            {busy && <span className="q-screenshot-status" role="status">Capturing or uploading screenshot…</span>}
+            {busy && <span className="q-screenshot-status" role="status">{busyLabel ?? 'Working…'}</span>}
           </div>
           {waiting && <div className="q-attachment-monitor" role="status">{monitoringExpired ? 'Processing is taking longer than expected.' : 'Checking extraction and indexing status…'}<Button type="button" variant="outline" size="sm" onClick={() => void refreshNow()} disabled={refreshing}>{refreshing ? 'Refreshing…' : 'Refresh status'}</Button></div>}
-          <div className="q-attachment-list">{attachments.length ? attachments.map((attachment) => <div className="q-attachment-row" key={attachment.id}><div><div className="q-attachment-name">{attachment.originalFileName}</div><div className="q-small">{statusMessage(attachment)}</div>{errorMessage(attachment.extractionError) && <div className="q-field-error">{errorMessage(attachment.extractionError)}</div>}</div><div className="q-attachment-actions"><Button variant="outline" size="sm" onClick={() => void openPreview(attachment)} disabled={attachment.status === 'pending_upload'}><Eye size={14} aria-hidden="true" />Preview</Button><Button variant="ghost" size="sm" onClick={() => void open(attachment)} disabled={attachment.status === 'pending_upload'}>Open</Button>{fallbackUrls[attachment.id] && <a className="q-search-temporary-link" href={fallbackUrls[attachment.id]} target="_blank" rel="noreferrer">Open temporary link</a>}</div></div>) : <p>No attachments yet.</p>}</div>
+          <div className="q-attachment-list">{attachments.length ? attachments.map((attachment) => <div className="q-attachment-row" key={attachment.id}><div><div className="q-attachment-name" title={attachment.originalFileName}>{attachment.originalFileName}</div><div className="q-attachment-meta" aria-label={`${attachmentType(attachment)}, ${formatFileSize(attachment.sizeBytes)}`}>{attachmentType(attachment)} · {formatFileSize(attachment.sizeBytes)}</div><div className="q-small">{statusMessage(attachment)}</div>{errorMessage(attachment.extractionError) && <div className="q-field-error">{errorMessage(attachment.extractionError)}</div>}</div><div className="q-attachment-actions"><Button variant="outline" size="sm" onClick={() => void openPreview(attachment)} disabled={attachment.status === 'pending_upload'}><Eye size={14} aria-hidden="true" />Preview</Button><Button variant="ghost" size="sm" onClick={() => void open(attachment)} disabled={attachment.status === 'pending_upload'}>Open</Button>{fallbackUrls[attachment.id] && <a className="q-search-temporary-link" href={fallbackUrls[attachment.id]} target="_blank" rel="noreferrer">Open temporary link</a>}</div></div>) : <p>No attachments yet.</p>}</div>
         </div>
       </details>
     </section>

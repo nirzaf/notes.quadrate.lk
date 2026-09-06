@@ -57,6 +57,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
   const valueRef = useRef(value);
   const noteIdRef = useRef(note.id);
   const acknowledgedMutationIdRef = useRef<string | null>(null);
+  const pendingMutationIdRef = useRef<string | null>(null);
   const saveRevision = useRef(0);
   const editRevision = useRef(0);
   const dirtyRef = useRef(false);
@@ -143,7 +144,8 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
     const revision = saveRevision.current;
     const current = authoritative.current;
     if (payload.noteId !== current.id || payload.userId !== userIdRef.current) throw new Error('This note save belongs to an inactive session.');
-    const mutationId = crypto.randomUUID();
+    const mutationId = pendingMutationIdRef.current ?? crypto.randomUUID();
+    pendingMutationIdRef.current = mutationId;
     const requestPayload = {
       title: payload.title.trim() || 'Untitled note',
       slug: current.slug,
@@ -186,6 +188,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
           onDirtyRef.current?.(false);
           setErrorMessage(null);
           setStatus('saved');
+          pendingMutationIdRef.current = null;
         } else {
           dirtyRef.current = true;
           setDirty(true);
@@ -201,12 +204,14 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
         if (error instanceof QNotesHttpError && error.code === 'NOTE_VERSION_CONFLICT') {
           setErrorMessage(error.message);
           setStatus('conflict');
+          pendingMutationIdRef.current = null;
           onConflictRef.current(error);
           throw error;
         }
         if (error instanceof QNotesHttpError && error.status < 500) {
           setErrorMessage(error.message);
           setStatus('validation-error');
+          pendingMutationIdRef.current = null;
           throw error;
         }
         if (attempt === retryDelays.length - 1) throw error;
@@ -245,6 +250,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
       coordinatorRef.current?.cancelPending();
       saveRevision.current += 1;
       noteIdRef.current = note.id;
+      pendingMutationIdRef.current = null;
       authoritative.current = note;
       draftRef.current = valuesFromNote(note);
       valueRef.current = note.contentMarkdown;
@@ -332,6 +338,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
   const change = useCallback((next: string) => {
     if (readOnlyRef.current) return;
     editRevision.current += 1;
+    pendingMutationIdRef.current = null;
     const nextValues = { ...draftRef.current, markdown: next, tags: [...draftRef.current.tags] };
     const isDirty = markDirty(nextValues);
     setErrorMessage(null);
@@ -351,6 +358,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
   const changeMetadata = useCallback((next: { title?: string; tags?: string[] }) => {
     if (readOnlyRef.current) return;
     editRevision.current += 1;
+    pendingMutationIdRef.current = null;
     const nextValues = {
       ...draftRef.current,
       title: next.title ?? draftRef.current.title,
@@ -390,6 +398,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
   }, []);
   const adoptRemote = useCallback((nextNote: Note) => {
     saveRevision.current += 1;
+    pendingMutationIdRef.current = null;
     coordinatorRef.current?.cancelPending();
     authoritative.current = nextNote;
     draftRef.current = valuesFromNote(nextNote);

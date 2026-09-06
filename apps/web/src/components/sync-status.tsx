@@ -37,5 +37,5 @@ export function SyncStatus({ status, savedAt, onRetry }: { status: SyncStatus; s
   }, [savedAt, status]);
   const tone = status === 'conflict' || status === 'error' || status === 'validation-error' || status === 'network-error' || status === 'storage-error' ? 'q-status-error' : status === 'remote-change' || status === 'offline' || status === 'draft' ? 'q-status-warning' : '';
   const retryable = status === 'network-error' || status === 'offline' || status === 'error';
-  return <span className={`q-status ${tone}`} role="status"><span className="q-status-dot" />{status === 'saved' ? savedLabel(savedAt, now) : labels[status]}{retryable && onRetry ? <button type="button" className="q-status-retry" onClick={onRetry}>Retry</button> : null}</span>;
+  return <span className={`q-status ${tone}`} role="status" aria-live={status === 'saved' ? 'off' : 'polite'}><span className="q-status-dot" />{status === 'saved' ? savedLabel(savedAt, now) : labels[status]}{retryable && onRetry ? <button type="button" className="q-status-retry" onClick={onRetry}>Retry</button> : null}</span>;
 }

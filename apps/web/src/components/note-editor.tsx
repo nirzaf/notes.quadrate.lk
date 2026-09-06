@@ -6,9 +6,10 @@ interface NoteEditorProps {
   value: string;
   onChange: (value: string) => void;
   readOnly?: boolean;
+  autoFocus?: boolean;
 }
 
-export function NoteEditor({ value, onChange, readOnly = false }: NoteEditorProps): JSX.Element {
+export function NoteEditor({ value, onChange, readOnly = false, autoFocus = false }: NoteEditorProps): JSX.Element {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const viewRef = useRef<EditorView | null>(null);
   const editableCompartmentRef = useRef<Compartment | null>(null);
@@ -52,6 +53,7 @@ export function NoteEditor({ value, onChange, readOnly = false }: NoteEditorProp
       view = new codemirrorModule.EditorView({ state, parent: mountRef.current });
       viewRef.current = view;
       setEditorReady(true);
+      if (autoFocus && !readOnlyRef.current) window.requestAnimationFrame(() => { if (active) view?.focus(); });
       const media = window.matchMedia('(max-width: 860px)');
       const updateWrapping = () => view?.dispatch({ effects: wrappingCompartment.reconfigure(media.matches ? codemirrorModule.EditorView.lineWrapping : []) });
       media.addEventListener('change', updateWrapping);
@@ -84,5 +86,5 @@ export function NoteEditor({ value, onChange, readOnly = false }: NoteEditorProp
     }).catch(() => setEditorError('The editor settings could not be updated.'));
   }, [readOnly]);
 
-  return <div className="q-editor-mount-wrap">{editorError ? <div className="q-error" role="alert">{editorError}</div> : null}<div ref={mountRef} className="q-editor-mount" aria-busy={!editorReady} aria-label="Markdown editor" /></div>;
+  return <div className="q-editor-mount-wrap">{editorError ? <div className="q-error" role="alert">{editorError}</div> : null}<div ref={mountRef} className="q-editor-mount" aria-busy={!editorReady} aria-label="Markdown editor" data-editor-placeholder="Start writing in Markdown…" /></div>;
 }

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Search, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from 'react';
+import { Search, SlidersHorizontal, X } from 'lucide-react';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import type { Notebook, SearchFilters, SearchResponse, SearchResult, SearchSourceType } from '@qnotes/shared';
 import { MAX_TAG_LENGTH } from '@qnotes/shared';
@@ -8,6 +8,8 @@ import { searchRecentNotes, rememberSearchSelection } from '../indexed-db';
 import { api } from '../api';
 import { searchShortcutLabel, UNFILED_SEARCH_NOTEBOOK, type AppSearchPatch } from '../navigation-context';
 import { Button } from './ui/button';
+import { DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
+import { Sheet, SheetContent } from './ui/sheet';
 import { useToast } from './ui/toast';
 import { useAuth } from '../auth-context';
 import { noteQueryKeys } from '../note-query-keys';
@@ -31,6 +33,8 @@ interface SearchPanelProps {
   onNotebookChange?: (notebookId: string | null) => void;
   onSearchParamsChange?: (params: AppSearchPatch, options?: { replace?: boolean }) => void;
   onResultSelect?: (result: SearchResult) => void;
+  showNotebookFilter?: boolean;
+  showInlineMobileFilters?: boolean;
 }
 
 function localSearchResponse(notes: Awaited<ReturnType<typeof searchRecentNotes>>): SearchResponse {
@@ -78,6 +82,60 @@ function sourceLabel(sourceType: SearchSourceType): string {
   }
 }
 
+function filterSourceLabel(sourceType: SearchSourceType): string {
+  switch (sourceType) {
+    case 'note_chunk': return 'Note sections';
+    case 'copy_block': return 'Copy blocks';
+    case 'code_block': return 'Code';
+    case 'attachment_chunk': return 'Attachments';
+    case 'note_metadata': return 'Notes';
+  }
+}
+
+function highlightLiteral(value: string, query: string): ReactNode {
+  const needle = query.trim();
+  if (!needle) return value;
+  const lowerValue = value.toLocaleLowerCase();
+  const lowerNeedle = needle.toLocaleLowerCase();
+  const parts: ReactNode[] = [];
+  let cursor = 0;
+  let match = lowerValue.indexOf(lowerNeedle, cursor);
+  let key = 0;
+  while (match >= 0) {
+    if (match > cursor) parts.push(value.slice(cursor, match));
+    parts.push(<mark key={`match-${key}`}>{value.slice(match, match + needle.length)}</mark>);
+    key += 1;
+    cursor = match + needle.length;
+    match = lowerValue.indexOf(lowerNeedle, cursor);
+  }
+  if (cursor < value.length) parts.push(value.slice(cursor));
+  return parts.length ? parts : value;
+}
+
+interface SearchFilterFieldsProps {
+  notebooks: Notebook[];
+  selectedNotebookId: string | null | undefined;
+  showNotebookFilter: boolean;
+  datalistId: string;
+  tags: string[];
+  tagFilter: string;
+  sourceFilter: SearchSourceType | '';
+  onNotebookChange: (notebookId: string | null) => void;
+  onTagChange: (value: string) => void;
+  onSourceChange: (value: SearchSourceType | '') => void;
+  onReset: () => void;
+  showReset: boolean;
+}
+
+function SearchFilterFields({ notebooks, selectedNotebookId, showNotebookFilter, datalistId, tags, tagFilter, sourceFilter, onNotebookChange, onTagChange, onSourceChange, onReset, showReset }: SearchFilterFieldsProps): JSX.Element {
+  return <>
+    {showNotebookFilter && notebooks.length > 0 && <label><span className="q-label">Notebook</span><select aria-label="Filter search by notebook" value={selectedNotebookId ?? ''} onChange={(event) => onNotebookChange(event.target.value || null)}><option value="">All notebooks</option><option value={UNFILED_SEARCH_NOTEBOOK}>Unfiled</option>{notebooks.map((notebook) => <option value={notebook.id} key={notebook.id}>{notebook.name}</option>)}</select></label>}
+    <label><span className="q-label">Tag</span><input className="q-search-filter-input" aria-label="Filter search by tag" list={datalistId} value={tagFilter} onChange={(event) => onTagChange(event.target.value)} placeholder="Any tag" maxLength={MAX_TAG_LENGTH} /><datalist id={datalistId}>{tags.map((tag) => <option value={tag} key={tag} />)}</datalist></label>
+    <label><span className="q-label">Source</span><select aria-label="Filter search by source" value={sourceFilter} onChange={(event) => onSourceChange(event.target.value as SearchSourceType | '')}><option value="">All sources</option><option value="note_chunk">Note sections</option><option value="code_block">Code</option><option value="copy_block">Copy blocks</option><option value="attachment_chunk">Attachments</option></select></label>
+    {showReset && <Button type="button" variant="ghost" size="sm" onClick={onReset}>Reset all</Button>}
+  </>;
+}
+
 async function copyText(value: string): Promise<void> {
   if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(value); return; }
   const element = document.createElement('textarea');
@@ -89,7 +147,7 @@ async function copyText(value: string): Promise<void> {
 
 export function SearchPanel({
   onSearchStateChange, notebookId = null, unfiled = false, selectedNotebookId, notebooks = [], availableTags = [],
-  initialQuery = '', initialTag = '', initialSource = '', onNotebookChange, onSearchParamsChange, onResultSelect,
+  initialQuery = '', initialTag = '', initialSource = '', onNotebookChange, onSearchParamsChange, onResultSelect, showNotebookFilter = true, showInlineMobileFilters = false,
 }: SearchPanelProps): JSX.Element {
   const { toast } = useToast();
   const { session } = useAuth();
@@ -101,6 +159,9 @@ export function SearchPanel({
   const [sourceFilter, setSourceFilter] = useState<SearchSourceType | ''>(initialSource);
   const [localResponse, setLocalResponse] = useState<SearchResponse | null>(null);
   const [blockedAttachmentUrls, setBlockedAttachmentUrls] = useState<Record<string, string>>({});
+  const [filtersOpen, setFiltersOpen] = useState(showInlineMobileFilters);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const resultButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const tags = useMemo(() => [...new Set(availableTags)].sort((left, right) => left.localeCompare(right)), [availableTags]);
   const filters = useMemo(() => {
     const value: SearchFilters = {};
@@ -159,13 +220,28 @@ export function SearchPanel({
   const clearQuery = () => {
     setQuery('');
     setDebounced('');
-    onSearchParamsChange?.({ q: undefined, documentId: undefined, blockKey: undefined, attachmentId: undefined }, { replace: false });
+    onSearchParamsChange?.({ q: undefined, documentId: undefined, blockKey: undefined, attachmentId: undefined }, { replace: true });
+    window.requestAnimationFrame(() => searchInputRef.current?.focus());
   };
-  const changeTag = (value: string) => { const next = value.trim().toLowerCase(); setTagFilter(next); onSearchParamsChange?.({ tag: next || undefined, documentId: undefined, blockKey: undefined, attachmentId: undefined }, { replace: false }); };
+  const changeTag = (value: string) => { const next = value.trim().toLowerCase(); setTagFilter(next); onSearchParamsChange?.({ tag: next || undefined, documentId: undefined, blockKey: undefined, attachmentId: undefined }, { replace: true }); };
   const changeSource = (value: SearchSourceType | '') => { setSourceFilter(value); onSearchParamsChange?.({ source: value || undefined, documentId: undefined, blockKey: undefined, attachmentId: undefined }, { replace: false }); };
-  const clearFilters = () => { setTagFilter(''); setSourceFilter(''); onNotebookChange?.(null); onSearchParamsChange?.({ tag: undefined, source: undefined, documentId: undefined, blockKey: undefined, attachmentId: undefined }, { replace: false }); };
+  const clearFilters = () => { setTagFilter(''); setSourceFilter(''); if (onSearchParamsChange) onSearchParamsChange({ notebook: undefined, tag: undefined, source: undefined, documentId: undefined, blockKey: undefined, attachmentId: undefined }, { replace: false }); else onNotebookChange?.(null); };
   const matchingNoteCount = new Set(displayResponse?.items.map((item) => item.noteId)).size;
   const hasFilters = Boolean(tagFilter || sourceFilter || notebookId || unfiled);
+  const activeFilters = [
+    ...(selectedNotebookId ? [{ key: 'notebook', label: `Notebook: ${selectedNotebookId === UNFILED_SEARCH_NOTEBOOK ? 'Unfiled' : notebooks.find((notebook) => notebook.id === selectedNotebookId)?.name ?? 'Selected notebook'}`, remove: () => onNotebookChange?.(null) }] : []),
+    ...(tagFilter ? [{ key: 'tag', label: `Tag: ${tagFilter}`, remove: () => changeTag('') }] : []),
+    ...(sourceFilter ? [{ key: 'source', label: `Source: ${filterSourceLabel(sourceFilter)}`, remove: () => changeSource('') }] : []),
+  ];
+  const handleResultKeyDown = (event: KeyboardEvent<HTMLUListElement>) => {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    const currentIndex = resultButtonRefs.current.findIndex((button) => button === document.activeElement);
+    if (currentIndex < 0 && event.key !== 'Home' && event.key !== 'End') return;
+    event.preventDefault();
+    const lastIndex = resultButtonRefs.current.length - 1;
+    const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? lastIndex : Math.min(lastIndex, Math.max(0, currentIndex + (event.key === 'ArrowDown' ? 1 : -1)));
+    resultButtonRefs.current[nextIndex]?.focus();
+  };
   const selectResult = (item: SearchResult) => {
     if (displayResponse) void rememberSearchSelection({ queryId: displayResponse.queryId, documentId: item.documentId ?? item.id, selectedAt: new Date().toISOString() }, userId).catch(() => { toast('Search history could not be saved locally.', 'info'); });
     onResultSelect?.(item);
@@ -201,18 +277,19 @@ export function SearchPanel({
               : displayResponse?.items.length ? `${displayResponse.items.length} matches across ${matchingNoteCount} ${matchingNoteCount === 1 ? 'note' : 'notes'}`
                 : 'No matches yet. Try a shorter phrase or reset the filters.';
 
+  const filterPanelId = showInlineMobileFilters ? 'search-filters-inline' : 'search-filters-sheet';
   return <section className="q-search-panel" aria-label="Search notes" aria-busy={result.isFetching}>
-    <form className="q-search-large q-mobile-search" onSubmit={submit}><Search size={19} aria-hidden="true" /><input id="global-search-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your notes, blocks, and attachments…" aria-label="Search notes" />{query && <button type="button" className="q-search-clear" onClick={clearQuery} aria-label="Clear search"><X size={17} aria-hidden="true" /></button>}<span className="q-search-kbd" aria-label={`Keyboard shortcut ${searchShortcutLabel()}`}>{searchShortcutLabel()}</span></form>
-    <div className="q-search-options">
-      {notebooks.length > 0 && <label><span className="q-label">Notebook</span><select aria-label="Filter search by notebook" value={selectedNotebookId ?? ''} onChange={(event) => onNotebookChange?.(event.target.value || null)}><option value="">All notebooks</option><option value={UNFILED_SEARCH_NOTEBOOK}>Unfiled</option>{notebooks.map((notebook) => <option value={notebook.id} key={notebook.id}>{notebook.name}</option>)}</select></label>}
-      <label><span className="q-label">Tag</span><input className="q-search-filter-input" aria-label="Filter search by tag" list="known-note-tags" value={tagFilter} onChange={(event) => changeTag(event.target.value)} placeholder="Any tag" maxLength={MAX_TAG_LENGTH} /><datalist id="known-note-tags">{tags.map((tag) => <option value={tag} key={tag} />)}</datalist></label>
-      <label><span className="q-label">Source</span><select aria-label="Filter search by source" value={sourceFilter} onChange={(event) => changeSource(event.target.value as SearchSourceType | '')}><option value="">All sources</option><option value="note_chunk">Note sections</option><option value="code_block">Code</option><option value="copy_block">Copy blocks</option><option value="attachment_chunk">Attachments</option></select></label>
-      {hasFilters && <Button type="button" variant="ghost" size="sm" onClick={clearFilters}>Reset filters</Button>}
+    <div className="q-search-primary-row"><form className="q-search-large q-mobile-search" onSubmit={submit}><Search size={19} aria-hidden="true" /><input ref={searchInputRef} id="global-search-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your notes, blocks, and attachments…" aria-label="Search notes" />{query && <button type="button" className="q-search-clear" onClick={clearQuery} aria-label="Clear search"><X size={17} aria-hidden="true" /></button>}<span className="q-search-kbd" aria-label={`Keyboard shortcut ${searchShortcutLabel()}`}>{searchShortcutLabel()}</span></form><div className="q-search-mobile-actions"><Button type="button" variant="outline" onClick={() => setFiltersOpen((open) => !open)} aria-label={showInlineMobileFilters ? (filtersOpen ? 'Hide search filters' : 'Show search filters') : 'Open search filters'} aria-expanded={filtersOpen} aria-controls={filterPanelId}><SlidersHorizontal size={18} aria-hidden="true" /><span className="q-search-filter-label">Filters{activeFilters.length ? ` (${activeFilters.length})` : ''}</span></Button></div></div>
+    {showInlineMobileFilters && filtersOpen && <div id="search-filters-inline" className="q-search-mobile-filter-row" aria-label="Quick search filters"><label className="q-search-mobile-filter-control"><span className="q-visually-hidden">Filter search by tag</span><input className="q-search-filter-input" aria-label="Filter search by tag" list="known-note-tags-mobile-quick" value={tagFilter} onChange={(event) => changeTag(event.target.value)} placeholder="Any tag" maxLength={MAX_TAG_LENGTH} /><datalist id="known-note-tags-mobile-quick">{tags.map((tag) => <option value={tag} key={tag} />)}</datalist></label><label className="q-search-mobile-filter-control"><span className="q-visually-hidden">Filter search by source</span><select aria-label="Filter search by source" value={sourceFilter} onChange={(event) => changeSource(event.target.value as SearchSourceType | '')}><option value="">All sources</option><option value="note_chunk">Note sections</option><option value="code_block">Code</option><option value="copy_block">Copy blocks</option><option value="attachment_chunk">Attachments</option></select></label></div>}
+    <div className="q-search-options q-search-options-desktop">
+      <SearchFilterFields notebooks={notebooks} selectedNotebookId={selectedNotebookId} showNotebookFilter={showNotebookFilter} datalistId="known-note-tags-desktop" tags={tags} tagFilter={tagFilter} sourceFilter={sourceFilter} onNotebookChange={(notebookId) => onNotebookChange?.(notebookId)} onTagChange={changeTag} onSourceChange={changeSource} onReset={clearFilters} showReset={hasFilters} />
     </div>
+    {activeFilters.length > 0 && <div className="q-search-active-filters" aria-label="Active search filters">{activeFilters.map((filter) => <span className="q-search-filter-chip" key={filter.key}><span>{filter.label}</span><button type="button" onClick={filter.remove} aria-label={`Remove ${filter.label}`}>×</button></span>)}</div>}
+    {!showInlineMobileFilters && <Sheet open={filtersOpen} onOpenChange={setFiltersOpen}><SheetContent id="search-filters-sheet" side="bottom" className="q-search-filter-sheet" aria-describedby="search-filters-description"><DialogHeader><DialogTitle>Search filters</DialogTitle><DialogDescription id="search-filters-description">Narrow results without changing your search phrase.</DialogDescription></DialogHeader><div className="q-search-filter-fields"><SearchFilterFields notebooks={notebooks} selectedNotebookId={selectedNotebookId} showNotebookFilter={showNotebookFilter} datalistId="known-note-tags-mobile" tags={tags} tagFilter={tagFilter} sourceFilter={sourceFilter} onNotebookChange={(notebookId) => onNotebookChange?.(notebookId)} onTagChange={changeTag} onSourceChange={changeSource} onReset={clearFilters} showReset={hasFilters} /></div></SheetContent></Sheet>}
     {statusText && <p className="q-search-status" role="status">{statusText}{displayResponse?.index && !displayResponse.index.fresh && !result.error ? ' Indexing is still catching up.' : ''}{result.error && <Button type="button" variant="ghost" size="sm" onClick={() => void result.refetch()}>Retry</Button>}</p>}
-    {debounced && displayResponse && displayResponse.items.length > 0 && <ul className="q-search-results" aria-label="Matched search results">
-      {displayResponse.items.map((item) => <li key={`${item.id}:${item.documentId ?? ''}:${item.sourceKey}`}><article className="q-search-result">
-        <button type="button" className="q-search-result-main" onClick={() => selectResult(item)}><span className="q-search-result-heading"><strong>{item.noteTitle}</strong><span className="q-search-result-type">{sourceLabel(item.sourceType)}</span></span><span className="q-search-result-context">{item.headingPath ?? item.sourceTitle}{item.noteVersion ? ` · version ${item.noteVersion}` : ''}</span><small>{item.snippet}</small></button>
+    {debounced && displayResponse && displayResponse.items.length > 0 && <ul className="q-search-results" aria-label="Matched search results" onKeyDown={handleResultKeyDown}>
+      {displayResponse.items.map((item, index) => <li key={`${item.id}:${item.documentId ?? ''}:${item.sourceKey}`}><article className="q-search-result">
+        <button ref={(element) => { resultButtonRefs.current[index] = element; }} type="button" className="q-search-result-main" onClick={() => selectResult(item)} aria-label={`Open ${item.noteTitle}: ${item.headingPath ?? item.sourceTitle}`}><span className="q-search-result-heading"><strong>{highlightLiteral(item.noteTitle, query)}</strong><span className="q-search-result-type">{sourceLabel(item.sourceType)}</span></span><span className="q-search-result-context">{highlightLiteral(item.headingPath ?? item.sourceTitle, query)}{item.noteVersion ? ` · version ${item.noteVersion}` : ''}</span><small>{highlightLiteral(item.snippet, query)}</small></button>
         <div className="q-search-result-details"><span>{item.notebookId ? 'Notebook note' : 'Unfiled note'}{item.language ? ` · ${item.language}` : ''}{item.attachmentId ? ` · ${item.sourceTitle}` : ''}</span><div className="q-search-result-actions">
           {item.copyable && <Button type="button" variant="ghost" size="sm" onClick={() => void copyBlock(item)}>Copy {item.sourceType === 'code_block' ? 'command' : 'block'}</Button>}
           {item.sourceType === 'attachment_chunk' && item.attachmentId && <Button type="button" variant="ghost" size="sm" onClick={() => void openAttachment(item)}>Open file</Button>}
