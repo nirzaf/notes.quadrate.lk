@@ -68,6 +68,7 @@ jobs:
           tests/e2e/public-sharing.spec.ts
           tests/e2e/accessibility.spec.ts
           tests/e2e/oauth-replay.spec.ts
+          tests/e2e/workspace-recovery.spec.ts
           --project=chromium
       - name: Stop the local Supabase stack
         if: always()

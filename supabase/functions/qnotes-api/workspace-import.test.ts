@@ -97,6 +97,10 @@ test('rejects an individual attachment above the configured attachment limit', (
   assert.throws(() => inspectWorkspaceArchive(archive, 10_000, 2), WorkspaceArchiveError);
 });
 
+test('rejects an archive that exceeds the configured compressed-byte limit', () => {
+  assert.throws(() => inspectWorkspaceArchive(new Uint8Array(11), 10), WorkspaceArchiveError);
+});
+
 test('rejects duplicate ZIP filenames before interpreting the manifest', async () => {
   await assert.rejects(duplicateArchive().then((archive) => inspectWorkspaceArchive(archive, 10_000)), WorkspaceArchiveError);
 });
