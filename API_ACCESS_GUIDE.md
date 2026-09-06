@@ -112,6 +112,17 @@ curl -fsS -X POST \
 
 A successful resolver response contains only `title`, `contentMarkdown`, and `updatedAt`. Unknown, expired, revoked, deleted, malformed, and wrong-format tokens return the same `404 PUBLIC_SHARE_NOT_FOUND` response. Public resolver responses are `no-store`, and the public page sends no attachment requests.
 
+AI agents and other HTTP clients can fetch the same shared note as raw Markdown with a `GET` request. The body is the exact stored `contentMarkdown` value, with `Content-Type: text/markdown; charset=utf-8`:
+
+```bash
+curl -fsS --get \
+  -H 'Accept: text/markdown' \
+  "$QNOTES_URL/public/share/resolve" \
+  --data-urlencode 'token=qns_<secret>'
+```
+
+The Markdown GET endpoint is unauthenticated, accepts no private JWT, and returns the same generic `404 PUBLIC_SHARE_NOT_FOUND` response for invalid, expired, revoked, deleted, malformed, or wrong-format tokens. It sends `Cache-Control: no-store`, `X-Robots-Tag: noindex`, `Referrer-Policy: no-referrer`, and a restrictive content security policy. Because the token is a bearer capability, treat the complete GET URL as secret; use HTTPS and avoid placing it in public indexes or persistent logs. The web share dialog shows this endpoint only immediately after creating a link; it is not retained when the dialog closes.
+
 ## Request and response conventions
 
 Successful JSON responses use one envelope:

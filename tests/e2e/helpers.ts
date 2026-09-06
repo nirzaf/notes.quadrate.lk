@@ -247,6 +247,12 @@ export async function resolvePublicShareApi(token: string): Promise<{ response: 
   return publicApiJson('/public/share/resolve', { method: 'POST', body: JSON.stringify({ token }) });
 }
 
+export async function resolvePublicShareMarkdownApi(token: string): Promise<{ response: Response; body: string }> {
+  const env = await localEnv();
+  const response = await fetch(`${env.apiUrl}/public/share/resolve?token=${encodeURIComponent(token)}`, { headers: { Accept: 'text/markdown' } });
+  return { response, body: await response.text() };
+}
+
 export async function listAttachmentsApi(token: string, noteRef: string): Promise<Attachment[]> {
   const { response, body } = await apiJson(`/api/notes/${encodeURIComponent(noteRef)}/attachments`, token);
   if (!response.ok || !isDataEnvelope(body)) throw new Error(JSON.stringify(body));

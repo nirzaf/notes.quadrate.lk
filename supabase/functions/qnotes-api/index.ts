@@ -14,7 +14,7 @@ import { listAttachments, requestUpload, finalizeAttachment, getDownloadUrl, del
 import { listTokens, createToken, revokeToken } from './tokens.ts';
 import { exportNote, exportWorkspace } from './exports.ts';
 import { listNotebooks, createNotebook } from './notebooks.ts';
-import { createPublicShare, getPublicShare, resolvePublicShare, revokePublicShare } from './shares.ts';
+import { createPublicShare, getPublicShare, resolvePublicShare, resolvePublicShareMarkdown, revokePublicShare } from './shares.ts';
 
 interface Variables {
   auth: AuthContext;
@@ -29,7 +29,15 @@ app.use('*', async (context, next) => {
   context.set('requestId', requestId);
   context.header('x-request-id', requestId);
   const corsHeaders = new Headers();
-  applyCors(context.req.raw, corsHeaders);
+  const publicMarkdownRequest = context.req.path === '/public/share/resolve' && (context.req.method === 'GET' || context.req.method === 'OPTIONS');
+  if (publicMarkdownRequest) {
+    corsHeaders.set('Access-Control-Allow-Origin', '*');
+    corsHeaders.set('Access-Control-Allow-Headers', 'content-type');
+    corsHeaders.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    corsHeaders.set('Access-Control-Expose-Headers', 'content-disposition, x-request-id');
+  } else {
+    applyCors(context.req.raw, corsHeaders);
+  }
   for (const [key, value] of corsHeaders) context.header(key, value);
   if (context.req.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
   const started = performance.now();
@@ -54,6 +62,9 @@ app.use('/public/share/resolve', async (context, next) => {
   context.header('Cache-Control', 'no-store');
   context.header('Pragma', 'no-cache');
   context.header('X-Content-Type-Options', 'nosniff');
+  context.header('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet');
+  context.header('Referrer-Policy', 'no-referrer');
+  context.header('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
   return next();
 });
 
@@ -66,6 +77,13 @@ app.onError((error, context) => {
     response.headers.set('Cache-Control', 'no-store');
     response.headers.set('Pragma', 'no-cache');
     response.headers.set('X-Content-Type-Options', 'nosniff');
+    response.headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet');
+    response.headers.set('Referrer-Policy', 'no-referrer');
+    response.headers.set('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
+    if (context.req.method === 'GET') {
+      response.headers.set('Access-Control-Allow-Origin', '*');
+      response.headers.set('Access-Control-Expose-Headers', 'content-disposition, x-request-id');
+    }
   }
   return response;
 });
@@ -109,6 +127,7 @@ app.post('/public/share/resolve', bodyLimit({
     return context.json(errorBody(new ApiError(413, 'VALIDATION_ERROR', 'The public share request is too large.'), context.get('requestId') ?? crypto.randomUUID()), 413);
   },
 }), resolvePublicShare);
+app.get('/public/share/resolve', resolvePublicShareMarkdown);
 app.get('/api/export/note/:noteRef', exportNote);
 app.get('/api/export/workspace', exportWorkspace);
 

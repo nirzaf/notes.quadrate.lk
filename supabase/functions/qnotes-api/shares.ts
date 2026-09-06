@@ -43,6 +43,25 @@ function shareNotFound(): never {
   throw new ApiError(404, 'PUBLIC_SHARE_NOT_FOUND', unavailableMessage);
 }
 
+function publicShareToken(context: Context): string {
+  const token = context.req.query('token');
+  if (!token || !isValidNoteShareToken(token)) shareNotFound();
+  return token;
+}
+
+async function loadPublicSharedNote(token: unknown): Promise<{ title: string; content_markdown: string; updated_at: string }> {
+  if (typeof token !== 'string' || !isValidNoteShareToken(token)) shareNotFound();
+  const tokenHash = await hashNoteShareToken(token);
+  const result = assertSupabase(await serviceClient.rpc('qnotes_resolve_note_share', { p_token_hash: tokenHash }));
+  const row = Array.isArray(result) ? result[0] : null;
+  if (!row || typeof row !== 'object' || Array.isArray(row)) shareNotFound();
+  const resolved = record(row);
+  if (typeof resolved.title !== 'string' || typeof resolved.content_markdown !== 'string' || typeof resolved.updated_at !== 'string') {
+    throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to resolve public share.');
+  }
+  return { title: resolved.title, content_markdown: resolved.content_markdown, updated_at: resolved.updated_at };
+}
+
 export async function getPublicShare(context: Context): Promise<Response> {
   const auth = authFromContext(context);
   requireUserJwt(auth);
@@ -99,15 +118,24 @@ export async function revokePublicShare(context: Context): Promise<Response> {
 export async function resolvePublicShare(context: Context): Promise<Response> {
   const body = record(await context.req.json().catch(() => null));
   if (Object.keys(body).length !== 1 || !Object.prototype.hasOwnProperty.call(body, 'token')) shareNotFound();
-  const token = body.token;
-  if (typeof token !== 'string' || !isValidNoteShareToken(token)) shareNotFound();
-  const tokenHash = await hashNoteShareToken(token);
-  const result = assertSupabase(await serviceClient.rpc('qnotes_resolve_note_share', { p_token_hash: tokenHash }));
-  const row = Array.isArray(result) ? result[0] : null;
-  if (!row || typeof row !== 'object' || Array.isArray(row)) shareNotFound();
-  const resolved = record(row);
-  if (typeof resolved.title !== 'string' || typeof resolved.content_markdown !== 'string' || typeof resolved.updated_at !== 'string') {
-    throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to resolve public share.');
-  }
+  const resolved = await loadPublicSharedNote(body.token);
   return context.json({ data: { title: resolved.title, contentMarkdown: resolved.content_markdown, updatedAt: resolved.updated_at } });
+}
+
+export async function resolvePublicShareMarkdown(context: Context): Promise<Response> {
+  const resolved = await loadPublicSharedNote(publicShareToken(context));
+  return new Response(resolved.content_markdown, {
+    headers: {
+      'Content-Type': 'text/markdown; charset=utf-8',
+      'Content-Disposition': 'inline; filename="shared-note.md"',
+      'Cache-Control': 'no-store',
+      'Pragma': 'no-cache',
+      'X-Content-Type-Options': 'nosniff',
+      'X-Robots-Tag': 'noindex, nofollow, noarchive, nosnippet',
+      'Referrer-Policy': 'no-referrer',
+      'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Expose-Headers': 'content-disposition, x-request-id',
+    },
+  });
 }

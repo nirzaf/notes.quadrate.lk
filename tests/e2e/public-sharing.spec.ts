@@ -1,5 +1,5 @@
 import { test, expect } from './test-fixtures';
-import { apiJson, createNoteApi, createPublicShareApi, getNoteApi, OWNER, resolvePublicShareApi, signInPage, signInSession } from './helpers';
+import { apiJson, createNoteApi, createPublicShareApi, getNoteApi, OWNER, resolvePublicShareApi, resolvePublicShareMarkdownApi, signInPage, signInSession } from './helpers';
 
 function data(body: unknown): Record<string, unknown> {
   if (!body || typeof body !== 'object' || !('data' in body) || !body.data || typeof body.data !== 'object') throw new Error(`Invalid API response: ${JSON.stringify(body)}`);
@@ -22,6 +22,14 @@ test('renders a saved note publicly through the fragment without private API req
   expect(data(resolved.body)).toEqual({ title: note.title, contentMarkdown: '# Public heading\n\nPublic marker 4127.', updatedAt: expect.any(String) });
   expect(resolved.response.headers.get('cache-control')).toBe('no-store');
 
+  const markdown = await resolvePublicShareMarkdownApi(share.token);
+  expect(markdown.response.status).toBe(200);
+  expect(markdown.response.headers.get('content-type')).toContain('text/markdown');
+  expect(markdown.response.headers.get('content-disposition')).toBe('inline; filename="shared-note.md"');
+  expect(markdown.response.headers.get('x-robots-tag')).toContain('noindex');
+  expect(markdown.response.headers.get('access-control-allow-origin')).toBe('*');
+  expect(markdown.body).toBe('# Public heading\n\nPublic marker 4127.');
+
   await page.goto(`/share#${share.token}`);
   await expect(page.getByRole('heading', { name: note.title })).toBeVisible();
   await expect(page.locator('.q-public-share-note')).toContainText('Public marker 4127.');
@@ -40,9 +48,11 @@ test('rotates and revokes links while keeping the old secret unusable', async ()
   expect(second.token).not.toBe(first.token);
   expect((await resolvePublicShareApi(first.token)).response.status).toBe(404);
   expect((await resolvePublicShareApi(second.token)).response.status).toBe(200);
+  expect((await resolvePublicShareMarkdownApi(second.token)).response.status).toBe(200);
   const revoked = await apiJson(`/api/notes/${note.id}/share`, session.access_token, { method: 'DELETE' });
   expect(revoked.response.status).toBe(200);
   expect((await resolvePublicShareApi(second.token)).response.status).toBe(404);
+  expect((await resolvePublicShareMarkdownApi(second.token)).response.status).toBe(404);
 });
 
 test('soft deletion revokes a link permanently across restore', async () => {

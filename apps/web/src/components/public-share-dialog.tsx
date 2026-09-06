@@ -2,6 +2,7 @@ import { Check, Copy, ExternalLink, Link2Off, RotateCw, Share2 } from 'lucide-re
 import { useEffect, useRef, useState } from 'react';
 import type { Note, PublicShareMetadata } from '@qnotes/shared';
 import { api } from '../api';
+import { env } from '../env';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 import { useToast } from './ui/toast';
@@ -45,6 +46,7 @@ export function PublicShareDialog({ open, note, share, loading = false, onOpenCh
   const { toast } = useToast();
   const [expiry, setExpiry] = useState<ExpiryChoice>('7');
   const [createdLink, setCreatedLink] = useState<string | null>(null);
+  const [createdMarkdownUrl, setCreatedMarkdownUrl] = useState<string | null>(null);
   const [createdMetadata, setCreatedMetadata] = useState<PublicShareMetadata | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -56,6 +58,7 @@ export function PublicShareDialog({ open, note, share, loading = false, onOpenCh
     openRef.current = open;
     if (!open) {
       setCreatedLink(null);
+      setCreatedMarkdownUrl(null);
       setCreatedMetadata(null);
       setError(null);
       setBusy(false);
@@ -70,8 +73,11 @@ export function PublicShareDialog({ open, note, share, loading = false, onOpenCh
       const result = await api.createPublicShare(note.id, { expiresAt: expiryDate(expiry) });
       const publicUrl = new URL('/share', window.location.origin);
       publicUrl.hash = result.token;
+      const markdownUrl = new URL(`${env.qnotesApiUrl.replace(/\/$/, '')}/public/share/resolve`);
+      markdownUrl.searchParams.set('token', result.token);
       if (openRef.current) {
         setCreatedLink(publicUrl.toString());
+        setCreatedMarkdownUrl(markdownUrl.toString());
         setCreatedMetadata(result.metadata);
       }
       await onRefresh();
@@ -89,6 +95,7 @@ export function PublicShareDialog({ open, note, share, loading = false, onOpenCh
     try {
       await api.revokePublicShare(note.id);
       setCreatedLink(null);
+      setCreatedMarkdownUrl(null);
       setCreatedMetadata(null);
       await onRefresh();
       toast('Public link revoked.', 'success');
@@ -99,14 +106,21 @@ export function PublicShareDialog({ open, note, share, loading = false, onOpenCh
     }
   };
 
-  const copy = async (): Promise<void> => {
-    if (!link) return;
+  const copyValue = async (value: string, successMessage: string): Promise<void> => {
     try {
-      await navigator.clipboard.writeText(link);
-      toast('Public link copied.', 'success');
+      await navigator.clipboard.writeText(value);
+      toast(successMessage, 'success');
     } catch {
       setError('Clipboard access was unavailable. Select and copy the link manually.');
     }
+  };
+
+  const copy = async (): Promise<void> => {
+    if (link) await copyValue(link, 'Public link copied.');
+  };
+
+  const copyMarkdown = async (): Promise<void> => {
+    if (createdMarkdownUrl) await copyValue(createdMarkdownUrl, 'Markdown endpoint copied.');
   };
 
   const systemShare = async (): Promise<void> => {
@@ -134,6 +148,7 @@ export function PublicShareDialog({ open, note, share, loading = false, onOpenCh
           <div className="q-public-share-status"><Check size={18} aria-hidden="true" /><strong>Public link created</strong></div>
           <p className="q-small">Copy this link now. For safety, the secret is not retained after you close this dialog.</p>
           <div className="q-public-share-link"><code>{link}</code><Button type="button" variant="outline" size="sm" onClick={() => void copy()}><Copy size={15} aria-hidden="true" />Copy</Button></div>
+          {createdMarkdownUrl ? <><p className="q-small">AI agents can fetch the note’s Markdown with a GET request:</p><div className="q-public-share-link"><code>{createdMarkdownUrl}</code><Button type="button" variant="outline" size="sm" onClick={() => void copyMarkdown()}><Copy size={15} aria-hidden="true" />Copy endpoint</Button></div></> : null}
           <p className="q-small">Expires: {createdMetadata ? expiryLabel(createdMetadata) : 'Unknown'}</p>
           <div className="q-dialog-actions q-public-share-actions"><Button type="button" variant="outline" onClick={openLink}><ExternalLink size={15} aria-hidden="true" />Open preview</Button>{typeof navigator.share === 'function' ? <Button type="button" variant="outline" onClick={() => void systemShare()}><Share2 size={15} aria-hidden="true" />Share</Button> : null}<Button type="button" variant="danger" onClick={() => void revoke()} disabled={busy}><Link2Off size={15} aria-hidden="true" />Revoke</Button></div>
         </div> : <div className="q-public-share-existing">
