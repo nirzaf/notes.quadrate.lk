@@ -93,6 +93,45 @@ test('supports notebook listing, creation, and versioned note moves', async () =
   assert.deepEqual(JSON.parse(calls[2].init.body), { notebookId: 'n-1', expectedVersion: 1, deviceId: 'device-1', mutationId: 'mutation-1' });
 });
 
+test('keeps owner share management authenticated and validates safe metadata', async () => {
+  const calls = [];
+  const metadata = { id: 'share-1', noteId: 'note-1', tokenPrefix: 'qns_Abcd1234', expiresAt: null, revokedAt: null, createdAt: '2026-01-01T00:00:00Z' };
+  const client = new QNotesClient({ getAccessToken: () => 'owner-jwt', baseUrl: 'http://example.test', fetchImplementation: async (url, init) => {
+    calls.push({ url, init });
+    if (init?.method === 'POST') return jsonResponse({ data: { token: 'qns_A'.padEnd(47, 'a'), metadata } }, 201);
+    if (init?.method === 'DELETE') return jsonResponse({ data: null });
+    return jsonResponse({ data: metadata });
+  } });
+  assert.deepEqual(await client.getPublicShare('note-1'), metadata);
+  assert.deepEqual(await client.createPublicShare('note-1', { expiresAt: null }), { token: 'qns_A'.padEnd(47, 'a'), metadata });
+  await client.revokePublicShare('note-1');
+  assert.equal(calls[0].url, 'http://example.test/api/notes/note-1/share');
+  assert.equal(calls[0].init.headers.get('Authorization'), 'Bearer owner-jwt');
+  assert.deepEqual(JSON.parse(calls[1].init.body), { expiresAt: null });
+  assert.equal(calls[2].init.method, 'DELETE');
+});
+
+test('resolves public shares without requesting or sending a private JWT', async () => {
+  let tokenProviderCalls = 0;
+  let request;
+  const token = 'qns_' + 'A'.repeat(43);
+  const note = { title: 'Shared', contentMarkdown: '# Shared', updatedAt: '2026-01-01T00:00:00Z' };
+  const client = new QNotesClient({ baseUrl: 'http://example.test', getAccessToken: () => { tokenProviderCalls += 1; throw new Error('private token must not be requested'); }, fetchImplementation: async (url, init) => {
+    request = { url, init };
+    return jsonResponse({ data: note });
+  } });
+  assert.deepEqual(await client.resolvePublicShare(token), note);
+  assert.equal(tokenProviderCalls, 0);
+  assert.equal(request.url, 'http://example.test/public/share/resolve');
+  assert.equal(request.init.headers.get('Authorization'), null);
+  assert.deepEqual(JSON.parse(request.init.body), { token });
+});
+
+test('rejects a malformed public shared note payload', async () => {
+  const client = new QNotesClient({ baseUrl: 'http://example.test', getAccessToken: () => null, fetchImplementation: async () => jsonResponse({ data: { title: 'Shared', contentMarkdown: '' } }) });
+  await assert.rejects(() => client.resolvePublicShare('qns_' + 'A'.repeat(43)), /malformed public shared note/);
+});
+
 test('posts logical append requests without rewriting the note client-side', async () => {
   const calls = [];
   const client = new QNotesClient({ baseUrl: 'http://example.test', getAccessToken: () => 'write-token', fetchImplementation: async (url, init) => {

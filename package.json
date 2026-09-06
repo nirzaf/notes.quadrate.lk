@@ -28,5 +28,6 @@
     "@types/node": "24.3.0",
     "supabase": "2.116.0",
     "typescript": "5.9.2"
-  }
+  },
+  "workspaces": ["apps/*", "packages/*"]
 }

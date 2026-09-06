@@ -23,7 +23,7 @@ export async function discoverEdgeTestFiles(directory = functionsRoot) {
 
 export function edgeTestArguments(files) {
   if (!files.length) throw new Error('No applicable Edge test files were found under supabase/functions/.');
-  return ['test', '--no-lock', `--import-map=${importMap}`, ...files];
+  return ['test', '--no-lock', '--allow-env=QNOTES_TOKEN_PEPPER', `--import-map=${importMap}`, ...files];
 }
 
 function runDeno(args) {

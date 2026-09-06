@@ -395,6 +395,30 @@ export interface CreateApiTokenResult {
   metadata: ApiTokenMetadata;
 }
 
+export interface PublicSharedNote {
+  title: string;
+  contentMarkdown: string;
+  updatedAt: ISODateTime;
+}
+
+export interface PublicShareMetadata {
+  id: UUID;
+  noteId: UUID;
+  tokenPrefix: string;
+  expiresAt: ISODateTime | null;
+  revokedAt: ISODateTime | null;
+  createdAt: ISODateTime;
+}
+
+export interface CreatePublicShareInput {
+  expiresAt: ISODateTime | null;
+}
+
+export interface CreatePublicShareResult {
+  token: string;
+  metadata: PublicShareMetadata;
+}
+
 export interface ApiSuccess<T> {
   data: T;
 }

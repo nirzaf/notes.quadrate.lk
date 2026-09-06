@@ -10,7 +10,7 @@ self.addEventListener('fetch', (event) => {
   const request = event.request;
   if (request.method !== 'GET' || new URL(request.url).origin !== self.location.origin || request.headers.has('authorization')) return;
   const url = new URL(request.url);
-  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/rest/') || url.pathname.startsWith('/auth/') || url.pathname.startsWith('/functions/') || url.pathname.startsWith('/storage/')) return;
+  if (url.pathname === '/share' || url.pathname.startsWith('/api/') || url.pathname.startsWith('/public/') || url.pathname.startsWith('/rest/') || url.pathname.startsWith('/auth/') || url.pathname.startsWith('/functions/') || url.pathname.startsWith('/storage/')) return;
   if (request.mode === 'navigate') {
     event.respondWith(fetch(request).catch(() => caches.match('/').then((cached) => cached ?? offlineResponse()).catch(() => offlineResponse())));
     return;

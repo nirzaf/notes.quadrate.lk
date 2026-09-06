@@ -7,6 +7,7 @@ import { SearchPage } from './pages/search-page';
 import { TokensPage } from './pages/tokens-page';
 import { TrashPage } from './pages/trash-page';
 import { OAuthAuthorizePage } from './pages/oauth-authorize-page';
+import { PublicSharePage } from './pages/public-share-page';
 import { currentAppPath, safeInternalPath, validateAppSearch } from './navigation-context';
 
 function RecoveryState({ title, message, onRetry }: { title: string; message: string; onRetry?: () => void }): JSX.Element {
@@ -21,13 +22,12 @@ function routeNotFoundComponent(): JSX.Element {
   return <RecoveryState title="That page is not here." message="The link may be stale or the note may no longer be available." />;
 }
 
-function RootLayout(): JSX.Element {
+function PrivateRootLayout(): JSX.Element {
   const { session, loading, authError, retryInitialization } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
-  const isOAuthAuthorize = location.pathname === '/oauth/authorize';
   useEffect(() => {
-    if (isOAuthAuthorize || loading || authError) return;
+    if (loading || authError) return;
     if (!session && location.pathname !== '/login') {
       const returnTo = safeInternalPath(currentAppPath());
       void navigate({ to: '/login', replace: true, search: returnTo ? { returnTo } : {} });
@@ -36,25 +36,32 @@ function RootLayout(): JSX.Element {
       const returnTo = safeInternalPath(new URLSearchParams(window.location.search).get('returnTo'));
       void navigate((returnTo ? { href: returnTo, replace: true } : { to: '/', replace: true }) as never);
     }
-  }, [authError, isOAuthAuthorize, loading, location.pathname, location.search, navigate, session]);
-  if (isOAuthAuthorize) return <Outlet />;
+  }, [authError, loading, location.pathname, location.search, navigate, session]);
+  const pathname = location.pathname;
   if (loading) return <div className="q-auth-page"><div className="q-empty">Opening your private workspace…</div></div>;
-  if (authError && location.pathname !== '/login') return <RecoveryState title="Sign-in could not be restored." message="Authentication initialization failed. Retry, or continue to the sign-in screen." onRetry={retryInitialization} />;
-  if (!session && location.pathname !== '/login') return <div className="q-auth-page"><div className="q-empty">Redirecting to sign in…</div></div>;
-  if (session && location.pathname === '/login') return <div className="q-auth-page"><div className="q-empty">Returning to your workspace…</div></div>;
+  if (authError && pathname !== '/login') return <RecoveryState title="Sign-in could not be restored." message="Authentication initialization failed. Retry, or continue to the sign-in screen." onRetry={retryInitialization} />;
+  if (!session && pathname !== '/login') return <div className="q-auth-page"><div className="q-empty">Redirecting to sign in…</div></div>;
+  if (session && pathname === '/login') return <div className="q-auth-page"><div className="q-empty">Returning to your workspace…</div></div>;
   return <Outlet />;
+}
+
+function RootLayout(): JSX.Element {
+  const location = useLocation();
+  if (location.pathname === '/share' || location.pathname === '/oauth/authorize') return <Outlet />;
+  return <PrivateRootLayout />;
 }
 
 export const rootRoute = createRootRoute({ component: RootLayout, validateSearch: validateAppSearch, errorComponent: routeErrorComponent, notFoundComponent: routeNotFoundComponent });
 export const loginRoute = createRoute({ getParentRoute: () => rootRoute, path: '/login', component: LoginPage });
 export const oauthAuthorizeRoute = createRoute({ getParentRoute: () => rootRoute, path: '/oauth/authorize', component: OAuthAuthorizePage });
+export const publicShareRoute = createRoute({ getParentRoute: () => rootRoute, path: '/share', component: PublicSharePage });
 export const homeRoute = createRoute({ getParentRoute: () => rootRoute, path: '/', component: HomePage });
 export const searchRoute = createRoute({ getParentRoute: () => rootRoute, path: '/search', component: SearchPage });
 export const noteRoute = createRoute({ getParentRoute: () => rootRoute, path: '/notes/$noteId', component: lazyRouteComponent(() => import('./pages/note-page'), 'NotePage') });
 export const integrationsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/settings/integrations', component: TokensPage });
 export const tokensRoute = createRoute({ getParentRoute: () => rootRoute, path: '/settings/tokens', component: TokensPage });
 export const trashRoute = createRoute({ getParentRoute: () => rootRoute, path: '/trash', component: TrashPage });
-export const routeTree = rootRoute.addChildren([loginRoute, oauthAuthorizeRoute, homeRoute, searchRoute, noteRoute, integrationsRoute, tokensRoute, trashRoute]);
+export const routeTree = rootRoute.addChildren([loginRoute, oauthAuthorizeRoute, publicShareRoute, homeRoute, searchRoute, noteRoute, integrationsRoute, tokensRoute, trashRoute]);
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });
 
 declare module '@tanstack/react-router' {

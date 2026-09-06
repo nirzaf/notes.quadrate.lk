@@ -13,8 +13,13 @@ function showFatal(error: unknown): void {
 async function boot(): Promise<void> {
   try {
     await import('./env');
-    const [{ AuthProvider }, { router }, { ToastProvider }] = await Promise.all([import('./auth-context'), import('./router'), import('./components/ui/toast')]);
+    const [{ router }, { ToastProvider }] = await Promise.all([import('./router'), import('./components/ui/toast')]);
     if (!rootElement) throw new Error('The application root element is missing.');
+    if (window.location.pathname === '/share') {
+      createRoot(rootElement).render(<ToastProvider><RouterProvider router={router} /></ToastProvider>);
+      return;
+    }
+    const { AuthProvider } = await import('./auth-context');
     createRoot(rootElement).render(<QueryClientProvider client={queryClient}><AuthProvider><ToastProvider><RouterProvider router={router} /></ToastProvider></AuthProvider></QueryClientProvider>);
     if (import.meta.env.PROD && 'serviceWorker' in navigator) void navigator.serviceWorker.register('/sw.js').catch(() => undefined);
   } catch (error: unknown) {

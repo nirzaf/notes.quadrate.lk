@@ -7,6 +7,7 @@ export interface WorkspaceQueryKeys {
   note: (noteId: string) => readonly ['qnotes', string, 'notes', 'detail', string];
   notebooks: readonly ['qnotes', string, 'notebooks'];
   attachments: (noteId: string) => readonly ['qnotes', string, 'attachments', string];
+  share: (noteId: string) => readonly ['qnotes', string, 'note-share', string];
   search: (query: string, filters: unknown, limit: number, maxPerNote: number) => readonly ['qnotes', string, 'search', string, unknown, { limit: number; maxPerNote: number }];
   searchContext: (documentId: string) => readonly ['qnotes', string, 'search-context', string];
 }
@@ -22,6 +23,7 @@ export const noteQueryKeys = {
     note: (noteId) => ['qnotes', userId, 'notes', 'detail', noteId],
     notebooks: ['qnotes', userId, 'notebooks'],
     attachments: (noteId) => ['qnotes', userId, 'attachments', noteId],
+    share: (noteId) => ['qnotes', userId, 'note-share', noteId],
     search: (query, filters, limit, maxPerNote) => ['qnotes', userId, 'search', query, filters, { limit, maxPerNote }],
     searchContext: (documentId) => ['qnotes', userId, 'search-context', documentId],
   }),

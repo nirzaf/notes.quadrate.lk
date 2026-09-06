@@ -175,6 +175,16 @@ export async function apiJson(path: string, token: string, init: RequestInit = {
   return { response, body };
 }
 
+export async function publicApiJson(path: string, init: RequestInit = {}): Promise<{ response: Response; body: unknown }> {
+  const env = await localEnv();
+  const headers = new Headers(init.headers);
+  headers.set('Accept', 'application/json');
+  if (init.body !== undefined && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  const response = await fetch(`${env.apiUrl}${path}`, { ...init, headers });
+  const body = (response.headers.get('content-type') ?? '').includes('json') ? await response.json() : await response.text();
+  return { response, body };
+}
+
 export function searchItems(body: unknown): unknown[] {
   if (!body || typeof body !== 'object' || !('data' in body)) return [];
   const data = (body as { data?: unknown }).data;
@@ -225,6 +235,16 @@ export async function updateNoteApi(token: string, note: Note, contentMarkdown: 
   });
   if (!response.ok || !isDataEnvelope(body)) throw new Error(JSON.stringify(body));
   return body.data as Note;
+}
+
+export async function createPublicShareApi(token: string, noteId: string, expiresAt: string | null = null): Promise<{ token: string; metadata: Record<string, unknown> }> {
+  const result = await apiJson(`/api/notes/${noteId}/share`, token, { method: 'POST', body: JSON.stringify({ expiresAt }) });
+  if (result.response.status !== 201 || !isDataEnvelope(result.body)) throw new Error(JSON.stringify(result.body));
+  return result.body.data as { token: string; metadata: Record<string, unknown> };
+}
+
+export async function resolvePublicShareApi(token: string): Promise<{ response: Response; body: unknown }> {
+  return publicApiJson('/public/share/resolve', { method: 'POST', body: JSON.stringify({ token }) });
 }
 
 export async function listAttachmentsApi(token: string, noteRef: string): Promise<Attachment[]> {

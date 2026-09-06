@@ -1,6 +1,6 @@
 # Quadrate Notes
 
-`notes.quadrate.lk` is a private, browser-first Markdown notes workspace for keeping canonical notes, organizing them into notebooks, reusing copyable knowledge blocks, searching across notes and extracted attachments, and accessing the workspace through HTTP, JavaScript, or the `qnotes` CLI.
+`notes.quadrate.lk` is a browser-first Markdown notes workspace for keeping canonical private notes, organizing them into notebooks, reusing copyable knowledge blocks, searching across notes and extracted attachments, and optionally sharing one saved note through an explicit read-only link. The workspace is accessible through HTTP, JavaScript, or the `qnotes` CLI.
 
 The repository is a pnpm monorepo. The web app is a Vite/React PWA, the API is a Supabase Edge Function, and the database stores Markdown as the source of truth.
 
@@ -13,6 +13,7 @@ The repository is a pnpm monorepo. The web app is a Vite/React PWA, the API is a
 - Private attachments stored in Supabase Storage. Plain text, Markdown, and text-bearing PDFs are indexed asynchronously; PNG, JPEG, and WebP files are stored but report that image OCR is unsupported. From a note's Attachments panel, supported attachments can be previewed privately in-app: images render as images, PDFs use the browser's embedded viewer, and text/Markdown render as escaped plain text. Screenshots can be captured as the Visible Area, the Entire Page, or a Cropped Zone and are sent through the same private attachment flow.
 - Versioned mutations, private Realtime Broadcast invalidation, reconnect recovery, IndexedDB draft persistence, and a conflict resolver for concurrent edits.
 - Personal API tokens with least-privilege scopes for scripts, agents, backups, and the CLI.
+- Revocable, read-only public note links using `qns_...` secrets held only in URL fragments; public views expose only the saved title and Markdown body, never attachments or workspace metadata.
 - A guided Integrations page for read-only-by-default Hermes setup, explicit write scopes, real token expiry choices, one-time secret/config display, and separate API versus Hermes verification.
 - Note Markdown exports and workspace ZIP exports containing active notes, attachments, and a manifest.
 
@@ -27,6 +28,8 @@ The home page provides a paginated recent-notes view, a search field, and a note
 Use the `+` action in the Notebooks section to create a notebook. Names are trimmed, limited to 80 characters, and unique per owner. Open a note and use its notebook selector to move it to a notebook or back to Unfiled. The selector is disabled while an edit is waiting to be saved.
 
 Inside a note, Edit opens the CodeMirror Markdown editor and Preview renders sanitized Markdown with copy buttons for fenced code and named copy blocks. The note is saved after 800 ms without changes. Open Attachments to upload a supported file, preview it in-app, or choose Screenshot: Visible Area asks the browser for a display/window capture, Entire Page captures the current Quadrate Notes page, and Cropped Zone opens an accessible keyboard- and pointer-driven crop selection. Attachment previews request a short-lived signed URL only when opened; Open remains available for the original file, and text previews are capped at 1 MB. Screenshot capture requires browser permission and never uploads until the selected image is explicitly attached; image OCR remains unsupported. Delete is a soft delete that moves the note to the trash; the same note view exposes Restore for a deleted note. Export downloads the current note as `<slug>.md`.
+
+Use Share in an active note to create a read-only public link. Choose a 1-, 7-, 30-, or 90-day lifetime, or no expiry. The raw link is shown once while the dialog is open; close it after copying. Reopening Share shows only a safe prefix and expiry metadata, and lets you rotate or revoke the active link. Creating or rotating a link flushes pending autosave first, so public readers see only saved content. Open `/share#qns_...` to view a link without signing in; the public page renders the same sanitized Markdown preview but never loads attachments, AppShell data, or private note queries.
 
 If another device changes a note while a local draft is dirty, the conflict dialog can use the local version, use the remote version, save a manually edited merge, or cancel while retaining the local draft. If the remote note was deleted, the local draft can be saved as a new note.
 
@@ -48,7 +51,7 @@ The parser also derives plain text and search chunks from notes. Chunks are grou
 
 ## Architecture
 
-- `apps/web` contains the authenticated React/Vite UI, CodeMirror editor, service-worker shell, notebook filters, attachment panel, token settings, and Realtime/recovery hooks.
+- `apps/web` contains the authenticated React/Vite UI, CodeMirror editor, service-worker shell, notebook filters, attachment panel, token settings, public share view, and Realtime/recovery hooks.
 - `packages/shared` contains shared contracts, validation, generated database types, and API error codes.
 - `packages/markdown` parses and renders Markdown, derives plain text, extracts blocks, chunks content, and computes content hashes.
 - `packages/sync` provides the 800 ms autosave coordinator, IndexedDB draft abstractions, and three-way merge support.
@@ -57,7 +60,7 @@ The parser also derives plain text and search chunks from notes. Chunks are grou
 - `packages/mcp-server` provides the native read-only MCP server plus an explicit write-tool profile over `@qnotes/api-client`.
 - `supabase/functions/qnotes-api` exposes the REST API. Note writes use service-role-only transaction RPCs for optimistic version checks, idempotent mutation IDs, block synchronization, and search-document updates.
 - `supabase/functions/embedding-worker` consumes the `note-embeddings` queue. `supabase/functions/attachment-worker` consumes `attachment-processing`, extracts supported files, and indexes attachment chunks.
-- `supabase/migrations` defines the `notesdb` schema, RLS, private Storage, pgvector/pgmq/pg_cron integration, Realtime Broadcast trigger, API tokens, notebooks, and search relevance indexes.
+- `supabase/migrations` defines the `notesdb` schema, RLS, private Storage, pgvector/pgmq/pg_cron integration, Realtime Broadcast trigger, API tokens, notebooks, public note shares, and search relevance indexes.
 
 PostgreSQL full-text and relevance-ranked keyword search is available immediately. Embeddings are generated asynchronously in 384 dimensions with `gte-small` model version `v2`. Every vector records a hash of the exact source title, heading path, and content used to create it; model changes and stale inputs are re-queued instead of being relabeled. Local tests set `QNOTES_FAKE_EMBEDDINGS=1` for deterministic embeddings. Worker cron jobs process both queues every 30 seconds in the configured Supabase project, with bounded concurrency and batch draining. The daily `qnotes-requeue-stale-embeddings` job runs at 03:00 UTC (06:00 UTC+03) as a recovery/catch-up schedule for stale embedding work.
 
@@ -158,7 +161,7 @@ pnpm exec supabase functions deploy qnotes-api embedding-worker attachment-worke
   --import-map supabase/functions/deno.json
 ```
 
-The hosted database must contain the migrations through `20260905000200_stage3_append_idempotency.sql`. The Stage 3 migration adds the transaction-safe logical append receipt used by the REST API, CLI, and MCP write profile; the preceding migrations add request-safe search functions, embedding input/version invariants, stale-vector requeueing, attachment page provenance, safe capture deduplication, and the daily embedding recovery schedule. The worker cron jobs read the project URL and internal worker secret from Supabase Vault, so those Vault secrets and the Edge Function secrets must be configured before expecting asynchronous embeddings or attachment extraction.
+The hosted database must contain the migrations through `20260906000100_public_note_sharing.sql`. The latest migration adds the HMAC-backed, service-only public share table, transactional create/rotate/revoke RPCs, the three-field resolver projection, and automatic revocation on soft delete; the preceding migrations add the transaction-safe logical append receipt, request-safe search functions, embedding input/version invariants, stale-vector requeueing, attachment page provenance, safe capture deduplication, and the daily embedding recovery schedule. The worker cron jobs read the project URL and internal worker secret from Supabase Vault, so those Vault secrets and the Edge Function secrets must be configured before expecting asynchronous embeddings or attachment extraction.
 
 Build and deploy the web package to Cloudflare Pages with the hosted Supabase values:
 
@@ -173,11 +176,11 @@ npx wrangler pages deploy apps/web/dist --project-name notes-quadrate-lk
 
 ## Security and data boundaries
 
-Every exposed application table is protected by owner-based RLS. Browser clients receive only the Supabase publishable key and read through owner-scoped grants; writes, private attachment metadata, token operations, and search RPCs are mediated by the Edge Function and service role. Personal tokens are scoped, optionally expirable, revocable, and stored as HMAC-SHA-256 hashes. The full token is returned only from token creation.
+Every exposed application table is protected by owner-based RLS. Browser clients receive only the Supabase publishable key and read through owner-scoped grants; writes, private attachment metadata, token operations, public share operations, and search RPCs are mediated by the Edge Function and service role. Personal tokens and public share secrets are scoped to separate formats and domain-separated HMAC-SHA-256 hashes. Personal tokens are optionally expirable and revocable; public shares are single-active, expirable, revocable, and automatically revoked when a note is soft-deleted. Raw secrets are returned only at creation time, and public share secrets are accepted only in a URL fragment and never sent in the URL request line.
 
 Set `QNOTES_ALLOWED_ORIGIN` to an exact comma-separated allow-list and keep Realtime “Allow public access” disabled. Keep `QNOTES_TOKEN_PEPPER`, `QNOTES_INTERNAL_WORKER_SECRET`, and `SUPABASE_SERVICE_ROLE_KEY` server-side. Keep attachment and export limits aligned with the desired deployment; the local defaults are 20 MiB per attachment and 50 MiB per workspace ZIP.
 
-Autosave-level synchronization deliberately stops short of character-level collaboration. Shared cursors, CRDTs, operational transformation, team workspaces, public publishing, native apps, image OCR, and a large offline write queue are outside the current product boundary.
+Autosave-level synchronization deliberately stops short of character-level collaboration. Shared cursors, CRDTs, operational transformation, team workspaces, public multi-note publishing, native apps, image OCR, and a large offline write queue are outside the current product boundary. Public sharing is limited to one explicitly shared note at a time and never includes attachments.
 
 ## API and CLI quick start
 

@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type PropsWithChildren } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { Session } from '@supabase/supabase-js';
-import { supabase } from './supabase';
+import { getSupabase } from './supabase';
 
 interface AuthContextValue {
   session: Session | null;
@@ -37,6 +37,7 @@ export function AuthProvider({ children }: PropsWithChildren): JSX.Element {
     };
     setLoading(true);
     setAuthError(null);
+    const supabase = getSupabase();
     void supabase.auth.getSession().then(({ data, error }) => {
       if (!active) return;
       if (error) throw error;
@@ -61,15 +62,15 @@ export function AuthProvider({ children }: PropsWithChildren): JSX.Element {
     authError,
     retryInitialization: () => setInitializationAttempt((attempt) => attempt + 1),
     signIn: async (email, password) => {
-      const result = await supabase.auth.signInWithPassword({ email, password });
+      const result = await getSupabase().auth.signInWithPassword({ email, password });
       if (result.error) throw result.error;
     },
     signUp: async (email, password) => {
-      const result = await supabase.auth.signUp({ email, password });
+      const result = await getSupabase().auth.signUp({ email, password });
       if (result.error) throw result.error;
     },
     signOut: async () => {
-      const result = await supabase.auth.signOut();
+      const result = await getSupabase().auth.signOut();
       if (result.error) throw result.error;
     },
   }), [authError, loading, session]);

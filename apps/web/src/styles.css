@@ -429,6 +429,37 @@ a { color: inherit; text-decoration: none; }
 .q-config-block { max-height: 360px; overflow: auto; margin: 0; border-radius: 9px; padding: 12px; color: #e8f0eb; background: #173436; font: 0.73rem/1.5 "SFMono-Regular", Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .q-integration-verification { margin: 0; color: var(--muted); font-size: 0.78rem; line-height: 1.5; }
 
+.q-public-share-page { display: grid; min-height: 100dvh; place-items: start center; padding: clamp(24px, 7vw, 76px) 18px; background: radial-gradient(circle at 20% 0%, rgb(228 242 237 / 0.85), transparent 36%), var(--paper); }
+.q-public-share-shell { width: min(100%, 820px); }
+.q-public-share-brand { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); font-family: Georgia, "Times New Roman", serif; font-size: 1.2rem; font-weight: 700; }
+.q-public-share-brand .q-brand-mark { width: 34px; height: 34px; font-family: Inter, ui-sans-serif, system-ui, sans-serif; font-size: 0.78rem; }
+.q-public-share-badge { margin: 46px 0 12px; color: var(--orange); font-size: 0.72rem; font-weight: 850; letter-spacing: 0.14em; text-transform: uppercase; }
+.q-public-share-note { overflow: hidden; padding: clamp(22px, 5vw, 46px); }
+.q-public-share-note header { border-bottom: 1px solid var(--line); padding-bottom: 18px; }
+.q-public-share-note h1 { margin: 0; color: var(--ink); font-family: Georgia, "Times New Roman", serif; font-size: clamp(2rem, 6vw, 4.5rem); line-height: 0.98; letter-spacing: -0.06em; overflow-wrap: anywhere; }
+.q-public-share-updated { margin: 12px 0 0; color: var(--muted); font-size: 0.78rem; }
+.q-public-share-note .q-preview { min-height: 0; padding: 28px 0 12px; }
+.q-public-share-note footer { border-top: 1px solid var(--line); padding-top: 16px; color: var(--muted); font-size: 0.76rem; line-height: 1.5; }
+.q-public-share-note footer p { margin: 0; }
+.q-public-share-note[role="alert"] { display: grid; gap: 14px; }
+.q-public-share-note[role="alert"] h1 { font-size: clamp(2rem, 5vw, 3.4rem); }
+.q-public-share-note[role="alert"] p { margin: 0; color: var(--muted); line-height: 1.6; }
+.q-public-share-dialog { width: min(92vw, 560px); }
+.q-public-share-dialog .q-empty { margin-top: 18px; }
+.q-public-share-create, .q-public-share-existing, .q-public-share-created { display: grid; gap: 12px; margin-top: 20px; }
+.q-public-share-create > p, .q-public-share-created > p { margin: 0; }
+.q-public-share-status { display: flex; align-items: center; gap: 8px; color: var(--teal-deep); }
+.q-public-share-status svg { flex: none; }
+.q-public-share-link { display: flex; min-width: 0; align-items: center; gap: 9px; border: 1px solid #b9d7d1; border-radius: 10px; padding: 9px 10px; background: #f2faf6; }
+.q-public-share-link code { min-width: 0; flex: 1; overflow: auto; color: var(--teal-deep); font: 0.76rem/1.4 "SFMono-Regular", Consolas, monospace; white-space: nowrap; }
+.q-public-share-details { display: grid; gap: 8px; margin: 2px 0 0; }
+.q-public-share-details > div { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+.q-public-share-details dt { color: var(--muted); font-size: 0.76rem; }
+.q-public-share-details dd { margin: 0; color: var(--ink); font-size: 0.78rem; font-weight: 750; text-align: right; }
+.q-public-share-details code { color: var(--teal-deep); }
+.q-public-share-actions { margin-top: 6px; }
+.q-warning { border-left: 3px solid var(--orange); border-radius: 6px; padding: 10px 12px; color: #75441d; background: #fff4df; font-size: 0.78rem; line-height: 1.45; }
+
 @media (max-width: 480px) {
   .q-token-secret { align-items: stretch; flex-direction: column; }
   .q-token-secret code { width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -437,4 +468,11 @@ a { color: inherit; text-decoration: none; }
   .q-crop-preview { max-height: 48vh; padding: 8px; }
   .q-crop-image { max-height: 48vh; }
   .q-crop-actions .q-crop-reset { width: 100%; margin-right: 0; }
+  .q-public-share-page { padding: 22px 14px; }
+  .q-public-share-badge { margin-top: 34px; }
+  .q-public-share-note { padding: 22px 18px; }
+  .q-public-share-link { align-items: stretch; flex-direction: column; }
+  .q-public-share-link code { width: 100%; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .q-public-share-link .q-button { width: 100%; }
+  .q-public-share-actions .q-button { flex: 1 1 auto; }
 }

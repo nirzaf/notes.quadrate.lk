@@ -2,6 +2,7 @@ import type {
   ApiTokenScope,
   AppendNoteInput,
   CreateApiTokenInput,
+  CreatePublicShareInput,
   CreateNotebookInput,
   CreateNoteInput,
   ListNotesQuery,
@@ -34,6 +35,7 @@ export const MAX_TAG_COUNT = 50;
 export const MAX_BLOCK_KEY_LENGTH = 100;
 export const MAX_TOKEN_NAME_LENGTH = 80;
 export const MAX_DEDUPE_KEY_LENGTH = 200;
+export const MAX_PUBLIC_SHARE_EXPIRY_MS = 365 * 24 * 60 * 60 * 1000;
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SLUG_PATTERN = /^[a-z0-9][a-z0-9_-]{0,79}$/;
@@ -287,4 +289,19 @@ export function validateTokenInput(value: unknown): CreateApiTokenInput {
   }
   if (value.expiresAt !== null && value.expiresAt !== undefined && (typeof value.expiresAt !== 'string' || Number.isNaN(Date.parse(value.expiresAt)))) throw new QNotesValidationError('expiresAt must be an ISO date or null.');
   return { name: value.name.trim(), scopes, expiresAt: value.expiresAt === undefined ? null : value.expiresAt as string | null };
+}
+
+const ISO_DATE_TIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
+
+export function validateCreatePublicShareInput(value: unknown): CreatePublicShareInput {
+  if (!isRecord(value)) throw new QNotesValidationError('Request body must be an object.');
+  if (Object.keys(value).some((key) => key !== 'expiresAt')) throw new QNotesValidationError('Only expiresAt may be supplied.');
+  if (value.expiresAt === undefined || value.expiresAt === null) return { expiresAt: null };
+  if (typeof value.expiresAt !== 'string' || !ISO_DATE_TIME_PATTERN.test(value.expiresAt) || Number.isNaN(Date.parse(value.expiresAt))) {
+    throw new QNotesValidationError('expiresAt must be an ISO date or null.');
+  }
+  const expiry = Date.parse(value.expiresAt);
+  if (expiry <= Date.now()) throw new QNotesValidationError('expiresAt must be in the future.');
+  if (expiry > Date.now() + MAX_PUBLIC_SHARE_EXPIRY_MS) throw new QNotesValidationError('expiresAt must be within one year.');
+  return { expiresAt: value.expiresAt };
 }

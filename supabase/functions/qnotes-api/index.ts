@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import { isUUID } from '@qnotes/shared';
 import { authenticateRequest, type AuthContext } from '../_shared/auth.ts';
 import { applyCors } from '../_shared/cors.ts';
@@ -13,6 +14,7 @@ import { listAttachments, requestUpload, finalizeAttachment, getDownloadUrl, del
 import { listTokens, createToken, revokeToken } from './tokens.ts';
 import { exportNote, exportWorkspace } from './exports.ts';
 import { listNotebooks, createNotebook } from './notebooks.ts';
+import { createPublicShare, getPublicShare, resolvePublicShare, revokePublicShare } from './shares.ts';
 
 interface Variables {
   auth: AuthContext;
@@ -48,11 +50,23 @@ app.use('/api/*', async (context, next) => {
   return next();
 });
 
+app.use('/public/share/resolve', async (context, next) => {
+  context.header('Cache-Control', 'no-store');
+  context.header('Pragma', 'no-cache');
+  context.header('X-Content-Type-Options', 'nosniff');
+  return next();
+});
+
 app.onError((error, context) => {
   const apiError = error instanceof ApiError ? error : new ApiError(500, 'INTERNAL_ERROR', 'An unexpected server error occurred.');
   const requestId = context.get('requestId') ?? crypto.randomUUID();
   const response = context.json(errorBody(apiError, requestId), apiError.status as 500);
   response.headers.set('x-request-id', requestId);
+  if (context.req.path === '/public/share/resolve') {
+    response.headers.set('Cache-Control', 'no-store');
+    response.headers.set('Pragma', 'no-cache');
+    response.headers.set('X-Content-Type-Options', 'nosniff');
+  }
   return response;
 });
 
@@ -83,6 +97,18 @@ app.delete('/api/attachments/:attachmentId', deleteAttachment);
 app.get('/api/tokens', listTokens);
 app.post('/api/tokens', createToken);
 app.delete('/api/tokens/:tokenId', revokeToken);
+app.get('/api/notes/:noteId/share', getPublicShare);
+app.post('/api/notes/:noteId/share', createPublicShare);
+app.delete('/api/notes/:noteId/share', revokePublicShare);
+app.post('/public/share/resolve', bodyLimit({
+  maxSize: 1024,
+  onError: (context) => {
+    context.header('Cache-Control', 'no-store');
+    context.header('Pragma', 'no-cache');
+    context.header('X-Content-Type-Options', 'nosniff');
+    return context.json(errorBody(new ApiError(413, 'VALIDATION_ERROR', 'The public share request is too large.'), context.get('requestId') ?? crypto.randomUUID()), 413);
+  },
+}), resolvePublicShare);
 app.get('/api/export/note/:noteRef', exportNote);
 app.get('/api/export/workspace', exportWorkspace);
 

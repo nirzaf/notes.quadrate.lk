@@ -9,7 +9,8 @@
     "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js": "npm:@modelcontextprotocol/sdk@1.30.0/server/webStandardStreamableHttp.js",
     "zod": "npm:zod@4.5.4",
     "@supabase/supabase-js": "npm:@supabase/supabase-js@2.56.0",
-    "hono": "npm:hono@4.6.20",
+    "hono": "npm:hono@4.13.7",
+    "hono/body-limit": "npm:hono@4.13.7/body-limit",
     "markdown-it": "npm:markdown-it@14.1.0",
     "unpdf": "npm:unpdf@0.12.1",
     "fflate": "npm:fflate@0.8.2"

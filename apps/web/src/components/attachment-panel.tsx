@@ -2,7 +2,7 @@ import { Camera, Crop, Eye, Maximize2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { Attachment, UUID } from '@qnotes/shared';
 import { api } from '../api';
-import { supabase } from '../supabase';
+import { getSupabase } from '../supabase';
 import {
   captureVisibleScreenshot,
   cropScreenshot,
@@ -118,7 +118,7 @@ export function AttachmentPanel({ noteId, attachments, onRefresh, onCaptureFullP
     setExpanded(true);
     try {
       const request = await api.requestAttachmentUpload({ noteId, fileName: file.name, mimeType: file.type || 'application/octet-stream', sizeBytes: file.size });
-      const uploaded = await supabase.storage.from('note-attachments').uploadToSignedUrl(request.path, request.token, file);
+      const uploaded = await getSupabase().storage.from('note-attachments').uploadToSignedUrl(request.path, request.token, file);
       if (uploaded.error) throw uploaded.error;
       await api.finalizeAttachment(request.attachment.id);
       toast(screenshot ? 'Screenshot attached securely.' : 'Attachment uploaded. Text extraction and indexing are continuing.', 'success');

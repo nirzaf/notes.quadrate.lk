@@ -196,6 +196,47 @@ export type Database = {
         }
         Relationships: []
       }
+      note_shares: {
+        Row: {
+          created_at: string
+          expires_at: string | null
+          id: string
+          note_id: string
+          owner_id: string
+          revoked_at: string | null
+          token_hash: string
+          token_prefix: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          note_id: string
+          owner_id: string
+          revoked_at?: string | null
+          token_hash: string
+          token_prefix: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string | null
+          id?: string
+          note_id?: string
+          owner_id?: string
+          revoked_at?: string | null
+          token_hash?: string
+          token_prefix?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "note_shares_note_id_fkey"
+            columns: ["note_id"]
+            isOneToOne: false
+            referencedRelation: "notes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       notebooks: {
         Row: {
           created_at: string
@@ -432,6 +473,16 @@ export type Database = {
         }
         Returns: Json
       }
+      qnotes_create_note_share: {
+        Args: {
+          p_expires_at: string | null
+          p_note_id: string
+          p_owner_id: string
+          p_token_hash: string
+          p_token_prefix: string
+        }
+        Returns: Json
+      }
       qnotes_delete_queue_message: {
         Args: { p_message_id: number; p_queue_name: string }
         Returns: boolean
@@ -554,6 +605,18 @@ export type Database = {
           p_request_hash: string
         }
         Returns: Json
+      }
+      qnotes_revoke_note_share: {
+        Args: { p_note_id: string; p_owner_id: string }
+        Returns: Json
+      }
+      qnotes_revoke_note_share_on_delete: {
+        Args: Record<PropertyKey, never>
+        Returns: undefined
+      }
+      qnotes_resolve_note_share: {
+        Args: { p_token_hash: string }
+        Returns: { content_markdown: string; title: string; updated_at: string }[]
       }
       qnotes_search_snippet: {
         Args: { p_content: string; p_query: string }

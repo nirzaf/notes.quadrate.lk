@@ -1,4 +1,4 @@
-import { Copy, Download, MoreHorizontal, RotateCcw, Trash2 } from 'lucide-react';
+import { Copy, Download, MoreHorizontal, RotateCcw, Share2, Trash2 } from 'lucide-react';
 import type { Note } from '@qnotes/shared';
 import DOMPurify from 'dompurify';
 import { MarkdownParseError, renderMarkdown } from '@qnotes/markdown';
@@ -11,6 +11,7 @@ interface NoteToolbarProps {
   onDelete: () => void;
   onRestore: () => void;
   onExport: () => void;
+  onShare?: () => void;
 }
 
 async function copyPlain(value: string): Promise<void> {
@@ -28,7 +29,7 @@ async function copyPlain(value: string): Promise<void> {
   element.remove();
 }
 
-export function NoteToolbar({ note, onDelete, onRestore, onExport }: NoteToolbarProps): JSX.Element {
+export function NoteToolbar({ note, onDelete, onRestore, onExport, onShare }: NoteToolbarProps): JSX.Element {
   const { toast } = useToast();
   const copy = async (kind: 'markdown' | 'plain' | 'rendered') => {
     try {
@@ -49,6 +50,7 @@ export function NoteToolbar({ note, onDelete, onRestore, onExport }: NoteToolbar
   return <div className="q-toolbar" aria-label="Note actions">
     <Button onClick={() => void copy('markdown')}><Copy size={16} aria-hidden="true" />Copy Markdown</Button>
     <DropdownMenu><DropdownMenuTrigger asChild><Button variant="outline" size="icon" aria-label="More copy options"><MoreHorizontal size={18} aria-hidden="true" /></Button></DropdownMenuTrigger><DropdownMenuContent align="start"><DropdownMenuItem onSelect={() => void copy('plain')}>Copy Plain Text</DropdownMenuItem><DropdownMenuItem onSelect={() => void copy('rendered')}>Copy Rendered Content</DropdownMenuItem></DropdownMenuContent></DropdownMenu>
+    {!note.deletedAt && onShare ? <Button variant="outline" onClick={onShare}><Share2 size={16} aria-hidden="true" />Share</Button> : null}
     <DropdownMenu><DropdownMenuTrigger asChild><Button variant="outline" size="icon" aria-label="More note actions"><MoreHorizontal size={18} aria-hidden="true" /></Button></DropdownMenuTrigger><DropdownMenuContent align="end"><DropdownMenuItem onSelect={onExport}><Download size={15} aria-hidden="true" />Export current draft</DropdownMenuItem>{note.deletedAt ? <DropdownMenuItem onSelect={onRestore}><RotateCcw size={15} aria-hidden="true" />Restore note</DropdownMenuItem> : <DropdownMenuItem onSelect={onDelete}><Trash2 size={15} aria-hidden="true" />Move to Trash</DropdownMenuItem>}</DropdownMenuContent></DropdownMenu>
   </div>;
 }

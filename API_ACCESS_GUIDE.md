@@ -25,6 +25,8 @@ All `/api` routes except `/api/health` require an `Authorization: Bearer <token>
 
 The `/api/tokens` routes require a Supabase user-session JWT specifically. A personal token cannot create, list, or revoke personal tokens.
 
+Public sharing is deliberately separate from personal-token access. The owner share-management routes below require a Supabase user-session JWT specifically; a `qnt_...` personal token receives `403 INSUFFICIENT_SCOPE`. The unauthenticated resolver is `POST /public/share/resolve`, not an `/api` route, and accepts only a `qns_...` share secret in a small JSON body. The browser URL is `https://notes.quadrate.lk/share#qns_...`: the fragment is read locally and is not sent in the HTTP request URL.
+
 Set credentials in a shell without putting the token in a URL:
 
 ```bash
@@ -78,6 +80,37 @@ curl -fsS -X POST \
 ```
 
 Use `GET /api/tokens` to list token metadata and `DELETE /api/tokens/:tokenId` to revoke a token. Listing returns prefixes and metadata, never full token values.
+
+## Public note sharing
+
+Create a public read-only link from an authenticated owner session. The raw `qns_...` value is generated from 32 random bytes, returned only by this response, and never stored. The database stores a short prefix plus a peppered, domain-separated HMAC-SHA-256 hash. `expiresAt` may be `null` or an ISO timestamp no more than one year in the future.
+
+```bash
+curl -fsS -X POST \
+  -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+  -H 'Content-Type: application/json' \
+  "$QNOTES_URL/api/notes/NOTE_UUID/share" \
+  --data '{"expiresAt":"2026-09-13T12:00:00.000Z"}'
+```
+
+The response contains `{ data: { token, metadata } }`. Build the user-facing URL by placing the token after `#`:
+
+```text
+https://notes.quadrate.lk/share#qns_<secret>
+```
+
+`GET /api/notes/:noteId/share` returns only safe metadata for the current active share: ID, note ID, prefix, expiry, revocation time, and creation time. `POST` rotates the previous active share and returns a new raw token. `DELETE /api/notes/:noteId/share` revokes the active share. Creating or rotating a share does not publish a draft; flush the note autosave first when using the web app.
+
+Resolve a link without an `Authorization` header:
+
+```bash
+curl -fsS -X POST \
+  -H 'Content-Type: application/json' \
+  "$QNOTES_URL/public/share/resolve" \
+  --data '{"token":"qns_<secret>"}'
+```
+
+A successful resolver response contains only `title`, `contentMarkdown`, and `updatedAt`. Unknown, expired, revoked, deleted, malformed, and wrong-format tokens return the same `404 PUBLIC_SHARE_NOT_FOUND` response. Public resolver responses are `no-store`, and the public page sends no attachment requests.
 
 ## Request and response conventions
 
@@ -596,7 +629,7 @@ After building the server and saving the generated config, verify the two layers
 
 ## Endpoint reference
 
-All routes except health require a bearer credential. Personal tokens must have the listed scope; `/api/tokens` requires a Supabase user JWT even though it has no personal-token scope.
+All `/api` routes except health require a bearer credential. The public share resolver is the one unauthenticated application route; personal tokens must have the listed scope, and `/api/tokens` requires a Supabase user JWT even though it has no personal-token scope.
 
 | Method | Route | Scope / credential |
 | --- | --- | --- |
@@ -628,6 +661,10 @@ All routes except health require a bearer credential. Personal tokens must have 
 | `GET` | `/api/tokens` | Supabase user JWT |
 | `POST` | `/api/tokens` | Supabase user JWT |
 | `DELETE` | `/api/tokens/:tokenId` | Supabase user JWT |
+| `GET` | `/api/notes/:noteId/share` | Supabase user JWT |
+| `POST` | `/api/notes/:noteId/share` | Supabase user JWT |
+| `DELETE` | `/api/notes/:noteId/share` | Supabase user JWT |
+| `POST` | `/public/share/resolve` | None; body must contain only a `qns_...` token |
 
 ## Troubleshooting and security
 
@@ -647,6 +684,8 @@ All routes except health require a bearer credential. Personal tokens must have 
 - `422 UNSUPPORTED_ATTACHMENT_TYPE`: use one of the supported MIME types.
 - `422 DUPLICATE_BLOCK_KEY` or `INVALID_COPY_BLOCK`: fix the named/fenced Markdown block syntax and make named IDs unique within the note.
 - `403 CORS_ORIGIN_DENIED`: send the request from an origin in the server’s exact `QNOTES_ALLOWED_ORIGIN` allow-list.
+- `403 INSUFFICIENT_SCOPE` on a share-management route: use the Supabase user-session JWT, not a `qnt_...` personal token.
+- `404 PUBLIC_SHARE_NOT_FOUND`: the share secret is invalid, expired, revoked, or the note was deleted. The response is intentionally indistinguishable across those cases.
 - `503 SEMANTIC_SEARCH_UNAVAILABLE`: embedding-backed retrieval or its database RPC failed; use `mode=keyword` temporarily or verify the embedding runtime and worker deployment. Query-embedding failures are returned as degraded keyword results instead.
 
 Do not use the Supabase database password, service-role key, publishable key, or an Auth session token as a replacement for a personal `qnt_...` token in a script or MCP adapter. If a personal token is exposed, revoke it immediately from [Integrations](https://notes.quadrate.lk/settings/integrations) and create a replacement.

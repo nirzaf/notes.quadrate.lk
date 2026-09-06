@@ -4,12 +4,16 @@ import type {
   AppendNoteInput,
   CreateApiTokenInput,
   CreateApiTokenResult,
+  CreatePublicShareInput,
+  CreatePublicShareResult,
   CreateNotebookInput,
   CreateNoteInput,
   Note,
   Notebook,
   NoteBlock,
   NoteSummary,
+  PublicShareMetadata,
+  PublicSharedNote,
   SearchContext,
   SearchMode,
   SearchRequest,
@@ -271,6 +275,25 @@ function isTokenMetadata(value: unknown): value is ApiTokenMetadata {
     && isNullableString(value.revokedAt) && isString(value.createdAt);
 }
 
+function hasOnlyKeys(value: Record<string, unknown>, keys: string[]): boolean {
+  return Object.keys(value).length === keys.length && keys.every((key) => Object.prototype.hasOwnProperty.call(value, key));
+}
+
+function isPublicSharedNote(value: unknown): value is PublicSharedNote {
+  return isRecord(value) && hasOnlyKeys(value, ['title', 'contentMarkdown', 'updatedAt'])
+    && isString(value.title) && isString(value.contentMarkdown) && isString(value.updatedAt);
+}
+
+function isPublicShareMetadata(value: unknown): value is PublicShareMetadata {
+  return isRecord(value) && hasOnlyKeys(value, ['id', 'noteId', 'tokenPrefix', 'expiresAt', 'revokedAt', 'createdAt'])
+    && isString(value.id) && isString(value.noteId) && isString(value.tokenPrefix)
+    && isNullableString(value.expiresAt) && isNullableString(value.revokedAt) && isString(value.createdAt);
+}
+
+function isCreatePublicShareResult(value: unknown): value is CreatePublicShareResult {
+  return isRecord(value) && hasOnlyKeys(value, ['token', 'metadata']) && isString(value.token) && isPublicShareMetadata(value.metadata);
+}
+
 function isValid<T>(value: unknown, validator: (value: unknown) => value is T, resource: string): T {
   if (!validator(value)) throw new QNotesProtocolError(resource);
   return value;
@@ -336,6 +359,41 @@ export class QNotesClient {
 
   private async requestValidated<T>(path: string, validator: (value: unknown) => value is T, resource: string, init: RequestInit = {}, options: RequestOptions = {}): Promise<T> {
     return isValid(await this.request<unknown>(path, init, options), validator, resource);
+  }
+
+  private async publicRequestWithResponse<T>(path: string, init: RequestInit = {}, options: RequestOptions = {}): Promise<{ data: T; response: Response }> {
+    const requestSignal = createRequestSignal(options.signal ?? init.signal, options.timeoutMs);
+    try {
+      throwIfAborted(requestSignal.signal);
+      const headers = new Headers(init.headers);
+      headers.set('Accept', 'application/json');
+      if (init.body !== undefined && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+      const response = await this.fetchImplementation(`${this.baseUrl}${path}`, {
+        ...init,
+        headers,
+        ...(requestSignal.signal ? { signal: requestSignal.signal } : {}),
+      });
+      throwIfAborted(requestSignal.signal);
+      if (!response.ok) {
+        const contentType = response.headers.get('content-type') ?? '';
+        const body: unknown = contentType.includes('application/json') ? await response.json().catch(() => null) : await response.text().catch(() => '');
+        throwIfAborted(requestSignal.signal);
+        const envelope = typeof body === 'object' && body !== null && 'error' in body ? (body as { error?: unknown }).error : null;
+        const error = typeof envelope === 'object' && envelope !== null ? envelope as { code?: unknown; message?: unknown; requestId?: unknown; details?: unknown } : {};
+        const code = typeof error.code === 'string' ? error.code : 'INTERNAL_ERROR';
+        throw new QNotesHttpError(response.status, code as QNotesHttpError['code'], typeof error.message === 'string' ? error.message : `Request failed with HTTP ${response.status}.`, typeof error.requestId === 'string' ? error.requestId : response.headers.get('x-request-id') ?? '', error.details);
+      }
+      const body: unknown = await response.json();
+      throwIfAborted(requestSignal.signal);
+      if (typeof body !== 'object' || body === null || !('data' in body)) throw new Error('QNotes API returned an invalid success envelope.');
+      return { data: (body as Success<T>).data, response };
+    } finally {
+      requestSignal.cleanup();
+    }
+  }
+
+  private async publicRequestValidated<T>(path: string, validator: (value: unknown) => value is T, resource: string, init: RequestInit = {}, options: RequestOptions = {}): Promise<T> {
+    return isValid((await this.publicRequestWithResponse<unknown>(path, init, options)).data, validator, resource);
   }
 
   private async binary(path: string, options: RequestOptions = {}): Promise<Response> {
@@ -481,6 +539,22 @@ export class QNotesClient {
 
   getAttachmentDownloadUrl(attachmentId: UUID, options: RequestOptions = {}): Promise<{ signedUrl: string; expiresInSeconds: 60 }> {
     return this.requestValidated(`/attachments/${encodeURIComponent(attachmentId)}`, (value): value is { signedUrl: string; expiresInSeconds: 60 } => isRecord(value) && isString(value.signedUrl) && value.expiresInSeconds === 60, 'attachment download', {}, options);
+  }
+
+  getPublicShare(noteId: UUID, options: RequestOptions = {}): Promise<PublicShareMetadata | null> {
+    return this.requestValidated(`/notes/${encodeURIComponent(noteId)}/share`, (value): value is PublicShareMetadata | null => value === null || isPublicShareMetadata(value), 'public share', {}, options);
+  }
+
+  createPublicShare(noteId: UUID, input: CreatePublicShareInput, options: RequestOptions = {}): Promise<CreatePublicShareResult> {
+    return this.requestValidated(`/notes/${encodeURIComponent(noteId)}/share`, isCreatePublicShareResult, 'public share', { method: 'POST', body: JSON.stringify(input) }, options);
+  }
+
+  async revokePublicShare(noteId: UUID, options: RequestOptions = {}): Promise<void> {
+    await this.request(`/notes/${encodeURIComponent(noteId)}/share`, { method: 'DELETE' }, options);
+  }
+
+  resolvePublicShare(token: string, options: RequestOptions = {}): Promise<PublicSharedNote> {
+    return this.publicRequestValidated('/public/share/resolve', isPublicSharedNote, 'public shared note', { method: 'POST', body: JSON.stringify({ token }) }, options);
   }
 
   listTokens(options: RequestOptions = {}): Promise<ApiTokenMetadata[]> {

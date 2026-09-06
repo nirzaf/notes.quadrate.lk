@@ -14,6 +14,7 @@ import { SyncStatus } from '../components/sync-status';
 import { ConflictResolver } from '../components/conflict-resolver';
 import { AttachmentPanel } from '../components/attachment-panel';
 import { NoteMetadataEditor } from '../components/note-metadata-editor';
+import { PublicShareDialog } from '../components/public-share-dialog';
 import { Button } from '../components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { useToast } from '../components/ui/toast';
@@ -89,9 +90,11 @@ function LoadedNoteSession({ note, userId, search, queryKeys }: LoadedNoteSessio
   const [view, setView] = useState<'edit' | 'preview'>('edit');
   const [movingNotebook, setMovingNotebook] = useState(false);
   const [deleteBlocked, setDeleteBlocked] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
   const notesQuery = useQuery({ queryKey: queryKeys.sidebar, queryFn: ({ signal }) => api.listNotes({ limit: 50, signal }) });
   const notebooksQuery = useQuery({ queryKey: queryKeys.notebooks, queryFn: ({ signal }) => api.listNotebooks({ signal }) });
   const attachmentsQuery = useQuery({ queryKey: queryKeys.attachments(note.id), queryFn: ({ signal }) => api.listAttachments(note.id, { signal }) });
+  const shareQuery = useQuery({ queryKey: queryKeys.share(note.id), queryFn: ({ signal }) => api.getPublicShare(note.id, { signal }), enabled: !note.deletedAt });
   const searchContextQuery = useQuery({ queryKey: search.documentId ? queryKeys.searchContext(search.documentId) : ['qnotes', userId, 'search-context', 'none'], queryFn: ({ signal }) => api.readNoteContext(search.documentId!, { before: 1, after: 1, maxTokens: 1800, signal }), enabled: Boolean(search.documentId), staleTime: 30_000 });
   const onSaved = useCallback((saved: Note) => {
     queryClient.setQueryData(queryKeys.note(saved.id), saved);
@@ -102,6 +105,14 @@ function LoadedNoteSession({ note, userId, search, queryKeys }: LoadedNoteSessio
     setConflict({ error, remote: asNote(details?.currentNote), remoteDeleted: Boolean(details && 'deleted' in details && details.deleted) });
   }, []);
   const autosave = useNoteAutosave({ note, onSaved, onConflict, readOnly: Boolean(note.deletedAt) });
+  const flushBeforeShare = useCallback(async () => {
+    if (!autosave.dirty && autosave.status !== 'saving' && autosave.status !== 'pending') return;
+    try {
+      await autosave.flush();
+    } catch {
+      throw new Error('Save the note successfully before creating a public link. Public links show only saved content.');
+    }
+  }, [autosave]);
   const { create } = useCreateNote({
     notebookId: note.notebookId,
     onCreated: async (created) => { await queryClient.invalidateQueries({ queryKey: queryKeys.all }); await navigate({ to: '/notes/$noteId', params: { noteId: created.id } }); },
@@ -262,7 +273,7 @@ function LoadedNoteSession({ note, userId, search, queryKeys }: LoadedNoteSessio
       {searchContextQuery.data && <section className="q-search-context" aria-label="Matching search context"><div className="q-search-context-heading"><div><span className="q-eyebrow">Opened from search</span><strong>{searchContextQuery.data.headingPath ?? searchContextQuery.data.sourceTitle ?? 'Matching section'}</strong><span className="q-small">{searchContextQuery.data.sourceType === 'attachment_chunk' ? `Attachment excerpt${searchContextQuery.data.pageNumber ? ` · page ${searchContextQuery.data.pageNumber}` : ''}` : 'Authoritative current context'}{note.version !== searchContextQuery.data.noteVersion ? ' · The note changed since this result was indexed.' : ''}</span></div>{searchContextQuery.data.attachmentId && <Button type="button" variant="outline" size="sm" onClick={() => void openContextAttachment()}>Open attachment</Button>}</div><p>{[...searchContextQuery.data.previous, searchContextQuery.data.content, ...searchContextQuery.data.next].join('\n\n')}</p></section>}
       <div className="q-editor-page"><section className="q-card q-editor-card">{note.deletedAt ? <div className="q-deleted-banner" role="status">This note is in Trash. Restore it to continue editing.</div> : null}
         <div className="q-editor-meta"><div className="q-editor-metadata"><NoteMetadataEditor title={autosave.title} tags={autosave.tags} disabled={Boolean(note.deletedAt)} onTitleChange={(nextTitle) => autosave.changeMetadata({ title: nextTitle })} onTitleBlur={() => autosave.changeMetadata({ title: autosave.title.trim() || 'Untitled note' })} onTagsChange={(nextTags) => autosave.changeMetadata({ tags: nextTags })} /><div className="q-small">{note.slug} · updated {formatUpdatedAt(note.updatedAt)}</div>{autosave.errorMessage ? <div className="q-error q-editor-save-error" role="alert">{autosave.errorMessage}</div> : null}</div><SyncStatus status={syncing ? 'syncing' : autosave.status} savedAt={autosave.savedAt} onRetry={autosave.retry} /></div>
-        <div className="q-editor-controls"><div className="q-toolbar" aria-label="Note view"><Button variant={view === 'edit' ? 'secondary' : 'ghost'} size="sm" onClick={() => setView('edit')}>Edit</Button><Button variant={view === 'preview' ? 'secondary' : 'ghost'} size="sm" onClick={() => setView('preview')}>Preview</Button></div><NotebookPicker notebooks={notebooksQuery.data?.items ?? []} value={note.notebookId} disabled={Boolean(note.deletedAt) || movingNotebook || autosave.dirty || autosave.status === 'saving' || autosave.status === 'pending'} onChange={(notebookId) => void moveNotebook(notebookId)} /><div className="q-editor-actions"><NoteToolbar note={noteForCopy} onDelete={() => void updateDeletion('delete')} onRestore={() => void updateDeletion('restore')} onExport={() => void exportNote()} /></div></div>
+        <div className="q-editor-controls"><div className="q-toolbar" aria-label="Note view"><Button variant={view === 'edit' ? 'secondary' : 'ghost'} size="sm" onClick={() => setView('edit')}>Edit</Button><Button variant={view === 'preview' ? 'secondary' : 'ghost'} size="sm" onClick={() => setView('preview')}>Preview</Button></div><NotebookPicker notebooks={notebooksQuery.data?.items ?? []} value={note.notebookId} disabled={Boolean(note.deletedAt) || movingNotebook || autosave.dirty || autosave.status === 'saving' || autosave.status === 'pending'} onChange={(notebookId) => void moveNotebook(notebookId)} /><div className="q-editor-actions"><NoteToolbar note={noteForCopy} onDelete={() => void updateDeletion('delete')} onRestore={() => void updateDeletion('restore')} onExport={() => void exportNote()} onShare={() => setShareOpen(true)} /></div></div>
         {view === 'edit' ? <EditorErrorBoundary><Suspense fallback={<div className="q-empty">Loading editor…</div>}><NoteEditor key={note.id} value={autosave.value} onChange={autosave.change} readOnly={Boolean(note.deletedAt)} /></Suspense></EditorErrorBoundary> : <NotePreview markdown={autosave.value} />}
         <div className="q-editor-footer"><span className="q-small">{note.deletedAt ? 'Read-only note in Trash.' : 'Markdown is saved after 800ms of quiet.'}</span></div>
       </section>{!note.deletedAt ? <aside className="q-panel-stack"><AttachmentPanel noteId={note.id} attachments={attachmentsQuery.data ?? []} onRefresh={() => attachmentsQuery.refetch()} onCaptureFullPage={captureEntirePage} /></aside> : null}</div>
@@ -270,5 +281,6 @@ function LoadedNoteSession({ note, userId, search, queryKeys }: LoadedNoteSessio
     <ConflictResolver open={Boolean(conflict)} baseMarkdown={note.contentMarkdown} localMarkdown={autosave.value} remoteNote={conflict?.remote ?? null} remoteDeleted={conflict?.remoteDeleted ?? false} error={conflict?.error} onUseMine={saveMine} onUseRemote={saveRemote} onSaveMerged={saveMerged} onSaveAsNew={() => void saveAsNew()} onCancel={() => setConflict(null)} />
     <Dialog open={blocker.status === 'blocked'} onOpenChange={(open) => { if (!open) blocker.reset?.(); }}><DialogContent><DialogHeader><DialogTitle>Save is still pending</DialogTitle><DialogDescription>The server did not confirm the latest edit. Your local draft remains available. Retry, stay here, or leave only after the draft is durably stored on this account.</DialogDescription></DialogHeader><div className="q-dialog-actions"><Button variant="outline" onClick={() => blocker.reset?.()}>Stay and edit</Button><Button variant="secondary" onClick={() => { blocker.reset?.(); autosave.retry(); }}>Retry save</Button><Button onClick={() => void leaveWithDraft()}>Leave with draft</Button></div></DialogContent></Dialog>
     <Dialog open={deleteBlocked} onOpenChange={setDeleteBlocked}><DialogContent><DialogHeader><DialogTitle>Save is blocked</DialogTitle><DialogDescription>Your local draft is retained, but the server rejected or could not receive the latest changes. Keep editing and retry, or move the current server version to Trash while keeping this draft for recovery.</DialogDescription></DialogHeader><div className="q-dialog-actions"><Button variant="outline" onClick={() => setDeleteBlocked(false)}>Keep note</Button><Button variant="danger" onClick={() => void updateDeletion('delete', true)}>Delete anyway</Button></div></DialogContent></Dialog>
+    <PublicShareDialog open={shareOpen} note={noteForCopy} share={shareQuery.data ?? null} loading={shareQuery.isPending} onOpenChange={setShareOpen} onBeforeCreate={flushBeforeShare} onRefresh={() => shareQuery.refetch()} />
   </AppShell>;
 }

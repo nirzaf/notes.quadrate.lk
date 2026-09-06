@@ -110,7 +110,7 @@ pnpm run test:unit
 pnpm exec supabase db push --linked --dry-run
 ```
 
-The current release includes the additive migrations through `20260905000200_stage3_append_idempotency.sql`. Review them in the dry-run output before applying; the latest migrations add the transaction-safe logical append receipt for the REST API, CLI, and MCP write profile, while the preceding migrations fix pagination and embedding queue races, preserve legacy RPC wrappers on the v2 contract, add restore dedupe conflict reporting, keep incompatible vectors out of semantic search, and add the daily stale-embedding recovery schedule.
+The current release includes the additive migrations through `20260906000100_public_note_sharing.sql`. Review them in the dry-run output before applying; the latest migration adds the RLS-protected `notesdb.note_shares` table, service-only create/rotate/revoke/resolve RPCs, and automatic share revocation on note soft-delete. The preceding migrations add the transaction-safe logical append receipt for the REST API, CLI, and MCP write profile, while earlier migrations fix pagination and embedding queue races, preserve legacy RPC wrappers on the v2 contract, add restore dedupe conflict reporting, keep incompatible vectors out of semantic search, and add the daily stale-embedding recovery schedule.
 
 ### 3. Apply pending production migrations
 
@@ -154,6 +154,8 @@ npx --yes wrangler@4.128.0 pages deploy apps/web/dist \
   --commit-message "$(git log -1 --pretty=%s)" \
   --commit-dirty=false
 ```
+
+The frontend build includes `apps/web/public/_headers`, which applies `no-store`, `no-referrer`, `noindex`, and a restrictive CSP to `/share`; keep that file in the Pages artifact. `apps/web/public/robots.txt` also disallows crawler access to `/share`. Do not deploy a public-share frontend until the matching database migration and `qnotes-api` function are available.
 
 The command returns a deployment URL. A `master` deployment is production; other branches may create preview deployments.
 

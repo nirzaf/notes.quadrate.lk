@@ -1,6 +1,6 @@
 import { useEffect } from 'react';
 import type { RealtimeNoteEvent } from '@qnotes/shared';
-import { supabase } from '../supabase';
+import { getSupabase } from '../supabase';
 import { useAuth } from '../auth-context';
 
 function isRealtimeNoteEvent(value: unknown): value is RealtimeNoteEvent {
@@ -12,6 +12,7 @@ export function useNoteRealtime(onEvent: (event: RealtimeNoteEvent) => void, onR
   useEffect(() => {
     const userId = session?.user.id;
     if (!userId) return undefined;
+    const supabase = getSupabase();
     const channel = supabase.channel(`user:${userId}:notes`, { config: { private: true } });
     let connected = false;
     let active = true;
