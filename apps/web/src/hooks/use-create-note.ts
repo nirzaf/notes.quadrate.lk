@@ -4,13 +4,15 @@ import type { CreateNoteInput, Note } from '@qnotes/shared';
 import { api } from '../api';
 import { getDeviceId } from '../indexed-db';
 
-export function buildNewNoteInput(notebookId: string | null): CreateNoteInput {
+export type NewNotePreset = Partial<Pick<CreateNoteInput, 'title' | 'slug' | 'contentMarkdown' | 'tags'>>;
+
+export function buildNewNoteInput(notebookId: string | null, preset: NewNotePreset = {}): CreateNoteInput {
   const mutationId = crypto.randomUUID();
   return {
-    title: 'Untitled note',
-    slug: `untitled-note-${mutationId.slice(0, 8)}`,
-    contentMarkdown: '',
-    tags: [],
+    title: preset.title ?? 'Untitled note',
+    slug: preset.slug ?? `untitled-note-${mutationId.slice(0, 8)}`,
+    contentMarkdown: preset.contentMarkdown ?? '',
+    tags: preset.tags ?? [],
     ...(notebookId ? { notebookId } : {}),
     deviceId: getDeviceId(),
     mutationId,
@@ -23,7 +25,7 @@ interface UseCreateNoteOptions {
   onError?: (error: unknown) => void;
 }
 
-export function useCreateNote({ notebookId, onCreated, onError }: UseCreateNoteOptions): { create: () => Promise<void>; creating: boolean; error: unknown | null } {
+export function useCreateNote({ notebookId, onCreated, onError }: UseCreateNoteOptions): { create: (preset?: NewNotePreset) => Promise<void>; creating: boolean; error: unknown | null } {
   const { session } = useAuth();
   const userId = session?.user.id ?? null;
   const [creating, setCreating] = useState(false);
@@ -40,14 +42,14 @@ export function useCreateNote({ notebookId, onCreated, onError }: UseCreateNoteO
   useEffect(() => () => { mountedRef.current = false; }, []);
   useEffect(() => { pendingInputRef.current = null; }, [userId]);
 
-  const create = useCallback(async () => {
+  const create = useCallback(async (preset?: NewNotePreset) => {
     if (inFlightRef.current || !userIdRef.current) return;
     const requestUserId = userIdRef.current;
     inFlightRef.current = true;
     setCreating(true);
     setError(null);
     try {
-      const input = pendingInputRef.current ?? buildNewNoteInput(notebookId);
+      const input = pendingInputRef.current ?? buildNewNoteInput(notebookId, preset);
       pendingInputRef.current = input;
       const result = await api.createNoteDetailed(input);
       pendingInputRef.current = null;

@@ -88,6 +88,23 @@ test('New note from the integrations page is a real mutation and navigation', as
   assertNoPageErrors();
 });
 
+test('offers a starter note for an empty workspace and clears search quickly', async ({ page }) => {
+  await signInPage(page);
+  await expect(page.getByRole('heading', { name: 'Make your first note' })).toBeVisible();
+  await page.getByRole('button', { name: 'Use starter note' }).click();
+  await expect(page).toHaveURL(/\/notes\/[0-9a-f-]+$/);
+  await expect(page.locator('.cm-content')).toContainText('private Markdown workspace');
+  await expect(page.getByRole('status')).toContainText(/Saved/);
+
+  await page.getByRole('link', { name: 'Quadrate Notes home' }).click();
+  const search = page.getByRole('textbox', { name: 'Search notes' }).first();
+  await search.fill('private Markdown workspace');
+  await expect(page.getByRole('button', { name: 'Clear search' })).toBeVisible();
+  await page.getByRole('button', { name: 'Clear search' }).click();
+  await expect(search).toHaveValue('');
+  await expect(page).toHaveURL(/\/$/);
+});
+
 test('restores submitted search context after opening a result and refreshing', async ({ page }) => {
   const session = await signInSession();
   const marker = `search-${crypto.randomUUID()}`;

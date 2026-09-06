@@ -80,6 +80,8 @@ a { color: inherit; text-decoration: none; }
 .q-search-large { display: flex; align-items: center; gap: 12px; border: 1px solid var(--line); border-radius: 15px; padding: 0 15px; background: var(--white); box-shadow: 0 9px 25px rgb(23 52 54 / 0.05); }
 .q-search-large input { min-width: 0; flex: 1; height: 54px; border: 0; outline: 0; background: transparent; color: var(--ink); }
 .q-search-kbd { border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; color: var(--muted); font-size: 0.7rem; }
+.q-search-clear { display: inline-grid; width: 32px; height: 32px; flex: none; place-items: center; border: 0; border-radius: 8px; color: var(--muted); background: transparent; }
+.q-search-clear:hover { color: var(--ink); background: var(--paper-deep); }
 .q-search-status { margin: 10px 2px 0; color: var(--muted); font-size: 0.82rem; }
 .q-search-options { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; margin-top: 10px; }
 .q-search-options label:not(.q-search-local) { display: grid; gap: 4px; }
@@ -103,6 +105,12 @@ a { color: inherit; text-decoration: none; }
 .q-section-heading h2 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: 1.35rem; letter-spacing: -0.04em; }
 .q-empty { border: 1px dashed var(--line); border-radius: 14px; padding: 32px 18px; color: var(--muted); text-align: center; }
 .q-empty p { margin: 8px 0 0; }
+.q-empty-welcome { display: grid; justify-items: center; gap: 8px; color: var(--muted); }
+.q-empty-welcome > svg { color: var(--teal); }
+.q-empty-welcome h3 { margin: 0; color: var(--ink); font-family: Georgia, "Times New Roman", serif; font-size: 1.45rem; letter-spacing: -0.04em; }
+.q-empty-welcome p { max-width: 440px; line-height: 1.55; }
+.q-empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 12px; }
+.q-empty-action { margin-top: 16px; }
 
 .q-button { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; gap: 8px; border: 1px solid transparent; border-radius: 10px; padding: 9px 14px; font-size: 0.88rem; font-weight: 750; transition: transform 150ms ease, background 150ms ease, border-color 150ms ease; }
 .q-button:hover { transform: translateY(-1px); }

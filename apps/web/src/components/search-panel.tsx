@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Search } from 'lucide-react';
+import { Search, X } from 'lucide-react';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import type { Notebook, SearchFilters, SearchResponse, SearchResult, SearchSourceType } from '@qnotes/shared';
 import { MAX_TAG_LENGTH } from '@qnotes/shared';
@@ -156,6 +156,11 @@ export function SearchPanel({
     const nextQuery = query.trim(); setDebounced(nextQuery);
     onSearchParamsChange?.({ q: nextQuery || undefined, documentId: undefined, blockKey: undefined, attachmentId: undefined }, { replace: false });
   };
+  const clearQuery = () => {
+    setQuery('');
+    setDebounced('');
+    onSearchParamsChange?.({ q: undefined, documentId: undefined, blockKey: undefined, attachmentId: undefined }, { replace: false });
+  };
   const changeTag = (value: string) => { const next = value.trim().toLowerCase(); setTagFilter(next); onSearchParamsChange?.({ tag: next || undefined, documentId: undefined, blockKey: undefined, attachmentId: undefined }, { replace: false }); };
   const changeSource = (value: SearchSourceType | '') => { setSourceFilter(value); onSearchParamsChange?.({ source: value || undefined, documentId: undefined, blockKey: undefined, attachmentId: undefined }, { replace: false }); };
   const clearFilters = () => { setTagFilter(''); setSourceFilter(''); onNotebookChange?.(null); onSearchParamsChange?.({ tag: undefined, source: undefined, documentId: undefined, blockKey: undefined, attachmentId: undefined }, { replace: false }); };
@@ -197,7 +202,7 @@ export function SearchPanel({
                 : 'No matches yet. Try a shorter phrase or reset the filters.';
 
   return <section className="q-search-panel" aria-label="Search notes" aria-busy={result.isFetching}>
-    <form className="q-search-large q-mobile-search" onSubmit={submit}><Search size={19} aria-hidden="true" /><input id="global-search-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your notes, blocks, and attachments…" aria-label="Search notes" /><span className="q-search-kbd" aria-label={`Keyboard shortcut ${searchShortcutLabel()}`}>{searchShortcutLabel()}</span></form>
+    <form className="q-search-large q-mobile-search" onSubmit={submit}><Search size={19} aria-hidden="true" /><input id="global-search-input" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search your notes, blocks, and attachments…" aria-label="Search notes" />{query && <button type="button" className="q-search-clear" onClick={clearQuery} aria-label="Clear search"><X size={17} aria-hidden="true" /></button>}<span className="q-search-kbd" aria-label={`Keyboard shortcut ${searchShortcutLabel()}`}>{searchShortcutLabel()}</span></form>
     <div className="q-search-options">
       {notebooks.length > 0 && <label><span className="q-label">Notebook</span><select aria-label="Filter search by notebook" value={selectedNotebookId ?? ''} onChange={(event) => onNotebookChange?.(event.target.value || null)}><option value="">All notebooks</option><option value={UNFILED_SEARCH_NOTEBOOK}>Unfiled</option>{notebooks.map((notebook) => <option value={notebook.id} key={notebook.id}>{notebook.name}</option>)}</select></label>}
       <label><span className="q-label">Tag</span><input className="q-search-filter-input" aria-label="Filter search by tag" list="known-note-tags" value={tagFilter} onChange={(event) => changeTag(event.target.value)} placeholder="Any tag" maxLength={MAX_TAG_LENGTH} /><datalist id="known-note-tags">{tags.map((tag) => <option value={tag} key={tag} />)}</datalist></label>

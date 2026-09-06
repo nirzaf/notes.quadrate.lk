@@ -47,6 +47,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
   const [value, setValue] = useState(note.contentMarkdown);
   const [title, setTitle] = useState(note.title);
   const [tags, setTags] = useState<string[]>(note.tags);
+  const [savedAt, setSavedAt] = useState(note.updatedAt);
   const [status, setStatus] = useState<SyncStatus>('saved');
   const [dirty, setDirty] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -166,6 +167,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
         const saved = await api.updateNote(current.id, requestPayload);
         if (!mountedRef.current || revision !== saveRevision.current) return;
         authoritative.current = saved;
+        setSavedAt(saved.updatedAt);
         setAcknowledgedMutationId(mutationId);
         acknowledgedMutationIdRef.current = mutationId;
         void rememberNote(saved, userIdRef.current).catch(() => undefined);
@@ -253,6 +255,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
       setValue(note.contentMarkdown);
       setTitle(note.title);
       setTags([...note.tags]);
+      setSavedAt(note.updatedAt);
       setDirty(false);
       setAcknowledgedMutationId(null);
       acknowledgedMutationIdRef.current = null;
@@ -269,6 +272,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
       }
       setTitle(note.title);
       setTags([...note.tags]);
+      setSavedAt(note.updatedAt);
     }
   }, [note]);
 
@@ -397,6 +401,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
     setValue(nextNote.contentMarkdown);
     setTitle(nextNote.title);
     setTags([...nextNote.tags]);
+    setSavedAt(nextNote.updatedAt);
     setDirty(false);
     setAcknowledgedMutationId(null);
     acknowledgedMutationIdRef.current = null;
@@ -410,5 +415,5 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
     setAcknowledgedMutationId(mutationId);
   }, []);
   const isMutationAcknowledged = useCallback((mutationId: string) => acknowledgedMutationIdRef.current === mutationId, []);
-  return { value, title, tags, status, dirty, errorMessage, acknowledgedMutationId, change, changeMetadata, flush, preserveDraft, retry, adoptRemote, acknowledgeMutation, isMutationAcknowledged };
+  return { value, title, tags, status, savedAt, dirty, errorMessage, acknowledgedMutationId, change, changeMetadata, flush, preserveDraft, retry, adoptRemote, acknowledgeMutation, isMutationAcknowledged };
 }
