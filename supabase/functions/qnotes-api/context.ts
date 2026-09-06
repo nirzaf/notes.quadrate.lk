@@ -92,7 +92,9 @@ function decodeContinuation(value: string): ContinuationPayload {
       parsed.version !== 1
       || !isUUID(parsed.documentId)
       || !isUUID(parsed.noteId)
+      || typeof parsed.noteVersion !== 'number'
       || !Number.isSafeInteger(parsed.noteVersion)
+      || typeof parsed.nextOffset !== 'number'
       || !Number.isSafeInteger(parsed.nextOffset)
       || parsed.nextOffset < 0
       || typeof parsed.sourceHash !== 'string'
@@ -195,7 +197,7 @@ async function contextFor(userId: string, request: ContextRequest): Promise<Sear
   const document = await loadDocument(userId, request.documentId);
   const neighbors = continuation ? { previous: [], next: [] } : await loadNeighbors(userId, document, request);
   const noteAfter = await loadNote(userId, document.note_id);
-  if (contextNoteChanged(noteBefore, noteAfter)) {
+  if (contextNoteChanged({ version: noteBefore.version, updatedAt: noteBefore.updated_at }, { version: noteAfter.version, updatedAt: noteAfter.updated_at })) {
     throw new ApiError(409, 'NOTE_VERSION_CONFLICT', 'The note changed while context was being read. Retry the context request.', {
       currentVersion: noteAfter.version,
       currentUpdatedAt: noteAfter.updated_at,

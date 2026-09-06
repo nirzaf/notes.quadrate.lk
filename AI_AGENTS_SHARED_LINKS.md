@@ -1,6 +1,6 @@
 # Fetching Quadrate Notes from Shared Links
 
-This guide explains how an AI agent can retrieve a shared Quadrate Notes note as Markdown. A shared link is read-only, does not require a user JWT, and exposes only the saved note title and Markdown body. Attachments, notebooks, workspace metadata, and other notes are not exposed.
+This guide explains how an AI agent can retrieve a shared Quadrate Notes note. A shared link is read-only, does not require a user JWT, and exposes only the saved note title and Markdown body. Attachments, notebooks, workspace metadata, and other notes are not exposed.
 
 ## Identify the link type
 
@@ -10,65 +10,60 @@ The web-app link looks like this:
 https://notes.quadrate.lk/share#qns_<secret>
 ```
 
-That URL is intended for a browser. The token is after `#`, so browsers do not send it to the server as part of the request URL. An agent should not fetch this page and expect the response to be Markdown.
+That URL is intended for a browser. The token is after `#`, so browsers do not send it to the server as part of the request URL. If an agent receives only this browser link, it can read the fragment locally and extract the `qns_...` token.
 
-Use the public resolver endpoint instead:
+The public resolver is a POST endpoint:
 
 ```text
-https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-api/public/share/resolve?token=qns_<secret>
+POST https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-api/public/share/resolve
+Content-Type: application/json
+
+{"token":"qns_<secret>"}
 ```
 
-The share dialog displays the raw resolver endpoint immediately after a link is created. If an agent receives only the browser URL, it can read the fragment locally and put that token in the resolver request; do not send the browser URL as the API request.
+Do not put the token in a path, query string, referrer, prompt transcript, or log. The share dialog does not construct or retain another secret-bearing URL.
 
-## Fetch the raw Markdown
+## Fetch the note with HTTP
 
-The `GET` endpoint returns the exact saved `contentMarkdown` value. No `Authorization` header or personal API token is needed.
+The resolver returns the exact saved `contentMarkdown` value inside a JSON response. No `Authorization` header or personal API token is needed.
 
 ```bash
 export QNOTES_SHARE_TOKEN='qns_<secret>'
 
-curl --fail --silent --show-error --location --get \
-  -H 'Accept: text/markdown' \
-  --data-urlencode "token=$QNOTES_SHARE_TOKEN" \
+curl --fail --silent --show-error \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json' \
+  --data "{\"token\":\"$QNOTES_SHARE_TOKEN\"}" \
   'https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-api/public/share/resolve'
 ```
 
-To save the result for processing, add `-o note.md`. `--data-urlencode` is preferred because it safely encodes the token as a query parameter.
+The successful response has the shape `{ "data": { "title", "contentMarkdown", "updatedAt" } }`. Pass `data.contentMarkdown` to the next agent step or save that field as `note.md`.
 
 Equivalent JavaScript/TypeScript:
 
 ```js
-const apiUrl = new URL(
+const response = await fetch(
   "https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-api/public/share/resolve",
+  {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ token: shareToken }),
+  },
 );
-apiUrl.searchParams.set("token", shareToken);
-
-const response = await fetch(apiUrl, {
-  headers: { Accept: "text/markdown" },
-});
 
 if (!response.ok) {
   throw new Error(`Shared note unavailable (HTTP ${response.status})`);
 }
 
-const markdown = await response.text();
+const { data } = await response.json();
+const markdown = data.contentMarkdown;
 ```
 
-Use `response.text()`, not `response.json()`. The successful response has `Content-Type: text/markdown; charset=utf-8`.
-
-## When JSON metadata is needed
-
-If the agent also needs the note title or last-updated timestamp, use the JSON resolver with `POST`:
-
-```bash
-curl --fail --silent --show-error -X POST \
-  -H 'Content-Type: application/json' \
-  -H 'Accept: application/json' \
-  'https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-api/public/share/resolve' \
-  --data '{"token":"qns_<secret>"}'
-```
-
-The response is shaped as `{ "data": { "title", "contentMarkdown", "updatedAt" } }`. For Markdown-only workflows, prefer `GET` so the agent receives the note body directly.
+Use `response.json()` and read `data.contentMarkdown`; the resolver is not a raw text endpoint.
 
 ## Fetch through MCP
 
@@ -83,12 +78,13 @@ The native and hosted read-only MCP profiles expose the same public resolver as 
 }
 ```
 
-The tool delegates to the existing API-client resolver and returns structured `title`, `contentMarkdown`, and `updatedAt` fields. It does not require a private JWT and does not expose attachments or workspace metadata. Public-share creation and revocation remain owner-session REST operations; they are intentionally not part of the default read-only MCP surface.
+The tool delegates to the existing API-client resolver and returns structured `title`, `contentMarkdown`, and `updatedAt` fields. It is read-only, does not require a private JWT, and does not expose attachments or workspace metadata. Public-share creation and revocation remain owner-session REST operations.
 
 ## Errors and security rules
 
 - A valid, active share returns HTTP 200. Invalid, expired, revoked, deleted, malformed, or wrong-format tokens all return the same HTTP 404 `PUBLIC_SHARE_NOT_FOUND` response.
-- Treat the token—and especially the complete GET URL—as a bearer secret. Use HTTPS, do not include it in prompts or public documentation, and redact it from logs, traces, and error reports.
+- The resolver accepts the token only in the POST JSON body. Other methods, including a request that supplies the token as a query parameter, are not supported.
+- Treat the token as a bearer secret. Use HTTPS, keep it out of prompts and public documentation, and redact it from logs, traces, and error reports.
 - The endpoint is deliberately `no-store`, `noindex`, and `no-referrer`. Agents should not cache or publish the response unless the note owner explicitly asks them to.
 - A shared link can be expired, rotated, or revoked by its owner. On a 404, report that the link is unavailable or no longer active; do not infer which token state caused it.
 

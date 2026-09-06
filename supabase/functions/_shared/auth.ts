@@ -25,13 +25,15 @@ export async function authenticateRequest(request: Request): Promise<AuthContext
     if (data.expires_at && Date.parse(data.expires_at) <= Date.now()) throw new ApiError(401, 'TOKEN_EXPIRED', 'The personal token has expired.');
     if (shouldUpdateLastUsedAt(data.last_used_at)) {
       const telemetryCutoff = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-      await appDbClient
-        .from('api_tokens')
-        .update({ last_used_at: new Date().toISOString() })
-        .eq('id', data.id)
-        .or(`last_used_at.is.null,last_used_at.lt.${telemetryCutoff}`)
-        .then(() => undefined)
-        .catch(() => undefined);
+      try {
+        await appDbClient
+          .from('api_tokens')
+          .update({ last_used_at: new Date().toISOString() })
+          .eq('id', data.id)
+          .or(`last_used_at.is.null,last_used_at.lt.${telemetryCutoff}`);
+      } catch {
+        // Last-used telemetry is best effort and must not block authentication.
+      }
     }
     return { userId: data.owner_id, authKind: 'personal', scopes: data.scopes as ApiTokenScope[], tokenId: data.id };
   }

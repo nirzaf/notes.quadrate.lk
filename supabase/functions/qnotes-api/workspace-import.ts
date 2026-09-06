@@ -1,0 +1,202 @@
+import { strFromU8, unzipSync } from 'fflate';
+import { MAX_MARKDOWN_CODE_UNITS, isUUID } from '@qnotes/shared';
+import { MAX_EXPORT_ENTRIES } from './export-preflight.ts';
+
+const SAFE_PATH = /^(?:manifest\.json|notes\/[^/]+\.md|attachments\/[^/]+\/[^/]+)$/;
+const SAFE_SLUG = /^[a-z0-9][a-z0-9_-]{0,79}$/;
+const MIME_TYPES = new Set(['text/plain', 'text/markdown', 'application/pdf', 'image/png', 'image/jpeg', 'image/webp']);
+
+export interface WorkspaceBackupManifestAttachment {
+  id: string;
+  originalFileName: string;
+  mimeType: string;
+  sizeBytes: number;
+  path: string;
+}
+
+export interface WorkspaceBackupManifestNote {
+  id: string;
+  slug: string;
+  title: string;
+  tags: string[];
+  notebookId: string | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  markdownPath: string;
+  attachments: WorkspaceBackupManifestAttachment[];
+}
+
+export interface WorkspaceBackupManifest {
+  format: 'quadrate-notes-workspace';
+  formatVersion: 2;
+  backupId: string;
+  exportedAt: string;
+  notebooks: { id: string; name: string; createdAt: string; updatedAt: string }[];
+  notes: WorkspaceBackupManifestNote[];
+}
+
+export class WorkspaceArchiveError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'WorkspaceArchiveError';
+  }
+}
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function stringField(value: unknown, field: string, maxLength = 512): string {
+  if (typeof value !== 'string' || !value.trim() || value.length > maxLength) throw new WorkspaceArchiveError(`Backup manifest field ${field} is invalid.`);
+  return value;
+}
+
+function safeArchivePath(value: unknown): string {
+  if (typeof value !== 'string' || value.length > 512 || value.startsWith('/') || value.includes('\\') || value.includes('\0') || value.split('/').some((part) => !part || part === '.' || part === '..') || !SAFE_PATH.test(value)) {
+    throw new WorkspaceArchiveError('The backup contains an unsafe archive path.');
+  }
+  return value;
+}
+
+function integerField(value: unknown, field: string, maximum: number): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0 || value > maximum) throw new WorkspaceArchiveError(`Backup manifest field ${field} is invalid.`);
+  return value;
+}
+
+export interface WorkspaceArchiveInspection {
+  manifest: WorkspaceBackupManifest;
+  entries: number;
+  uncompressedBytes: number;
+  noteMarkdownBytes: number;
+  attachmentBytes: number;
+}
+
+export interface WorkspaceImportConflict {
+  kind: 'notebook' | 'note';
+  sourceId: string;
+  value: string;
+  reason: 'duplicate_in_backup' | 'name_exists' | 'slug_exists';
+}
+
+export interface ExistingWorkspaceIdentity {
+  notebookNames: string[];
+  noteSlugs: string[];
+}
+
+export function workspaceImportConflicts(manifest: WorkspaceBackupManifest, existing: ExistingWorkspaceIdentity): WorkspaceImportConflict[] {
+  const conflicts: WorkspaceImportConflict[] = [];
+  const notebookNames = new Set(existing.notebookNames.map((name) => name.trim().toLowerCase()));
+  const noteSlugs = new Set(existing.noteSlugs.map((slug) => slug.trim().toLowerCase()));
+  const backupNotebookNames = new Set<string>();
+  const backupNoteSlugs = new Set<string>();
+
+  for (const notebook of manifest.notebooks) {
+    const name = notebook.name.trim().toLowerCase();
+    if (notebookNames.has(name)) conflicts.push({ kind: 'notebook', sourceId: notebook.id, value: notebook.name, reason: 'name_exists' });
+    if (backupNotebookNames.has(name)) conflicts.push({ kind: 'notebook', sourceId: notebook.id, value: notebook.name, reason: 'duplicate_in_backup' });
+    backupNotebookNames.add(name);
+  }
+  for (const note of manifest.notes) {
+    const slug = note.slug.trim().toLowerCase();
+    if (noteSlugs.has(slug)) conflicts.push({ kind: 'note', sourceId: note.id, value: note.slug, reason: 'slug_exists' });
+    if (backupNoteSlugs.has(slug)) conflicts.push({ kind: 'note', sourceId: note.id, value: note.slug, reason: 'duplicate_in_backup' });
+    backupNoteSlugs.add(slug);
+  }
+  return conflicts;
+}
+
+export function inspectWorkspaceArchive(archive: Uint8Array, maxBytes: number, maxAttachmentBytes = maxBytes): WorkspaceArchiveInspection {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0 || archive.byteLength > maxBytes) throw new WorkspaceArchiveError('The backup archive exceeds the configured size limit.');
+  let entries = 0;
+  let uncompressedBytes = 0;
+  const archivePaths = new Set<string>();
+  let files: Record<string, Uint8Array>;
+  try {
+    files = unzipSync(archive, {
+      filter: (file) => {
+        safeArchivePath(file.name);
+        if (archivePaths.has(file.name)) throw new WorkspaceArchiveError('The backup contains a duplicate archive path.');
+        archivePaths.add(file.name);
+        entries += 1;
+        if (entries > MAX_EXPORT_ENTRIES || !Number.isSafeInteger(file.originalSize) || file.originalSize < 0 || file.originalSize > maxBytes || uncompressedBytes + file.originalSize > maxBytes) throw new WorkspaceArchiveError('The backup contains too many or too many uncompressed files.');
+        uncompressedBytes += file.originalSize;
+        return true;
+      },
+    });
+  } catch (error) {
+    if (error instanceof WorkspaceArchiveError) throw error;
+    throw new WorkspaceArchiveError('The backup archive is invalid or cannot be safely decompressed.');
+  }
+  const manifestBytes = files['manifest.json'];
+  if (!manifestBytes) throw new WorkspaceArchiveError('The backup manifest is missing.');
+  let raw: unknown;
+  try {
+    raw = JSON.parse(strFromU8(manifestBytes));
+  } catch {
+    throw new WorkspaceArchiveError('The backup manifest is not valid JSON.');
+  }
+  const root = record(raw);
+  if (root.format !== 'quadrate-notes-workspace' || root.formatVersion !== 2 || !isUUID(root.backupId)) throw new WorkspaceArchiveError('The backup manifest version is unsupported.');
+  if (!Array.isArray(root.notebooks) || !Array.isArray(root.notes)) throw new WorkspaceArchiveError('The backup manifest must contain notebooks and notes arrays.');
+  const notebookValues = root.notebooks;
+  const noteValues = root.notes;
+  if (notebookValues.length + noteValues.length > MAX_EXPORT_ENTRIES) throw new WorkspaceArchiveError('The backup manifest contains too many records.');
+  const notebookIds = new Set<string>();
+  const notebooks = notebookValues.map((value, index) => {
+    const item = record(value);
+    const id = stringField(item.id, `notebooks[${index}].id`, 64);
+    if (!isUUID(id) || notebookIds.has(id)) throw new WorkspaceArchiveError('The backup contains a duplicate notebook ID.');
+    notebookIds.add(id);
+    return { id, name: stringField(item.name, `notebooks[${index}].name`, 80).trim(), createdAt: stringField(item.createdAt, `notebooks[${index}].createdAt`, 64), updatedAt: stringField(item.updatedAt, `notebooks[${index}].updatedAt`, 64) };
+  });
+  const noteIds = new Set<string>();
+  const attachmentIds = new Set<string>();
+  const paths = new Set<string>(['manifest.json']);
+  let noteMarkdownBytes = 0;
+  let attachmentBytes = 0;
+  const notes = noteValues.map((value, index) => {
+    const item = record(value);
+    const id = stringField(item.id, `notes[${index}].id`, 64);
+    if (!isUUID(id) || noteIds.has(id)) throw new WorkspaceArchiveError('The backup contains a duplicate note ID.');
+    noteIds.add(id);
+    const slug = stringField(item.slug, `notes[${index}].slug`, 80);
+    const title = stringField(item.title, `notes[${index}].title`, 200).trim();
+    if (!SAFE_SLUG.test(slug) || !title) throw new WorkspaceArchiveError('The backup contains an invalid note identity.');
+    const notebookId = item.notebookId === null ? null : stringField(item.notebookId, `notes[${index}].notebookId`, 64);
+    if (notebookId !== null && (!isUUID(notebookId) || !notebookIds.has(notebookId))) throw new WorkspaceArchiveError('The backup references an unknown notebook.');
+    const markdownPath = safeArchivePath(item.markdownPath);
+    if (!markdownPath.startsWith('notes/') || !markdownPath.endsWith('.md') || paths.has(markdownPath) || !files[markdownPath]) throw new WorkspaceArchiveError('The backup note Markdown path is invalid or missing.');
+    paths.add(markdownPath);
+    const markdownBytes = files[markdownPath]?.byteLength ?? 0;
+    if (markdownBytes > maxBytes || markdownBytes > MAX_MARKDOWN_CODE_UNITS * 4) throw new WorkspaceArchiveError('The backup contains an oversized note.');
+    noteMarkdownBytes += markdownBytes;
+    const tagValues = Array.isArray(item.tags) ? item.tags : [];
+    const tags = tagValues.map((tag) => stringField(tag, `notes[${index}].tags`, 64).trim().toLowerCase());
+    if (tags.length > 50 || tags.some((tag) => !tag)) throw new WorkspaceArchiveError('The backup contains invalid note tags.');
+    if (!Array.isArray(item.tags) || !Array.isArray(item.attachments)) throw new WorkspaceArchiveError('The backup note must contain tags and attachments arrays.');
+    const attachmentValues = item.attachments;
+    const noteAttachmentIds = new Set<string>();
+    const attachments = attachmentValues.map((attachmentValue, attachmentIndex) => {
+      const attachment = record(attachmentValue);
+      const attachmentId = stringField(attachment.id, `notes[${index}].attachments[${attachmentIndex}].id`, 64);
+      if (!isUUID(attachmentId) || noteAttachmentIds.has(attachmentId) || attachmentIds.has(attachmentId)) throw new WorkspaceArchiveError('The backup contains a duplicate attachment ID.');
+      noteAttachmentIds.add(attachmentId);
+      attachmentIds.add(attachmentId);
+      const path = safeArchivePath(attachment.path);
+      const sizeBytes = integerField(attachment.sizeBytes, `notes[${index}].attachments[${attachmentIndex}].sizeBytes`, maxBytes);
+      if (sizeBytes > maxAttachmentBytes) throw new WorkspaceArchiveError('The backup contains an attachment above the configured attachment size limit.');
+      if (!path.startsWith('attachments/') || paths.has(path) || !files[path] || files[path].byteLength !== sizeBytes) throw new WorkspaceArchiveError('The backup attachment bytes do not match its manifest.');
+      paths.add(path);
+      if (!MIME_TYPES.has(String(attachment.mimeType))) throw new WorkspaceArchiveError('The backup contains an unsupported attachment type.');
+      attachmentBytes += sizeBytes;
+      return { id: attachmentId, originalFileName: stringField(attachment.originalFileName, 'originalFileName', 255), mimeType: String(attachment.mimeType), sizeBytes, path };
+    });
+    const version = integerField(item.version, `notes[${index}].version`, Number.MAX_SAFE_INTEGER);
+    if (version < 1) throw new WorkspaceArchiveError('The backup contains an invalid note version.');
+    return { id, slug, title, tags, notebookId, version, createdAt: stringField(item.createdAt, `notes[${index}].createdAt`, 64), updatedAt: stringField(item.updatedAt, `notes[${index}].updatedAt`, 64), markdownPath, attachments };
+  });
+  for (const path of Object.keys(files)) if (!paths.has(path)) throw new WorkspaceArchiveError('The backup contains an unexpected archive entry.');
+  if (notes.length + notes.reduce((count, note) => count + note.attachments.length, 0) + 1 !== entries) throw new WorkspaceArchiveError('The backup manifest does not account for every archive entry.');
+  return { manifest: { format: 'quadrate-notes-workspace', formatVersion: 2, backupId: String(root.backupId), exportedAt: stringField(root.exportedAt, 'exportedAt', 64), notebooks, notes }, entries, uncompressedBytes, noteMarkdownBytes, attachmentBytes };
+}

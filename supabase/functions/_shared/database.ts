@@ -143,8 +143,9 @@ export function decodeSearchCursor(value: string): SearchCursor {
     const parsed: unknown = JSON.parse(atob(padded));
     if (!parsed || typeof parsed !== 'object') throw new Error('invalid');
     const cursor = parsed as Partial<SearchCursor>;
-    if (cursor.version !== 1 || typeof cursor.fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(cursor.fingerprint) || !Number.isSafeInteger(cursor.offset) || cursor.offset < 0) throw new Error('invalid');
-    return cursor as SearchCursor;
+    const offset = cursor.offset;
+    if (cursor.version !== 1 || typeof cursor.fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(cursor.fingerprint) || typeof offset !== 'number' || !Number.isSafeInteger(offset) || offset < 0) throw new Error('invalid');
+    return { version: 1, fingerprint: cursor.fingerprint, offset };
   } catch {
     throw new ApiError(422, 'VALIDATION_ERROR', 'cursor must be a valid opaque search cursor.');
   }

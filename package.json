@@ -24,6 +24,7 @@
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
+    "@axe-core/playwright": "4.13.0",
     "@supabase/supabase-js": "2.115.0",
     "@types/node": "26.4.1",
     "supabase": "2.116.0",

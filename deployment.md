@@ -87,6 +87,8 @@ select vault.create_secret(
 );
 ```
 
+The hosted MCP static OAuth client is fail-closed unless `QNOTES_MCP_STATIC_REDIRECT_URIS` is configured as a comma-separated list of the exact HTTPS Google/Gemini redirect URI(s) currently registered with the provider. The value is matched by an exact URI fingerprint, including path, and every entry must use one of the accepted Google redirect hosts. Do not configure only a hostname or invent a redirect path. Dynamic OAuth client registration remains available independently and continues to bind each registered redirect URI exactly.
+
 ## Release procedure
 
 Run the following from the repository root. Database changes should be applied before deploying functions that depend on them.
@@ -110,7 +112,7 @@ pnpm run test:unit
 pnpm exec supabase db push --linked --dry-run
 ```
 
-The current release includes the additive migrations through `20260906000100_public_note_sharing.sql`. Review them in the dry-run output before applying; the latest migration adds the RLS-protected `notesdb.note_shares` table, service-only create/rotate/revoke/resolve RPCs, and automatic share revocation on note soft-delete. The preceding migrations add the transaction-safe logical append receipt for the REST API, CLI, and MCP write profile, while earlier migrations fix pagination and embedding queue races, preserve legacy RPC wrappers on the v2 contract, add restore dedupe conflict reporting, keep incompatible vectors out of semantic search, and add the daily stale-embedding recovery schedule.
+The current release includes the additive migrations through `20260906000200_oauth_authorization_code_replay.sql`. Review them in the dry-run output before applying; the latest migrations add the RLS-protected `notesdb.note_shares` table, service-only create/rotate/revoke/resolve RPCs, automatic share revocation on note soft-delete, and a service-only single-use hosted MCP authorization-code receipt. The preceding migrations add the transaction-safe logical append receipt for the REST API, CLI, and MCP write profile, while earlier migrations fix pagination and embedding queue races, preserve legacy RPC wrappers on the v2 contract, add restore dedupe conflict reporting, keep incompatible vectors out of semantic search, and add the daily stale-embedding recovery schedule.
 
 ### 3. Apply pending production migrations
 

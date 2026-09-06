@@ -1,0 +1,147 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: 24.19.0
+  DENO_VERSION: 2.9.6
+  PNPM_VERSION: 12.1.0
+
+jobs:
+  core:
+    name: core
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: denoland/setup-deno@e95548e56dfa95d4e1a28d6f422fafe75c4c26fb # v2.0.3
+        with:
+          deno-version: ${{ env.DENO_VERSION }}
+      - name: Enable the pinned package manager
+        run: |
+          corepack enable
+          corepack install --global "pnpm@${PNPM_VERSION}"
+          pnpm --version
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run typecheck
+      - run: pnpm run test:unit
+      - run: pnpm run test:edge
+      - run: pnpm run build
+      - run: pnpm run verify:edge-shared
+
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: denoland/setup-deno@e95548e56dfa95d4e1a28d6f422fafe75c4c26fb # v2.0.3
+        with:
+          deno-version: ${{ env.DENO_VERSION }}
+      - name: Enable the pinned package manager
+        run: |
+          corepack enable
+          corepack install --global "pnpm@${PNPM_VERSION}"
+      - run: pnpm install --frozen-lockfile
+      - name: Start the local Supabase stack
+        run: pnpm exec supabase start
+      - run: pnpm run local:env
+      - run: pnpm run seed:test-users
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm exec supabase test db
+      - name: Run focused local E2E suites
+        run: >-
+          pnpm exec playwright test
+          tests/e2e/navigation.spec.ts
+          tests/e2e/mobile-home.spec.ts
+          tests/e2e/attachments.spec.ts
+          tests/e2e/public-sharing.spec.ts
+          tests/e2e/accessibility.spec.ts
+          tests/e2e/oauth-replay.spec.ts
+          --project=chromium
+      - name: Stop the local Supabase stack
+        if: always()
+        run: pnpm exec supabase stop
+
+  search_regression:
+    name: search regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+      - name: Detect search-sensitive changes
+        id: scope
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            changed="$(git diff --name-only "origin/${BASE_REF}...HEAD")"
+          else
+            changed="$(git diff --name-only HEAD^ HEAD)"
+          fi
+          if printf '%s\n' "$changed" | grep -Eq '^(packages/markdown/|supabase/functions/qnotes-api/search\.ts$|supabase/functions/embedding-worker/|embedding-worker/|supabase/migrations/.*search|tests/search-evaluation-(fixtures|baseline)\.json$|scripts/(evaluate-search|search-evaluation-metrics|verify-search-regression|seed-search-benchmark|search-benchmark)\.mjs$)'; then
+            echo "required=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "required=false" >> "$GITHUB_OUTPUT"
+            echo 'No search-sensitive files changed; the regression job is intentionally skipped.'
+          fi
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        if: steps.scope.outputs.required == 'true'
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: denoland/setup-deno@e95548e56dfa95d4e1a28d6f422fafe75c4c26fb # v2.0.3
+        if: steps.scope.outputs.required == 'true'
+        with:
+          deno-version: ${{ env.DENO_VERSION }}
+      - name: Enable the pinned package manager
+        if: steps.scope.outputs.required == 'true'
+        run: |
+          corepack enable
+          corepack install --global "pnpm@${PNPM_VERSION}"
+      - run: pnpm install --frozen-lockfile
+        if: steps.scope.outputs.required == 'true'
+      - name: Start the local Supabase stack
+        if: steps.scope.outputs.required == 'true'
+        run: pnpm exec supabase start
+      - run: pnpm run local:env
+        if: steps.scope.outputs.required == 'true'
+      - name: Start local Edge Functions
+        if: steps.scope.outputs.required == 'true'
+        shell: bash
+        run: |
+          nohup pnpm exec supabase functions serve qnotes-api embedding-worker attachment-worker \
+            --env-file supabase/functions/.env.test --no-verify-jwt \
+            > .tmp/search-functions.log 2>&1 &
+          echo $! > .tmp/search-functions.pid
+          for attempt in {1..60}; do
+            if curl --fail --silent http://127.0.0.1:54321/functions/v1/qnotes-api/api/health >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat .tmp/search-functions.log
+          exit 1
+      - name: Run the checked-in search baseline
+        if: steps.scope.outputs.required == 'true'
+        run: pnpm run verify:search -- --seed
+      - name: Stop the local Supabase stack
+        if: always() && steps.scope.outputs.required == 'true'
+        shell: bash
+        run: |
+          if [ -f .tmp/search-functions.pid ]; then
+            kill "$(cat .tmp/search-functions.pid)" 2>/dev/null || true
+          fi
+          pnpm exec supabase stop

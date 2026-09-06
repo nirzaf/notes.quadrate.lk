@@ -1,3 +1,6 @@
+/*
+  Content-Security-Policy: default-src 'self'; connect-src 'self' https://*.supabase.co wss://*.supabase.co; form-action 'self' https://ciyoandzjezgqxjpcrin.supabase.co; img-src 'self' data: blob: https://*.supabase.co; frame-src https://*.supabase.co; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self' https://gemini.google.com https://accounts.google.com https://myaccount.google.com
+
 /share
   Cache-Control: no-store
   Referrer-Policy: no-referrer

@@ -1,0 +1,9 @@
+title = "Quadrate Notes secret scanning"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Synthetic public-share token prefix used by the API-client fixture"
+paths = ['^packages/api-client/test/client[.]test[.]mjs$']
+regexes = ['qns_Abcd1234']

@@ -1,7 +1,10 @@
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
+import { createClient } from '@supabase/supabase-js';
 import { QNotesClient } from '@qnotes/api-client';
 import { createQNotesMcpServer } from '../_shared/generated/mcp-server/server.ts';
+import { isUUID } from '@qnotes/shared';
 import { isPersonalToken } from '../_shared/token.ts';
+import { configuredStaticRedirectUris, isAllowedGoogleRedirect } from './oauth-redirects.ts';
 
 const MCP_PATHS = new Set(['', '/', '/mcp']);
 const STATIC_OAUTH_CLIENT_ID = Deno.env.get('QNOTES_MCP_OAUTH_CLIENT_ID') ?? 'qnotes-gemini';
@@ -10,14 +13,10 @@ const OAUTH_CODE_TTL_SECONDS = 90;
 const OAUTH_ACCESS_TTL_SECONDS = 30 * 24 * 60 * 60;
 const OAUTH_CLIENT_TTL_SECONDS = 90 * 24 * 60 * 60;
 const OAUTH_CONSENT_URL = Deno.env.get('QNOTES_MCP_CONSENT_URL')?.trim() || 'https://notes.quadrate.lk/oauth/authorize';
-const GOOGLE_REDIRECT_HOSTS = new Set([
-  'oauth-redirect.googleusercontent.com',
-  'oauth-redirect-sandbox.googleusercontent.com',
-  'oauth-redirect-test.googleusercontent.com',
-]);
 
 interface OAuthCodePayload {
   type: 'authorization_code';
+  codeId: string;
   clientId: string;
   redirectUri: string;
   codeChallenge: string;
@@ -41,6 +40,26 @@ interface OAuthAccessPayload {
   resource: string;
   encryptedToken: string;
   expiresAt: number;
+}
+
+let oauthServiceClient: ReturnType<typeof createClient> | null = null;
+
+function getOAuthServiceClient(): ReturnType<typeof createClient> {
+  if (oauthServiceClient) return oauthServiceClient;
+  const supabaseUrl = Deno.env.get('SUPABASE_URL');
+  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+  if (!supabaseUrl || !serviceRoleKey) throw new Error('OAuth replay protection is not configured.');
+  oauthServiceClient = createClient(supabaseUrl, serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
+  return oauthServiceClient;
+}
+
+async function consumeAuthorizationCode(codeId: string, expiresAt: number): Promise<boolean> {
+  const result = await getOAuthServiceClient().rpc('qnotes_consume_oauth_authorization_code', {
+    p_code_id: codeId,
+    p_expires_at: new Date(expiresAt * 1000).toISOString(),
+  } as never) as unknown as { data: unknown; error: { message: string } | null };
+  if (result.error || typeof result.data !== 'boolean') throw new Error('Unable to consume the OAuth authorization code.');
+  return result.data;
 }
 
 function requestPath(request: Request): string {
@@ -190,15 +209,6 @@ async function redirectFingerprint(uri: string): Promise<string> {
   return base64Url(new Uint8Array(digest).slice(0, 12));
 }
 
-function isAllowedGoogleRedirect(uri: string): boolean {
-  try {
-    const redirect = new URL(uri);
-    return redirect.protocol === 'https:' && GOOGLE_REDIRECT_HOSTS.has(redirect.hostname) && !redirect.hash;
-  } catch {
-    return false;
-  }
-}
-
 function oauthError(request: Request, error: string, description: string, status = 400): Response {
   return json(request, { error, error_description: description }, status, {
     'Cache-Control': 'no-store',
@@ -247,7 +257,10 @@ function basicClientId(request: Request): string | null {
 async function oauthClient(clientId: string): Promise<OAuthClientPayload | null> {
   if (!clientId || clientId.length > 4096) return null;
   if (clientId === STATIC_OAUTH_CLIENT_ID) {
-    return { type: 'client', redirectUriHashes: [], clientName: 'Google', expiresAt: Number.MAX_SAFE_INTEGER, nonce: 'static' };
+    const configured = configuredStaticRedirectUris(Deno.env.get('QNOTES_MCP_STATIC_REDIRECT_URIS'));
+    if (!configured) return null;
+    const redirectUriHashes = await Promise.all(configured.map(redirectFingerprint));
+    return { type: 'client', redirectUriHashes, clientName: 'Google', expiresAt: Number.MAX_SAFE_INTEGER, nonce: 'static' };
   }
   const client = await verifyOAuthValue<OAuthClientPayload>(clientId, 'qdc');
   if (!client || client.type !== 'client' || client.expiresAt <= Math.floor(Date.now() / 1000)) return null;
@@ -257,7 +270,7 @@ async function oauthClient(clientId: string): Promise<OAuthClientPayload | null>
 
 async function clientAllowsRedirect(client: OAuthClientPayload, redirectUri: string): Promise<boolean> {
   if (!isAllowedGoogleRedirect(redirectUri)) return false;
-  return client.redirectUriHashes.length === 0 || client.redirectUriHashes.includes(await redirectFingerprint(redirectUri));
+  return client.redirectUriHashes.includes(await redirectFingerprint(redirectUri));
 }
 
 function consentRedirect(request: Request, data: { clientId: string; clientName: string; redirectUri: string; state: string; codeChallenge: string; scope: string; resource: string }): Response {
@@ -358,6 +371,7 @@ async function handleAuthorize(request: Request): Promise<Response> {
   const scope = String(form.get('scope') ?? OAUTH_SCOPE).slice(0, 512);
   const code = await signOAuthValue('qoc', {
     type: 'authorization_code',
+    codeId: crypto.randomUUID(),
     clientId,
     redirectUri,
     codeChallenge,
@@ -384,14 +398,15 @@ async function handleToken(request: Request): Promise<Response> {
 
   const codeValue = String(form.get('code') ?? '');
   const code = await verifyOAuthValue<OAuthCodePayload>(codeValue, 'qoc');
-  if (!code || code.type !== 'authorization_code' || code.clientId !== clientId || code.expiresAt <= Math.floor(Date.now() / 1000)) {
+  if (!code || code.type !== 'authorization_code' || !isUUID(code.codeId) || code.clientId !== clientId || code.expiresAt <= Math.floor(Date.now() / 1000)) {
     return oauthError(request, 'invalid_grant', 'The authorization code is invalid or expired.');
   }
   const requestedRedirectUri = form.get('redirect_uri');
-  if (requestedRedirectUri !== null && String(requestedRedirectUri) !== code.redirectUri) return oauthError(request, 'invalid_grant', 'The redirect URI does not match the authorization code.');
+  if (requestedRedirectUri === null || String(requestedRedirectUri) !== code.redirectUri || !(await clientAllowsRedirect(client, code.redirectUri))) return oauthError(request, 'invalid_grant', 'The redirect URI does not match the authorization code.');
   if (code.resource !== mcpBaseUrl(request)) return oauthError(request, 'invalid_target', 'The resource does not match this MCP server.');
   const verifier = String(form.get('code_verifier') ?? '');
   if (!verifier || (await pkceChallenge(verifier)) !== code.codeChallenge) return oauthError(request, 'invalid_grant', 'The PKCE verifier is invalid.');
+  if (!(await consumeAuthorizationCode(code.codeId, code.expiresAt))) return oauthError(request, 'invalid_grant', 'The authorization code is invalid or expired.');
 
   const accessToken = await signOAuthValue('qoa', {
     type: 'access_token',
@@ -456,7 +471,7 @@ async function handle(request: Request): Promise<Response> {
   return withCors(request, await transport.handleRequest(request));
 }
 
-Deno.serve((request) => handle(request).catch((error) => {
-  console.error('qnotes-mcp request failed', error instanceof Error ? error.message : 'unknown error');
+Deno.serve((request) => handle(request).catch(() => {
+  console.error('qnotes-mcp request failed');
   return json(request, { error: 'MCP request failed.' }, 500);
 }));

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const minimumNode = [18, 0, 0];
 const minimumDeno = [2, 9, 6];
+const fallbackDenoVersion = '2.9.6';
 const requiredPnpm = '12.1.0';
 const localHosts = new Set(['localhost', '127.0.0.1']);
 
@@ -158,9 +159,18 @@ async function checkVersions() {
     throw new Error(`pnpm ${requiredPnpm} is required by package.json.`);
   }
 
-  const deno = await commandOutput('deno', ['--version'], 'Deno');
+  const deno = await denoVersionOutput();
   const denoVersion = versionParts(deno, 'Deno');
   if (!atLeast(denoVersion, minimumDeno)) throw new Error('Deno 2.9.6 or newer is required for the checked-in Edge tests.');
+}
+
+async function denoVersionOutput() {
+  try {
+    return await commandOutput('deno', ['--version'], 'Deno');
+  } catch (error) {
+    if (!String(error?.message ?? '').includes('Deno is required on PATH.')) throw error;
+    return commandOutput('pnpm', ['dlx', '--yes', `deno@${fallbackDenoVersion}`, '--version'], 'Deno fallback');
+  }
 }
 
 function commandOutput(command, args, label) {

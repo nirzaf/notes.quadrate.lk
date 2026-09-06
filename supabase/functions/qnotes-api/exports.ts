@@ -4,52 +4,101 @@ import { authFromContext, requireScope } from '../_shared/auth.ts';
 import { appDbClient, serviceClient } from '../_shared/database.ts';
 import { ApiError } from '../_shared/errors.ts';
 import { findOwnedNote } from './notes.ts';
+import { planWorkspaceExport } from './export-preflight.ts';
 
 function safeName(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/^\.+/, '').slice(0, 160) || 'note';
 }
 
 function binaryResponse(context: Context, body: Uint8Array, contentType: string, disposition: string): Response {
-  return new Response(body, { status: 200, headers: { 'content-type': contentType, 'content-disposition': disposition, 'x-request-id': String(context.get('requestId') ?? '') } });
+  return new Response(body as unknown as BodyInit, { status: 200, headers: { 'content-type': contentType, 'content-disposition': disposition, 'x-request-id': String(context.get('requestId') ?? '') } });
+}
+
+export function workspaceMaxBytes(): number {
+  const configured = Number(Deno.env.get('QNOTES_EXPORT_MAX_BYTES') ?? 50 * 1024 * 1024);
+  return Number.isSafeInteger(configured) && configured > 0 ? configured : 50 * 1024 * 1024;
 }
 
 export async function exportNote(context: Context): Promise<Response> {
   const auth = authFromContext(context);
   requireScope(auth, 'notes:read');
-  const note = await findOwnedNote(auth.userId, context.req.param('noteRef'));
+  const note = await findOwnedNote(auth.userId, context.req.param('noteRef') ?? '');
   return binaryResponse(context, new TextEncoder().encode(note.contentMarkdown), 'text/markdown; charset=utf-8', `attachment; filename="${safeName(note.slug)}.md"`);
 }
 
 export async function exportWorkspace(context: Context): Promise<Response> {
   const auth = authFromContext(context);
   requireScope(auth, 'notes:read', 'attachments:read');
-  const notesResult = await appDbClient.from('notes').select('id, slug, title, tags, version, created_at, updated_at, content_markdown').eq('owner_id', auth.userId).is('deleted_at', null).order('updated_at', { ascending: true });
-  if (notesResult.error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to export notes.');
+  const [notesResult, notebooksResult] = await Promise.all([
+    appDbClient.from('notes').select('id, slug, title, tags, notebook_id, version, created_at, updated_at, content_markdown').eq('owner_id', auth.userId).is('deleted_at', null).order('updated_at', { ascending: true }),
+    appDbClient.from('notebooks').select('id, name, created_at, updated_at').eq('owner_id', auth.userId).order('created_at', { ascending: true }).order('name', { ascending: true }),
+  ]);
+  if (notesResult.error || notebooksResult.error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to export the workspace.');
   const notes = Array.isArray(notesResult.data) ? notesResult.data as Record<string, unknown>[] : [];
+  const notebooks = Array.isArray(notebooksResult.data) ? notebooksResult.data as Record<string, unknown>[] : [];
   const noteIds = notes.map((note) => String(note.id));
   const attachmentsResult = noteIds.length ? await appDbClient.from('attachments').select('*').eq('owner_id', auth.userId).in('note_id', noteIds).is('deleted_at', null) : { data: [], error: null };
   if (attachmentsResult.error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to export attachment metadata.');
   const attachments = Array.isArray(attachmentsResult.data) ? attachmentsResult.data as Record<string, unknown>[] : [];
   const files: Record<string, Uint8Array> = {};
+  const attachmentsByNote = new Map<string, Record<string, unknown>[]>();
+  for (const attachment of attachments) {
+    const noteId = String(attachment.note_id);
+    const list = attachmentsByNote.get(noteId) ?? [];
+    list.push(attachment);
+    attachmentsByNote.set(noteId, list);
+  }
   const manifestNotes = [];
+  let noteMarkdownBytes = 0;
+  let attachmentBytes = 0;
   for (const note of notes) {
     const slug = safeName(String(note.slug));
-    files[`notes/${slug}.md`] = strToU8(String(note.content_markdown ?? ''));
-    const noteAttachments = attachments.filter((attachment) => String(attachment.note_id) === String(note.id));
+    const markdownPath = `notes/${slug}-${String(note.id)}.md`;
+    const markdown = strToU8(String(note.content_markdown ?? ''));
+    noteMarkdownBytes += markdown.byteLength;
+    files[markdownPath] = markdown;
+    const noteAttachments = attachmentsByNote.get(String(note.id)) ?? [];
     const manifestAttachments = [];
     for (const attachment of noteAttachments) {
       const original = safeName(String(attachment.original_file_name));
       const relativePath = `attachments/${slug}/${attachment.id}-${original}`;
-      const downloaded = await serviceClient.storage.from(String(attachment.bucket)).download(String(attachment.object_path));
-      if (downloaded.error || !downloaded.data) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to download an attachment for export.', { attachmentId: attachment.id });
-      files[relativePath] = new Uint8Array(await downloaded.data.arrayBuffer());
+      const sizeBytes = Number(attachment.size_bytes);
+      if (!Number.isSafeInteger(sizeBytes) || sizeBytes < 0) throw new ApiError(500, 'INTERNAL_ERROR', 'Attachment metadata is invalid for export.');
+      attachmentBytes += sizeBytes;
       manifestAttachments.push({ id: attachment.id, originalFileName: attachment.original_file_name, mimeType: attachment.mime_type, sizeBytes: attachment.size_bytes, path: relativePath });
     }
-    manifestNotes.push({ id: note.id, slug: note.slug, title: note.title, tags: note.tags, version: note.version, createdAt: note.created_at, updatedAt: note.updated_at, attachments: manifestAttachments });
+    manifestNotes.push({ id: note.id, slug: note.slug, title: note.title, tags: note.tags, notebookId: note.notebook_id ?? null, version: note.version, createdAt: note.created_at, updatedAt: note.updated_at, markdownPath, attachments: manifestAttachments });
   }
-  files['manifest.json'] = strToU8(JSON.stringify({ exportedAt: new Date().toISOString(), notes: manifestNotes }, null, 2));
+  const manifest = {
+    format: 'quadrate-notes-workspace',
+    formatVersion: 2,
+    backupId: crypto.randomUUID(),
+    exportedAt: new Date().toISOString(),
+    notebooks: notebooks.map((notebook) => ({ id: notebook.id, name: notebook.name, createdAt: notebook.created_at, updatedAt: notebook.updated_at })),
+    notes: manifestNotes,
+  };
+  const manifestBytes = strToU8(JSON.stringify(manifest, null, 2));
+  const plan = planWorkspaceExport(noteMarkdownBytes, attachmentBytes, manifestBytes.byteLength, notes.length + attachments.length + 1, workspaceMaxBytes());
+  if (!plan.ok) {
+    if (plan.reason === 'invalid_metadata') throw new ApiError(500, 'INTERNAL_ERROR', 'Workspace export metadata is invalid.');
+    throw new ApiError(413, 'EXPORT_TOO_LARGE', plan.reason === 'too_many_entries' ? 'The workspace export contains too many files.' : 'The workspace export exceeds the configured size limit.');
+  }
+  let downloadedAttachmentBytes = 0;
+  for (const attachment of attachments) {
+    const slug = safeName(String(notes.find((note) => String(note.id) === String(attachment.note_id))?.slug ?? 'note'));
+    const relativePath = `attachments/${slug}/${attachment.id}-${safeName(String(attachment.original_file_name))}`;
+    const downloaded = await serviceClient.storage.from(String(attachment.bucket)).download(String(attachment.object_path));
+    if (downloaded.error || !downloaded.data) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to download an attachment for export.');
+    const bytes = new Uint8Array(await downloaded.data.arrayBuffer());
+    if (bytes.byteLength !== Number(attachment.size_bytes)) throw new ApiError(500, 'INTERNAL_ERROR', 'Attachment bytes do not match export metadata.');
+    downloadedAttachmentBytes += bytes.byteLength;
+    const actualPlan = planWorkspaceExport(noteMarkdownBytes, downloadedAttachmentBytes, manifestBytes.byteLength, notes.length + attachments.length + 1, workspaceMaxBytes());
+    if (!actualPlan.ok) throw new ApiError(413, 'EXPORT_TOO_LARGE', 'The workspace export exceeds the configured size limit.');
+    files[relativePath] = bytes;
+  }
+  files['manifest.json'] = manifestBytes;
   const zip = zipSync(files);
-  const maxBytes = Number(Deno.env.get('QNOTES_EXPORT_MAX_BYTES') ?? 50 * 1024 * 1024);
+  const maxBytes = workspaceMaxBytes();
   if (zip.byteLength > maxBytes) throw new ApiError(413, 'EXPORT_TOO_LARGE', 'The workspace export exceeds the configured size limit.');
   return binaryResponse(context, zip, 'application/zip', 'attachment; filename="quadrate-notes-backup.zip"');
 }

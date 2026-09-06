@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const functionsRoot = join(root, 'supabase/functions');
 const importMap = 'supabase/functions/deno.json';
+const fallbackDenoVersion = '2.9.6';
 
 export async function discoverEdgeTestFiles(directory = functionsRoot) {
   const entries = await readdir(directory, { withFileTypes: true });
@@ -26,9 +27,23 @@ export function edgeTestArguments(files) {
   return ['test', '--no-lock', '--allow-env=QNOTES_TOKEN_PEPPER', `--import-map=${importMap}`, ...files];
 }
 
-function runDeno(args) {
+export function denoInvocation(hasNativeDeno, args) {
+  return hasNativeDeno
+    ? { command: 'deno', args }
+    : { command: 'pnpm', args: ['dlx', '--yes', `deno@${fallbackDenoVersion}`, ...args] };
+}
+
+function commandAvailable(command) {
+  return new Promise((resolveAvailable) => {
+    const child = spawn(command, ['--version'], { cwd: root, stdio: 'ignore' });
+    child.once('error', () => resolveAvailable(false));
+    child.once('close', (code) => resolveAvailable(code === 0));
+  });
+}
+
+function runCommand(command, args) {
   return new Promise((resolveProcess, reject) => {
-    const child = spawn('deno', args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(command, args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
     let output = '';
     child.stdout.on('data', (chunk) => {
       output += chunk;
@@ -46,11 +61,12 @@ function runDeno(args) {
 export async function runEdgeTests() {
   const files = await discoverEdgeTestFiles();
   const args = edgeTestArguments(files);
+  const invocation = denoInvocation(await commandAvailable('deno'), args);
   console.log(`[test:edge] discovered ${files.length} test files:`);
   for (const file of files) console.log(`[test:edge]   ${file}`);
-  console.log('[test:edge] running Deno with the checked-in import map and lockfile writes disabled.');
+  console.log(`[test:edge] running ${invocation.command === 'deno' ? 'native Deno' : `pnpm dlx deno@${fallbackDenoVersion}`} with the checked-in import map and lockfile writes disabled.`);
 
-  const result = await runDeno(args);
+  const result = await runCommand(invocation.command, invocation.args);
   if (result.code !== 0) {
     throw new Error(`Deno Edge tests failed${result.signal ? ` (${result.signal})` : ` with exit code ${result.code}`}.`);
   }

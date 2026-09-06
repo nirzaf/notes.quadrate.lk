@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { discoverEdgeTestFiles, edgeTestArguments } from '../test-edge.mjs';
+import { discoverEdgeTestFiles, denoInvocation, edgeTestArguments } from '../test-edge.mjs';
 import { LOCAL_VERIFY_STAGES, assertLocalUrl, assertMatchingTarget, runStages } from '../verify-local.mjs';
 
 test('discovers only the Edge test files and builds a non-shell Deno command', async () => {
@@ -16,6 +16,11 @@ test('discovers only the Edge test files and builds a non-shell Deno command', a
   assert.equal(args.some((arg) => arg.includes('*')), false);
   assert.equal(args.includes('--allow-all'), false);
   assert.deepEqual(args.slice(4), files);
+});
+
+test('uses the exact pinned Deno fallback when native Deno is unavailable', () => {
+  assert.deepEqual(denoInvocation(true, ['test']), { command: 'deno', args: ['test'] });
+  assert.deepEqual(denoInvocation(false, ['test']), { command: 'pnpm', args: ['dlx', '--yes', 'deno@2.9.6', 'test'] });
 });
 
 test('accepts only credential-free loopback targets', () => {

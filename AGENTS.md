@@ -6,14 +6,14 @@ This is a pnpm monorepo. The React/Vite PWA lives in `apps/web/`. Shared contrac
 
 ## Build, Test, and Development Commands
 
-Use Node.js 18+ (the repository was verified with Node 24.19.0), pnpm 12.1.0, and Deno 2.9.6+.
+Use Node.js 18+, pnpm 12.1.0, and Deno 2.9.6+.
 
 - `pnpm install --frozen-lockfile` installs the workspace without changing the lockfile.
 - `pnpm dev` starts the web app; `pnpm run build` builds all packages and verifies generated Edge parity.
 - `pnpm run typecheck` checks every workspace package.
 - `pnpm run test:unit` runs Node and package tests; `pnpm run test:edge` runs every `supabase/functions/**/*.test.ts` file through the checked-in Deno import map.
-- `pnpm run verify:local` performs local-only preflight, then runs the ordered verification gate. It requires Docker/Supabase, ignored local env files, and bundled Chromium.
-- After changing shared source, run `pnpm run sync:edge` and then `pnpm run verify:edge-shared`. Run focused E2E with `pnpm exec playwright test tests/e2e/navigation.spec.ts --project=chromium`.
+- `pnpm run verify:local` performs preflight, then runs the verification gate. It requires Docker/Supabase, ignored env files, and Chromium. Run `pnpm run verify:search -- --seed` before changes under `packages/markdown/`, `supabase/functions/qnotes-api/search.ts`, `supabase/functions/embedding-worker/`, search migrations, fixtures/baselines, or search evaluation scripts.
+- After changing shared source, run `pnpm run sync:edge` and then `pnpm run verify:edge-shared`. Run focused E2E with `pnpm exec playwright test tests/e2e/navigation.spec.ts tests/e2e/accessibility.spec.ts --project=chromium`; accessibility coverage uses axe without broad suppressions.
 
 ## Coding and Testing Conventions
 
@@ -25,4 +25,4 @@ Use short imperative Conventional Commit-style subjects such as `feat: ...`, `fi
 
 ## Security and Configuration
 
-Never commit tokens, service-role keys, production Vite values, or ignored `.env` files. Local E2E setup is restricted to loopback Supabase and dedicated test users. Do not run database resets against production; follow `deployment.md` for linked migrations and releases.
+Never commit tokens, service-role keys, production Vite values, or ignored `.env` files. Local E2E setup is restricted to loopback Supabase and dedicated test users. Do not run database resets against production; follow `deployment.md` for linked migrations and releases. Run the full-history scan in `SECURITY.md` before visibility changes. Workspace backup imports are dry-run and fail closed for mutation until note and Storage writes can be atomic.

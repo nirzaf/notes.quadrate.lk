@@ -97,7 +97,8 @@ async function parsedContent(markdown: string, title: string) {
 
 export async function findOwnedNote(ownerId: string, noteRef: string, includeDeleted = false): Promise<ReturnType<typeof noteFromRow>> {
   let query = appDbClient.from('notes').select('*').eq('owner_id', ownerId).limit(1);
-  query = isUUID(noteRef) ? query.eq('id', noteRef) : query.eq('slug', noteRef.trim().toLowerCase());
+  if (isUUID(noteRef)) query = query.eq('id', noteRef);
+  else query = query.eq('slug', (noteRef as string).trim().toLowerCase());
   if (!includeDeleted) query = query.is('deleted_at', null);
   const { data, error } = await query.maybeSingle();
   if (error || !data) throw new ApiError(404, 'NOTE_NOT_FOUND', 'The note was not found.');
@@ -138,7 +139,7 @@ export async function listNotes(context: Context): Promise<Response> {
 export async function getNote(context: Context): Promise<Response> {
   const auth = authFromContext(context);
   requireScope(auth, 'notes:read');
-  return dataBody(context, await findOwnedNote(auth.userId, context.req.param('noteRef'), context.req.query('includeDeleted') === 'true'));
+  return dataBody(context, await findOwnedNote(auth.userId, context.req.param('noteRef') ?? '', context.req.query('includeDeleted') === 'true'));
 }
 
 export async function createNote(context: Context): Promise<Response> {

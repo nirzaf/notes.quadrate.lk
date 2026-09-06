@@ -5,6 +5,7 @@ import { authenticateRequest, type AuthContext } from '../_shared/auth.ts';
 import { applyCors } from '../_shared/cors.ts';
 import { errorBody } from '../_shared/errors.ts';
 import { ApiError } from '../_shared/errors.ts';
+import { requestRoute } from './route-logging.ts';
 import { listNotes, getNote, createNote, updateNote, appendNote, moveNoteToNotebook, deleteNote, restoreNote } from './notes.ts';
 import { listBlocks, getBlock } from './blocks.ts';
 import { searchNotes } from './search.ts';
@@ -12,9 +13,10 @@ import { getNoteContext, postNoteContext } from './context.ts';
 import { syncNotes } from './sync.ts';
 import { listAttachments, requestUpload, finalizeAttachment, getDownloadUrl, deleteAttachment } from './attachments.ts';
 import { listTokens, createToken, revokeToken } from './tokens.ts';
-import { exportNote, exportWorkspace } from './exports.ts';
+import { exportNote, exportWorkspace, workspaceMaxBytes } from './exports.ts';
+import { inspectWorkspaceImport } from './imports.ts';
 import { listNotebooks, createNotebook } from './notebooks.ts';
-import { createPublicShare, getPublicShare, resolvePublicShare, resolvePublicShareMarkdown, revokePublicShare } from './shares.ts';
+import { createPublicShare, getPublicShare, resolvePublicShare, revokePublicShare } from './shares.ts';
 
 interface Variables {
   auth: AuthContext;
@@ -29,15 +31,7 @@ app.use('*', async (context, next) => {
   context.set('requestId', requestId);
   context.header('x-request-id', requestId);
   const corsHeaders = new Headers();
-  const publicMarkdownRequest = context.req.path === '/public/share/resolve' && (context.req.method === 'GET' || context.req.method === 'OPTIONS');
-  if (publicMarkdownRequest) {
-    corsHeaders.set('Access-Control-Allow-Origin', '*');
-    corsHeaders.set('Access-Control-Allow-Headers', 'content-type');
-    corsHeaders.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
-    corsHeaders.set('Access-Control-Expose-Headers', 'content-disposition, x-request-id');
-  } else {
-    applyCors(context.req.raw, corsHeaders);
-  }
+  applyCors(context.req.raw, corsHeaders);
   for (const [key, value] of corsHeaders) context.header(key, value);
   if (context.req.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
   const started = performance.now();
@@ -45,7 +39,7 @@ app.use('*', async (context, next) => {
     await next();
   } finally {
     const auth = context.get('auth');
-    console.info(JSON.stringify({ requestId, method: context.req.method, route: context.req.path, status: context.res.status, authKind: auth?.authKind ?? 'none', userId: auth?.userId ?? null, duration: Math.round(performance.now() - started) }));
+    console.info(JSON.stringify({ requestId, method: context.req.method, route: requestRoute(context), status: context.res.status, authKind: auth?.authKind ?? 'none', duration: Math.round(performance.now() - started) }));
   }
   context.res.headers.set('x-request-id', requestId);
   return context.res;
@@ -80,10 +74,6 @@ app.onError((error, context) => {
     response.headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet');
     response.headers.set('Referrer-Policy', 'no-referrer');
     response.headers.set('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
-    if (context.req.method === 'GET') {
-      response.headers.set('Access-Control-Allow-Origin', '*');
-      response.headers.set('Access-Control-Expose-Headers', 'content-disposition, x-request-id');
-    }
   }
   return response;
 });
@@ -127,9 +117,12 @@ app.post('/public/share/resolve', bodyLimit({
     return context.json(errorBody(new ApiError(413, 'VALIDATION_ERROR', 'The public share request is too large.'), context.get('requestId') ?? crypto.randomUUID()), 413);
   },
 }), resolvePublicShare);
-app.get('/public/share/resolve', resolvePublicShareMarkdown);
 app.get('/api/export/note/:noteRef', exportNote);
 app.get('/api/export/workspace', exportWorkspace);
+app.post('/api/import/workspace', bodyLimit({
+  maxSize: workspaceMaxBytes(),
+  onError: (context) => context.json(errorBody(new ApiError(413, 'EXPORT_TOO_LARGE', 'The backup archive exceeds the configured size limit.'), context.get('requestId') ?? crypto.randomUUID()), 413),
+}), inspectWorkspaceImport);
 
 app.notFound((context) => context.json(errorBody(new ApiError(404, 'NOTE_NOT_FOUND', 'The requested resource was not found.'), context.get('requestId') ?? crypto.randomUUID()), 404));
 

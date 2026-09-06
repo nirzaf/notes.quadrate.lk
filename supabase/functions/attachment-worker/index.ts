@@ -114,6 +114,8 @@ async function processRequest(request: Request): Promise<Response> {
 Deno.serve(processRequest);
 
 async function sha256Bytes(value: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', value);
+  const copy = new ArrayBuffer(value.byteLength);
+  new Uint8Array(copy).set(value);
+  const digest = await crypto.subtle.digest('SHA-256', copy);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }

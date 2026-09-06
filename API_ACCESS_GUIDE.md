@@ -112,18 +112,20 @@ curl -fsS -X POST \
 
 A successful resolver response contains only `title`, `contentMarkdown`, and `updatedAt`. Unknown, expired, revoked, deleted, malformed, and wrong-format tokens return the same `404 PUBLIC_SHARE_NOT_FOUND` response. Public resolver responses are `no-store`, and the public page sends no attachment requests.
 
-AI agents and other HTTP clients can fetch the same shared note as raw Markdown with a `GET` request. The body is the exact stored `contentMarkdown` value, with `Content-Type: text/markdown; charset=utf-8`:
+AI agents and other HTTP clients can fetch the same shared note with the unauthenticated JSON resolver. The token must be supplied in the POST body; it must not appear in a path, query string, referrer, or log:
 
 ```bash
-curl -fsS --get \
-  -H 'Accept: text/markdown' \
+curl -fsS \
+  -X POST \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json' \
   "$QNOTES_URL/public/share/resolve" \
-  --data-urlencode 'token=qns_<secret>'
+  --data '{"token":"qns_<secret>"}'
 ```
 
-The Markdown GET endpoint is unauthenticated, accepts no private JWT, and returns the same generic `404 PUBLIC_SHARE_NOT_FOUND` response for invalid, expired, revoked, deleted, malformed, or wrong-format tokens. It sends `Cache-Control: no-store`, `X-Robots-Tag: noindex`, `Referrer-Policy: no-referrer`, and a restrictive content security policy. Because the token is a bearer capability, treat the complete GET URL as secret; use HTTPS and avoid placing it in public indexes or persistent logs. The web share dialog shows this endpoint only immediately after creating a link; it is not retained when the dialog closes.
+The resolver returns `{ data: { title, contentMarkdown, updatedAt } }`, does not require a private JWT, and sends `Cache-Control: no-store`, `X-Robots-Tag: noindex`, `Referrer-Policy: no-referrer`, and a restrictive content security policy. Invalid, expired, revoked, deleted, malformed, and wrong-format tokens return the same generic `404 PUBLIC_SHARE_NOT_FOUND` response. Requests using another method, including a query-token request, are not supported. The web share dialog explains the POST/MCP workflow without constructing another secret-bearing URL.
 
-See [AI_AGENTS_SHARED_LINKS.md](AI_AGENTS_SHARED_LINKS.md) for an agent-oriented explanation of browser share URLs, raw Markdown retrieval, JSON metadata retrieval, and safe token handling.
+See [AI_AGENTS_SHARED_LINKS.md](AI_AGENTS_SHARED_LINKS.md) for an agent-oriented explanation of browser share URLs, POST JSON retrieval, Markdown content handling, and safe token handling.
 
 ## Request and response conventions
 
@@ -173,7 +175,7 @@ The main validation limits are:
 | Search page | Default 20, maximum 500 |
 | Attachment list | Default 20, maximum 50 |
 | Attachment upload | Default 20 MiB, configurable with `QNOTES_MAX_ATTACHMENT_BYTES` |
-| Workspace ZIP | Default 50 MiB, configurable with `QNOTES_EXPORT_MAX_BYTES` |
+| Workspace ZIP | Default 50 MiB, configurable with `QNOTES_EXPORT_MAX_BYTES`; preflight rejects estimates above the limit or more than 5,000 archive entries |
 
 ## REST API with cURL
 
@@ -489,7 +491,19 @@ curl -fsS \
   -o quadrate-notes-backup.zip
 ```
 
-The ZIP contains `notes/<slug>.md`, `attachments/<slug>/<attachment-id>-<file-name>`, and `manifest.json`. Deleted notes and deleted attachments are excluded. The default compressed ZIP limit is 50 MiB.
+The ZIP contains `notes/<safe-slug>-<note-id>.md`, `attachments/<safe-slug>/<attachment-id>-<file-name>`, and `manifest.json`. The version-two manifest includes notebooks, note-to-notebook IDs, Markdown paths, and attachment metadata. Deleted notes and deleted attachments are excluded. Before any Storage download, the API checks Markdown bytes, declared attachment bytes, manifest bytes, and the 5,000-entry limit against the default 50 MiB compressed ZIP limit (configurable with `QNOTES_EXPORT_MAX_BYTES`); it retains a final ZIP-size check.
+
+Validate a workspace backup without writing any data. The dry-run endpoint accepts the exported ZIP as the request body and requires all four note/attachment read/write scopes:
+
+```bash
+curl -fsS -X POST \
+  -H "Authorization: Bearer $QNOTES_TOKEN" \
+  -H 'Content-Type: application/zip' \
+  --data-binary @quadrate-notes-backup.zip \
+  "$QNOTES_URL/api/import/workspace?dryRun=true"
+```
+
+The response reports the manifest format/version, backup ID, compressed and declared-uncompressed byte totals, record counts, `conflicts`, `unsupportedFiles`, `validationFailures`, and `ready: false`; conflicts identify existing active note slugs, existing notebook names, and duplicate identities inside the backup. It never creates, updates, deletes, or uploads anything. A request with `dryRun=false` or `confirm=true` fails closed because note/database writes and Storage writes are not yet atomic across one restore transaction. Do not treat the dry-run endpoint as a restore operation or bypass its path, size, file-count, manifest, and attachment-byte checks; a future mutating restore must re-check these owner conflicts immediately before enabling writes.
 
 ## Use the `qnotes` CLI
 
@@ -658,6 +672,7 @@ All `/api` routes except health require a bearer credential. The public share re
 | `PATCH` | `/api/notes/:noteId/notebook` | `notes:write` |
 | `DELETE` | `/api/notes/:noteId` | `notes:write` |
 | `POST` | `/api/notes/:noteId/restore` | `notes:write` |
+| `POST` | `/api/import/workspace?dryRun=true` | `notes:read`, `notes:write`, `attachments:read`, `attachments:write` |
 | `GET` | `/api/notebooks` | `notes:read` |
 | `POST` | `/api/notebooks` | `notes:write` |
 | `GET` | `/api/notes/:noteRef/blocks` | `notes:read` |
@@ -695,6 +710,7 @@ All `/api` routes except health require a bearer credential. The public share re
 - `409 NOTEBOOK_NAME_CONFLICT`: choose a notebook name not used by another notebook for the owner.
 - `409 MUTATION_REUSE_CONFLICT`: do not reuse a mutation ID for a different request.
 - `413 ATTACHMENT_TOO_LARGE` or `EXPORT_TOO_LARGE`: reduce the payload or raise the corresponding server-side limit.
+- `422 ATTACHMENT_SIZE_MISMATCH`: the uploaded Storage object did not match the declared byte count; the object is rejected before processing is queued.
 - `422 VALIDATION_ERROR`: check required fields, UUIDs, versions, Markdown, pagination values, and input limits.
 - `409 ATTACHMENT_NOT_UPLOADED`: upload to the signed Storage URL before finalizing.
 - `422 UNSUPPORTED_ATTACHMENT_TYPE`: use one of the supported MIME types.

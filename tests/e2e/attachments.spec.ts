@@ -18,17 +18,22 @@ function envelope(body: unknown): Record<string, unknown> {
   return data as Record<string, unknown>;
 }
 
-async function uploadAndFinalize(token: string, noteId: string, fileName: string, mimeType: string, bytes: Uint8Array): Promise<string> {
-  const requested = await apiJson('/api/attachments/upload-url', token, { method: 'POST', body: JSON.stringify({ noteId, fileName, mimeType, sizeBytes: bytes.byteLength }) });
+async function uploadBytes(token: string, noteId: string, fileName: string, mimeType: string, bytes: Uint8Array, declaredSizeBytes = bytes.byteLength): Promise<string> {
+  const requested = await apiJson('/api/attachments/upload-url', token, { method: 'POST', body: JSON.stringify({ noteId, fileName, mimeType, sizeBytes: declaredSizeBytes }) });
   expect(requested.response.status).toBe(201);
   const data = envelope(requested.body) as unknown as UploadData;
   const env = await localEnv();
   const storage = createClient(env.supabaseUrl, env.publishableKey, { auth: { autoRefreshToken: false, persistSession: false } });
   const uploaded = await storage.storage.from('note-attachments').uploadToSignedUrl(data.path, data.token, new Blob([bytes.slice().buffer as ArrayBuffer], { type: mimeType }));
   if (uploaded.error) throw uploaded.error;
-  const finalized = await apiJson(`/api/attachments/${data.attachment.id}/finalize`, token, { method: 'POST' });
-  if (!finalized.response.ok) throw new Error(JSON.stringify(finalized.body));
   return data.attachment.id;
+}
+
+async function uploadAndFinalize(token: string, noteId: string, fileName: string, mimeType: string, bytes: Uint8Array): Promise<string> {
+  const attachmentId = await uploadBytes(token, noteId, fileName, mimeType, bytes);
+  const finalized = await apiJson(`/api/attachments/${attachmentId}/finalize`, token, { method: 'POST' });
+  if (!finalized.response.ok) throw new Error(JSON.stringify(finalized.body));
+  return attachmentId;
 }
 
 async function waitForAttachment(token: string, noteId: string, attachmentId: string, status: string): Promise<void> {
@@ -72,6 +77,21 @@ test('keeps attachment objects private between owners', async () => {
   const other = await signInSession(OTHER);
   const result = await apiJson(`/api/attachments/${attachmentId}`, other.access_token);
   expect(result.response.status).toBe(404);
+});
+
+test('rejects mismatched uploaded bytes before attachment processing is queued', async () => {
+  const session = await signInSession();
+  const note = await createNoteApi(session.access_token, `Attachment size guard ${crypto.randomUUID()}`);
+  const bytes = new TextEncoder().encode('actual bytes');
+  const attachmentId = await uploadBytes(session.access_token, note.id, 'mismatch.txt', 'text/plain', bytes, bytes.byteLength + 1);
+
+  const finalized = await apiJson(`/api/attachments/${attachmentId}/finalize`, session.access_token, { method: 'POST' });
+  expect(finalized.response.status).toBe(422);
+  expect((finalized.body as { error?: { code?: string } }).error?.code).toBe('ATTACHMENT_SIZE_MISMATCH');
+  expect((await listAttachmentsApi(session.access_token, note.id)).find((attachment) => attachment.id === attachmentId)).toMatchObject({ status: 'failed', extractionError: 'ATTACHMENT_SIZE_MISMATCH' });
+
+  await invokeWorker('attachment-worker');
+  expect((await listAttachmentsApi(session.access_token, note.id)).find((attachment) => attachment.id === attachmentId)).toMatchObject({ status: 'failed', extractionError: 'ATTACHMENT_SIZE_MISMATCH' });
 });
 
 test('refreshes attachment processing stages in the open note without a reload', async ({ page }) => {

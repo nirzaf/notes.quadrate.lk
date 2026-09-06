@@ -3,9 +3,9 @@
   "specifiers": {
     "npm:@modelcontextprotocol/sdk@1.30.0": "1.30.0_zod@4.5.4",
     "npm:@supabase/supabase-js@2.56.0": "2.56.0",
-    "npm:fflate@0.8.2": "0.8.2",
+    "npm:fflate@0.8.3": "0.8.3",
     "npm:hono@4.13.7": "4.13.7",
-    "npm:markdown-it@14.1.0": "14.1.0",
+    "npm:markdown-it@14.3.1": "14.3.1",
     "npm:zod@4.5.4": "4.5.4"
   },
   "npm": {
@@ -292,8 +292,8 @@
     "fast-uri@3.1.7": {
       "integrity": "sha512-dOvZVzjdZdz7phd9v6jCbwxrBW3fK6n8Rc0CtdmM4bumzMnxywBYhuph6J819RRw/ku+rLbelwfMunktuzVVHg=="
     },
-    "fflate@0.8.2": {
-      "integrity": "sha512-cPJU47OaAoCbg0pBvzsgpTPhmhqI5eJjh/JIu8tPj5q+T7iLvW/JAYUqmE7KOB4R1ZyEhzBaIQpQpardBF5z8A=="
+    "fflate@0.8.3": {
+      "integrity": "sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA=="
     },
     "finalhandler@2.1.1": {
       "integrity": "sha512-S8KoZgRZN+a5rNwqTxlZZePjT/4cnm0ROV70LedRHZ0p8u9fRID0hJUZQpkKLzro8LfmC8sx23bY6tVNxv8pQA==",
@@ -401,8 +401,8 @@
         "uc.micro"
       ]
     },
-    "markdown-it@14.1.0": {
-      "integrity": "sha512-a54IwgWPaeBCAAsv13YgmALOF1elABB08FxO9i+r4VFk5Vl4pKokRPeX8u5TCgSsPi6ec1otfLjdOpVcgbpshg==",
+    "markdown-it@14.3.1": {
+      "integrity": "sha512-4Ej49aYTDFIQ+uBkfX8GBvJGccoARxxPep+7aWTs55ozbjQJpW9M26Fe53vnGgvLeVzva/amzjQQaQu9w0vMhA==",
       "dependencies": [
         "argparse",
         "entities",
@@ -660,9 +660,9 @@
     "dependencies": [
       "npm:@modelcontextprotocol/sdk@1.30.0",
       "npm:@supabase/supabase-js@2.56.0",
-      "npm:fflate@0.8.2",
+      "npm:fflate@0.8.3",
       "npm:hono@4.13.7",
-      "npm:markdown-it@14.1.0",
+      "npm:markdown-it@14.3.1",
       "npm:unpdf@0.12.1",
       "npm:zod@4.5.4"
     ]
