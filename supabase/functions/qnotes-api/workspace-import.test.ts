@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { strToU8, Zip, ZipPassThrough, zipSync } from 'fflate';
-import { inspectWorkspaceArchive, safeImportFileName, WorkspaceArchiveError, workspaceImportConflicts, workspaceImportUuid, type WorkspaceBackupManifest } from './workspace-import.ts';
+import { inspectWorkspaceArchive, safeImportFileName, validateWorkspaceContents, WorkspaceArchiveError, workspaceImportConflicts, workspaceImportUuid, type WorkspaceBackupManifest } from './workspace-import.ts';
 
 function duplicateArchive(): Promise<Uint8Array> {
   return new Promise((resolve, reject) => {
@@ -62,6 +62,15 @@ test('derives stable owner-scoped identities for retryable imports', async () =>
   assert.notEqual(notebook, otherOwner);
   assert.equal(safeImportFileName('../screenshots/test image.png'), 'test_image.png');
   assert.throws(() => safeImportFileName('..'), WorkspaceArchiveError);
+});
+
+test('validates Markdown syntax before a restore can be marked ready', async () => {
+  const invalidArchive = zipSync({
+    'manifest.json': strToU8(JSON.stringify(manifest)),
+    [manifest.notes[0].markdownPath]: strToU8(':::copy {id="broken"}\nmissing closing marker'),
+  });
+  const inspection = inspectWorkspaceArchive(invalidArchive, 10_000);
+  await assert.rejects(validateWorkspaceContents(inspection), /not closed/);
 });
 
 test('rejects path traversal and attachment size mismatches before any restore action', () => {

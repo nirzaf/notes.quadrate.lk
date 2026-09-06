@@ -1,13 +1,13 @@
 import type { Context } from 'hono';
 import { authFromContext, requireScope } from '../_shared/auth.ts';
 import { appDbClient, serviceClient } from '../_shared/database.ts';
-import { MAX_MARKDOWN_CODE_UNITS } from '@qnotes/shared';
 import { ApiError } from '../_shared/errors.ts';
 import { workspaceMaxBytes } from './exports.ts';
 import { createNoteMutation } from './notes.ts';
 import {
   inspectWorkspaceArchive,
   safeImportFileName,
+  validateWorkspaceContents,
   WorkspaceArchiveError,
   workspaceImportConflicts,
   workspaceImportUuid,
@@ -41,7 +41,6 @@ function archiveText(inspection: WorkspaceArchiveInspection, path: string): stri
   if (!file) throw new ApiError(422, 'VALIDATION_ERROR', 'The backup is missing a required Markdown file.');
   try {
     const markdown = new TextDecoder('utf-8', { fatal: true }).decode(file);
-    if (markdown.length > MAX_MARKDOWN_CODE_UNITS) throw new ApiError(422, 'VALIDATION_ERROR', 'The backup contains an oversized note.');
     return markdown;
   } catch {
     throw new ApiError(422, 'VALIDATION_ERROR', 'The backup contains invalid UTF-8 Markdown.');
@@ -292,6 +291,7 @@ export async function inspectWorkspaceImport(context: Context): Promise<Response
   const archive = new Uint8Array(await context.req.arrayBuffer());
   try {
     const inspection = inspectWorkspaceArchive(archive, workspaceMaxBytes(), attachmentMaxBytes());
+    await validateWorkspaceContents(inspection);
     const conflicts = await workspaceConflicts(auth.userId, inspection.manifest);
     if (!confirmed) {
       context.header('Cache-Control', 'no-store');

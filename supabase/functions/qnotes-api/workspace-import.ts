@@ -1,5 +1,5 @@
 import { strFromU8, unzipSync } from 'fflate';
-import { sha256Hex } from '@qnotes/markdown';
+import { MarkdownParseError, parseMarkdown, sha256Hex } from '@qnotes/markdown';
 import { MAX_MARKDOWN_CODE_UNITS, isUUID } from '@qnotes/shared';
 import { MAX_EXPORT_ENTRIES } from './export-preflight.ts';
 
@@ -106,6 +106,27 @@ export function safeImportFileName(value: string): string {
   const safe = basename.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/^\.+/, '').slice(0, 160);
   if (!safe) throw new WorkspaceArchiveError('The backup contains an invalid attachment file name.');
   return safe;
+}
+
+export async function validateWorkspaceContents(inspection: WorkspaceArchiveInspection): Promise<void> {
+  for (const note of inspection.manifest.notes) {
+    const file = inspection.files[note.markdownPath];
+    if (!file) throw new WorkspaceArchiveError('The backup is missing a required Markdown file.');
+    let markdown: string;
+    try {
+      markdown = new TextDecoder('utf-8', { fatal: true }).decode(file);
+    } catch {
+      throw new WorkspaceArchiveError('The backup contains invalid UTF-8 Markdown.');
+    }
+    if (markdown.length > MAX_MARKDOWN_CODE_UNITS) throw new WorkspaceArchiveError('The backup contains an oversized note.');
+    try {
+      await parseMarkdown(markdown);
+    } catch (error: unknown) {
+      if (error instanceof MarkdownParseError) throw new WorkspaceArchiveError(error.message);
+      throw error;
+    }
+    for (const attachment of note.attachments) safeImportFileName(attachment.originalFileName);
+  }
 }
 
 export function workspaceImportConflicts(manifest: WorkspaceBackupManifest, existing: ExistingWorkspaceIdentity): WorkspaceImportConflict[] {
