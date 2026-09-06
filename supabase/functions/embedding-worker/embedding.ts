@@ -11,7 +11,8 @@ let cachedSession: EmbeddingSession | null = null;
 let cachedSessionConstructor: SessionConstructor | null = null;
 
 async function digestBytes(value: Uint8Array): Promise<Uint8Array> {
-  return new Uint8Array(await crypto.subtle.digest('SHA-256', value));
+  const input = value.slice();
+  return new Uint8Array(await crypto.subtle.digest('SHA-256', input.buffer as ArrayBuffer));
 }
 
 export async function fakeEmbedding(value: string): Promise<number[]> {

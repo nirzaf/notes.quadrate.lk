@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "fixtureSha256": "5ab8d6541dae28c86615adc786f92e52957b62a950f2a7943fe989022c8e23bc",
+  "stableEvaluator": {
+    "recallAt5": 0.5,
+    "mrrAt10": 0.5,
+    "ndcgAt10": 0.45
+  },
+  "quality": {
+    "keyword": {
+      "recallAt5": 0.55,
+      "mrrAt10": 0.5,
+      "ndcgAt10": 0.45
+    },
+    "semantic": {
+      "recallAt5": 0.25,
+      "mrrAt10": 0.25,
+      "ndcgAt10": 0.2
+    },
+    "hybrid": {
+      "recallAt5": 0.5,
+      "mrrAt10": 0.5,
+      "ndcgAt10": 0.45
+    }
+  },
+  "context": {
+    "minimumUsefulnessRate": 0.8
+  },
+  "latency": {
+    "searchP95Ms": {
+      "keyword": 5000,
+      "semantic": 10000,
+      "hybrid": 10000
+    },
+    "contextP95Ms": 5000
+  }
+}

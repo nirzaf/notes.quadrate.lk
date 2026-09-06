@@ -5,18 +5,18 @@ import { MAX_BLOCK_KEY_LENGTH, MAX_DEDUPE_KEY_LENGTH, MAX_MARKDOWN_CODE_UNITS, M
 import { getBlockTool } from './tools/get-block.ts';
 import { readNoteContextTool } from './tools/read-note-context.ts';
 import { searchNotesTool } from './tools/search-notes.ts';
-import type { ReadQNotesClient } from './tools/common.ts';
+import { toolResult, type ReadQNotesClient } from './tools/common.ts';
 import { registerNotesResources } from './resources/notes.ts';
 import { appendNoteTool } from './tools/append-note.ts';
 import { captureNoteTool, type WriteQNotesClient } from './tools/capture-note.ts';
 import { deleteNoteTool } from './tools/delete-note.ts';
 import { restoreNoteTool } from './tools/restore-note.ts';
 import type { WriteToolOptions } from './tools/write-notes.ts';
-import { updateNoteTool } from './tools/update-note.ts';
+import { moveNoteToNotebookTool, updateNoteTool } from './tools/write-notes.ts';
 
 export type McpProfile = 'read' | 'write';
-export const READ_TOOL_NAMES = ['search_notes', 'read_note_context', 'get_block'] as const;
-export const WRITE_TOOL_NAMES = ['capture_note', 'append_note', 'update_note', 'delete_note', 'restore_note'] as const;
+export const READ_TOOL_NAMES = ['search_notes', 'read_note_context', 'get_block', 'list_notebooks'] as const;
+export const WRITE_TOOL_NAMES = ['capture_note', 'append_note', 'update_note', 'delete_note', 'restore_note', 'move_note_to_notebook'] as const;
 export interface QNotesMcpServerOptions extends WriteToolOptions {}
 
 const noteAcknowledgmentFields = {
@@ -71,6 +71,11 @@ export function createQNotesMcpServer(client: QNotesClient & ReadQNotesClient, p
     },
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, (args: Record<string, unknown>) => getBlockTool(client, args as Parameters<typeof getBlockTool>[1]));
+  server.registerTool('list_notebooks', {
+    description: 'List available Quadrate Notes notebooks without reading note contents.',
+    inputSchema: {},
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, async () => toolResult(await client.listNotebooks()));
   registerNotesResources(server, client);
   if (profile === 'write') {
     const writeClient = client as QNotesClient & WriteQNotesClient;
@@ -135,6 +140,17 @@ export function createQNotesMcpServer(client: QNotesClient & ReadQNotesClient, p
       outputSchema: mutationAcknowledgmentSchema,
       annotations: { readOnlyHint: false, openWorldHint: false },
     }, (args: Record<string, unknown>) => restoreNoteTool(writeClient, args as Parameters<typeof restoreNoteTool>[1], options));
+    server.registerTool('move_note_to_notebook', {
+      description: 'Move one note to a notebook, or set notebookId to null to unfile it, using an explicit expected version and replay-safe mutation identity.',
+      inputSchema: {
+        noteId: z.string().uuid(),
+        notebookId: z.string().uuid().nullable(),
+        expectedVersion: z.number().int().min(1),
+        mutationId: z.string().uuid().optional(),
+      },
+      outputSchema: mutationAcknowledgmentSchema,
+      annotations: { readOnlyHint: false, openWorldHint: false },
+    }, (args: Record<string, unknown>) => moveNoteToNotebookTool(writeClient, args as Parameters<typeof moveNoteToNotebookTool>[1], options));
   }
   return server;
 }

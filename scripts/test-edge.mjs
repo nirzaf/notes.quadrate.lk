@@ -1,0 +1,83 @@
+import { readdir } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { dirname, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const functionsRoot = join(root, 'supabase/functions');
+const importMap = 'supabase/functions/deno.json';
+
+export async function discoverEdgeTestFiles(directory = functionsRoot) {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files = [];
+  for (const entry of entries) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...await discoverEdgeTestFiles(path));
+    } else if (entry.isFile() && entry.name.endsWith('.test.ts')) {
+      files.push(relative(root, path).split('/').join('/'));
+    }
+  }
+  return files.sort();
+}
+
+export function edgeTestArguments(files) {
+  if (!files.length) throw new Error('No applicable Edge test files were found under supabase/functions/.');
+  return ['test', '--no-lock', `--import-map=${importMap}`, ...files];
+}
+
+function runDeno(args) {
+  return new Promise((resolveProcess, reject) => {
+    const child = spawn('deno', args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = '';
+    child.stdout.on('data', (chunk) => {
+      output += chunk;
+      process.stdout.write(chunk);
+    });
+    child.stderr.on('data', (chunk) => {
+      output += chunk;
+      process.stderr.write(chunk);
+    });
+    child.once('error', reject);
+    child.once('close', (code, signal) => resolveProcess({ code: code ?? 1, signal, output }));
+  });
+}
+
+export async function runEdgeTests() {
+  const files = await discoverEdgeTestFiles();
+  const args = edgeTestArguments(files);
+  console.log(`[test:edge] discovered ${files.length} test files:`);
+  for (const file of files) console.log(`[test:edge]   ${file}`);
+  console.log('[test:edge] running Deno with the checked-in import map and lockfile writes disabled.');
+
+  const result = await runDeno(args);
+  if (result.code !== 0) {
+    throw new Error(`Deno Edge tests failed${result.signal ? ` (${result.signal})` : ` with exit code ${result.code}`}.`);
+  }
+
+  const summary = result.output.match(/ok \| (\d+) passed \| (\d+) failed/);
+  if (summary) {
+    console.log(`[test:edge] completed ${summary[1]} tests across ${files.length} files (${summary[2]} failed).`);
+  } else {
+    console.log(`[test:edge] completed successfully across ${files.length} files; Deno did not emit its usual summary.`);
+  }
+  return { files, tests: summary ? Number(summary[1]) : null };
+}
+
+async function main() {
+  try {
+    await runEdgeTests();
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      throw new Error('Deno is required on PATH for Edge tests. Install Deno 2.9.6 or newer, then rerun pnpm run test:edge.');
+    }
+    throw error;
+  }
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
+  await main().catch((error) => {
+    console.error(`[test:edge] ${error.message}`);
+    process.exitCode = 1;
+  });
+}

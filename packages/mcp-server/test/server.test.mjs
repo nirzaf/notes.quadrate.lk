@@ -58,7 +58,21 @@ test('MCP read context forwards an opaque continuation only when supplied', asyn
 test('default MCP profile exposes only the read surface', () => {
   const server = createQNotesMcpServer(mockClient());
   assert.ok(server);
-  assert.deepEqual(READ_TOOL_NAMES, ['search_notes', 'read_note_context', 'get_block']);
+  assert.deepEqual(READ_TOOL_NAMES, ['search_notes', 'read_note_context', 'get_block', 'list_notebooks']);
+});
+
+test('MCP list_notebooks is available in the read profile and delegates to the API client', async () => {
+  let calls = 0;
+  const { client } = await connectedProtocol('read', protocolClient({
+    async listNotebooks() {
+      calls += 1;
+      return { items: [{ id: 'notebook-1', name: 'Operations', createdAt: '2026-01-01', updatedAt: '2026-01-01' }] };
+    },
+  }));
+  const result = await client.callTool({ name: 'list_notebooks', arguments: {} });
+  assert.deepEqual(result.structuredContent, { items: [{ id: 'notebook-1', name: 'Operations', createdAt: '2026-01-01', updatedAt: '2026-01-01' }] });
+  assert.equal(calls, 1);
+  await client.close();
 });
 
 test('MCP write helpers avoid pre-reads and preserve omitted fields for the API', async () => {
@@ -112,6 +126,7 @@ function protocolClient(overrides = {}) {
     async updateNote(noteId, input) { return { ...note, id: noteId, ...input }; },
     async deleteNote(noteId, input) { return { ...note, id: noteId, version: input.expectedVersion + 1, deletedAt: '2026-01-01T00:00:01Z' }; },
     async restoreNote(noteId, input) { return { ...note, id: noteId, version: input.expectedVersion + 1, deletedAt: null }; },
+    async moveNoteToNotebook(noteId, input) { return { ...note, id: noteId, notebookId: input.notebookId, version: input.expectedVersion + 1 }; },
     ...overrides,
   };
 }
@@ -140,8 +155,36 @@ test('MCP protocol advertises the exact read and write tool profiles', async () 
   const readToolNames = (await readAgain.client.listTools()).tools.map((tool) => tool.name);
   assert.equal(readToolNames.includes('delete_note'), false);
   assert.equal(readToolNames.includes('restore_note'), false);
+  assert.equal(readToolNames.includes('move_note_to_notebook'), false);
+  assert.equal(readToolNames.includes('create_notebook'), false);
   await readAgain.client.close();
   await write.client.close();
+});
+
+test('MCP move_note_to_notebook uses the API client and preserves transactional identities', async () => {
+  let received;
+  const stableDeviceId = '770e8400-e29b-41d4-a716-446655440000';
+  const mutationId = '660e8400-e29b-41d4-a716-446655440012';
+  const { client } = await connectedProtocol('write', protocolClient({
+    async moveNoteToNotebook(noteId, input) {
+      received = { noteId, input };
+      return { id: noteId, title: 'Rollback', version: input.expectedVersion + 1, notebookId: input.notebookId };
+    },
+  }), { deviceId: stableDeviceId });
+  const result = await client.callTool({ name: 'move_note_to_notebook', arguments: {
+    noteId: '550e8400-e29b-41d4-a716-446655440000',
+    notebookId: null,
+    expectedVersion: 3,
+    mutationId,
+  } });
+  assert.deepEqual(received, {
+    noteId: '550e8400-e29b-41d4-a716-446655440000',
+    input: { notebookId: null, expectedVersion: 3, deviceId: stableDeviceId, mutationId },
+  });
+  assert.deepEqual(result.structuredContent, {
+    noteId: '550e8400-e29b-41d4-a716-446655440000', title: 'Rollback', resultingVersion: 4, mutationId, outcome: 'applied', uri: 'qnotes://notes/550e8400-e29b-41d4-a716-446655440000',
+  });
+  await client.close();
 });
 
 test('MCP append exposes a caller-owned retry identity and expected version', async () => {

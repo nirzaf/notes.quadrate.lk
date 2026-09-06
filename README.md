@@ -65,27 +65,47 @@ The browser subscribes to the private `user:<user-id>:notes` Realtime channel an
 
 ## Local development
 
-Prerequisites are Node.js 18 or newer, pnpm 12.1.0, the Supabase CLI, and a browser supported by the checked-in Playwright configuration. The Playwright project targets the `chrome` channel; install or make Google Chrome available before running end-to-end tests.
+Prerequisites are Node.js 18 or newer (verified with 24.19.0), pnpm 12.1.0, Deno 2.9.6 or newer (verified with 2.9.6), Docker for local Supabase, and the Supabase CLI. Playwright uses its checked-in `chromium` project with the `Desktop Chrome` device and bundled Chromium; it does not require a separately installed Google Chrome channel.
 
 From the repository root:
 
 ```bash
 pnpm install --frozen-lockfile
+pnpm exec playwright install chromium
 pnpm exec supabase start
-pnpm exec supabase db reset
 pnpm run local:env
 pnpm run seed:test-users
-pnpm run db:types
-pnpm run sync:edge
-pnpm run typecheck
-pnpm run build
-pnpm run test:unit
-pnpm run test:mcp
 ```
 
-The real search evaluator lives under `tests/search-evaluation-fixtures.json` and `scripts/evaluate-search.mjs`. Run it against a local API with `QNOTES_URL` and a scoped token; add `--seed` to create its stable dedupe-key corpus. An optional `--results` mode calculates offline metrics but is not product performance. The local-only benchmark uses `scripts/seed-search-benchmark.mjs` and `scripts/search-benchmark.mjs`; every run requires `--local-benchmark`, uses the dedicated local benchmark owner, verifies actual row counts, and reports repeated keyword/semantic/hybrid latency and ANN metadata. Query-plan collection uses `scripts/search-query-plans.sql` against a representative database.
+`local:env` reads the local Supabase status without printing keys and writes ignored files at `apps/web/.env.local`, `supabase/functions/.env.test`, and `.tmp/local-env.json`. `seed:test-users` is deliberately restricted to a local Supabase URL and creates the E2E accounts used by the test suite. The verification gate never runs either command automatically, never resets or reseeds the database, never regenerates types, and never rewrites environment or lock files.
 
-`local:env` reads the local Supabase status without printing keys and writes ignored files at `apps/web/.env.local`, `supabase/functions/.env.test`, and `.tmp/local-env.json`. `seed:test-users` is deliberately restricted to a local Supabase URL and creates the E2E accounts used by the test suite. The test suite reads its local-only credentials from `tests/e2e/helpers.ts`; do not reuse them outside local testing.
+### Local verification gate
+
+`pnpm run test:edge` discovers every `*.test.ts` file below `supabase/functions/` and passes the explicit file list to Deno with `supabase/functions/deno.json`. It covers both the `Deno.test` and `node:test` registrations currently used by the Edge suite, preserves Deno type checking, and uses `--no-lock` so a stale Deno lockfile cannot be rewritten implicitly. The runner reports the discovered files and Deno's passed-test count; it fails if the directory contains no applicable test files or any test fails.
+
+Run the complete local gate only after the one-time setup above:
+
+```bash
+pnpm run verify:local
+```
+
+The gate validates Node, pnpm, Deno, installed dependencies, the local Supabase service, ignored environment files, every effective Supabase/API URL, and the configured Chromium browser before it starts any database or E2E operation. It then runs these stages sequentially and stops at the first nonzero result:
+
+1. `pnpm run typecheck`
+2. `pnpm run test:unit`
+3. `pnpm run test:edge`
+4. `pnpm run build`
+5. `pnpm run verify:edge-shared`
+6. `pnpm exec supabase test db`
+7. `pnpm exec playwright test tests/e2e/navigation.spec.ts --project=chromium`
+
+The focused navigation E2E run starts the web server and local Edge Functions through the existing `playwright.config.ts` lifecycle, reusing an already running server only when Playwright verifies its configured URL. `tests/e2e/global-setup.ts` and the E2E fixture clear application data only for the dedicated local users `owner@qnotes.local` and `other@qnotes.local`; this bounded cleanup is an intentional side effect of E2E setup. The guard does not stop processes it did not start.
+
+If preflight fails, fix the reported local prerequisite manually: install the pinned tools, start Docker/Supabase, run `pnpm run local:env`, seed the dedicated users with `pnpm run seed:test-users`, or install bundled Chromium with `pnpm exec playwright install chromium`. It will reject HTTPS, URL credentials, localhost lookalikes, mismatched local targets, and any inherited remote URL before the database or browser stages. A stage failure is reported with its elapsed time and prevents all later stages from running. This gate is a local correctness and regression check, not a production deployment check or a security audit; production validation remains covered by the deployment and security procedures below.
+
+The real search evaluator lives under `tests/search-evaluation-fixtures.json` and `scripts/evaluate-search.mjs`. Run it against a local API with `QNOTES_URL` and a scoped token; add `--seed` to create its stable dedupe-key corpus. An optional `--results` mode calculates offline metrics but is not product performance. Before committing changes that touch `packages/markdown/`, `supabase/functions/qnotes-api/search.ts`, `supabase/functions/embedding-worker/`, or a Supabase search migration, run `pnpm run verify:search -- --seed` against local Supabase. The regression guard runs the stable evaluator, compares checked-in keyword/semantic/hybrid quality floors, verifies bounded context usefulness and provenance, and enforces local search/context p95 latency caps from `tests/search-evaluation-baseline.json`; it refuses to run when the fixture hash and baseline disagree. The local-only benchmark uses `scripts/seed-search-benchmark.mjs` and `scripts/search-benchmark.mjs`; every run requires `--local-benchmark`, uses the dedicated local benchmark owner, verifies actual row counts, and reports repeated keyword/semantic/hybrid latency and ANN metadata. Query-plan collection uses `scripts/search-query-plans.sql` against a representative database.
+
+The test suite reads its local-only credentials from `tests/e2e/helpers.ts`; do not reuse them outside local testing. For a direct E2E invocation, the same helper enforces the local-only target boundary before setup or test fixtures can make requests.
 
 Run the web app with:
 
@@ -121,11 +141,11 @@ The unit suite covers the Markdown, sync, API-client, CLI, and MCP packages:
 pnpm run test:unit
 ```
 
-The E2E suite uses the single-worker, zero-retry configuration in `playwright.config.ts`. Its web-server configuration starts both Vite and the three local Edge Functions, and its global setup clears application data for the two local test users. Install the browser channel selected by the config if necessary, then run:
+The E2E suite uses the single-worker, zero-retry configuration in `playwright.config.ts`. Its web-server configuration starts Vite and the configured local Edge Functions, and its global setup plus per-test fixture clears application data for the two dedicated local test users. The verified focused command is:
 
 ```bash
-pnpm exec playwright install chrome
-pnpm run test:e2e
+pnpm exec playwright install chromium
+pnpm exec playwright test tests/e2e/navigation.spec.ts --project=chromium
 ```
 
 The hosted project is `ciyoandzjezgqxjpcrin`, and the production web site is `https://notes.quadrate.lk`. Before a production deployment, set exact CORS origins and server-only secrets. Do not set `QNOTES_FAKE_EMBEDDINGS=1` in production; hosted workers need the Supabase AI runtime for `gte-small` embeddings.

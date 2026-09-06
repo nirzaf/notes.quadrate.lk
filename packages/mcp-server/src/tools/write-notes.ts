@@ -1,4 +1,4 @@
-import type { AppendNoteInput, CreateNoteInput, Note, UpdateNoteInput } from '@qnotes/shared';
+import type { AppendNoteInput, CreateNoteInput, MoveNoteToNotebookInput, Note, UpdateNoteInput } from '@qnotes/shared';
 import type { CreateNoteOutcome, NoteMutationOutcome, NoteMutationResult } from '@qnotes/api-client';
 import { toolResult, type ReadQNotesClient } from './common.ts';
 
@@ -9,6 +9,7 @@ export interface WriteQNotesClient extends ReadQNotesClient {
   appendNoteDetailed?: (noteId: string, input: AppendNoteInput) => Promise<NoteMutationResult>;
   updateNote(noteId: string, input: UpdateNoteInput): Promise<Note>;
   updateNoteDetailed?: (noteId: string, input: UpdateNoteInput) => Promise<NoteMutationResult>;
+  moveNoteToNotebook(noteId: string, input: MoveNoteToNotebookInput): Promise<Note>;
   deleteNote(noteId: string, input: { expectedVersion: number; deviceId: string; mutationId: string }): Promise<Note>;
   deleteNoteDetailed?: (noteId: string, input: { expectedVersion: number; deviceId: string; mutationId: string }) => Promise<NoteMutationResult>;
   restoreNote(noteId: string, input: { expectedVersion: number; deviceId: string; mutationId: string }): Promise<Note>;
@@ -85,6 +86,18 @@ export async function updateNoteTool(client: WriteQNotesClient, args: { noteId: 
     ? await client.updateNoteDetailed(args.noteId, input)
     : { note: await client.updateNote(args.noteId, input), outcome: 'applied' as const };
   return toolResult(acknowledgment(result.note, mutationId, result.outcome));
+}
+
+export async function moveNoteToNotebookTool(client: WriteQNotesClient, args: { noteId: string; notebookId: string | null; expectedVersion: number; deviceId?: string; mutationId?: string }, options?: WriteToolOptions) {
+  const mutationId = args.mutationId ?? crypto.randomUUID();
+  const input: MoveNoteToNotebookInput = {
+    notebookId: args.notebookId,
+    expectedVersion: args.expectedVersion,
+    deviceId: deviceId(args, options),
+    mutationId,
+  };
+  const note = await client.moveNoteToNotebook(args.noteId, input);
+  return toolResult(acknowledgment(note, mutationId, 'applied'));
 }
 
 function requireConfirmation(confirm: boolean): void {

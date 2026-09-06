@@ -1,4 +1,6 @@
+import { existsSync, readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { createClient, type Session, type SupabaseClient } from '@supabase/supabase-js';
 import type { Note, Attachment, NoteSummary } from '@qnotes/shared';
 import { expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
@@ -7,6 +9,90 @@ export const OWNER = { email: 'owner@qnotes.local', password: 'Qnotes-Test-Owner
 export const OTHER = { email: 'other@qnotes.local', password: 'Qnotes-Test-Other-2026!' } as const;
 const TEST_USERS = [OWNER, OTHER] as const;
 type TestUser = (typeof TEST_USERS)[number];
+
+const repoRoot = resolve(process.cwd());
+const localHosts = new Set(['localhost', '127.0.0.1']);
+
+function parseLocalEnv(text: string): Record<string, string> {
+  const values: Record<string, string> = {};
+  for (const line of text.split(/\r?\n/)) {
+    const match = line.match(/^\s*([A-Z][A-Z0-9_]*)\s*=\s*(.*?)\s*$/);
+    if (!match) continue;
+    let value = match[2] ?? '';
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    values[match[1]] = value;
+  }
+  return values;
+}
+
+function localTarget(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !value.trim()) throw new Error(`E2E local target check failed: ${label} is missing.`);
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(`E2E local target check failed: ${label} is not a valid URL.`);
+  }
+  if (url.protocol !== 'http:') throw new Error(`E2E local target check failed: ${label} must use http://.`);
+  if (url.username || url.password) throw new Error(`E2E local target check failed: ${label} must not contain URL credentials.`);
+  if (!localHosts.has(url.hostname)) throw new Error(`E2E local target check failed: ${label} must target localhost or 127.0.0.1.`);
+  return url.href.replace(/\/+$/, '');
+}
+
+function requiredText(path: string, label: string): string {
+  if (!existsSync(path)) throw new Error(`E2E local setup is incomplete: ${label} is missing. Run pnpm run local:env.`);
+  return readFileSync(path, 'utf8');
+}
+
+/**
+ * Validate the exact local targets before global setup or any E2E fixture can mutate data.
+ * This runs at module load so direct Playwright invocations receive the same boundary.
+ */
+export function assertLocalE2ETargets(): void {
+  const web = parseLocalEnv(requiredText(resolve(repoRoot, 'apps/web/.env.local'), 'apps/web/.env.local'));
+  const functions = parseLocalEnv(requiredText(resolve(repoRoot, 'supabase/functions/.env.test'), 'supabase/functions/.env.test'));
+  let local: Partial<LocalEnv>;
+  try {
+    local = JSON.parse(requiredText(resolve(repoRoot, '.tmp/local-env.json'), '.tmp/local-env.json')) as Partial<LocalEnv>;
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith('E2E local setup is incomplete:')) throw error;
+    throw new Error('E2E local setup is invalid: .tmp/local-env.json is not valid JSON.');
+  }
+  if (!local || typeof local !== 'object' || Array.isArray(local)) {
+    throw new Error('E2E local setup is invalid: .tmp/local-env.json must contain the local environment object.');
+  }
+
+  const supabaseUrl = localTarget(local.supabaseUrl, '.tmp/local-env.json supabaseUrl');
+  const apiUrl = localTarget(local.apiUrl, '.tmp/local-env.json apiUrl');
+  const expectedApiUrl = `${supabaseUrl}/functions/v1/qnotes-api`;
+  if (apiUrl !== expectedApiUrl) throw new Error('E2E local target check failed: local API URL does not match local Supabase.');
+  if (localTarget(web.VITE_SUPABASE_URL, 'VITE_SUPABASE_URL') !== supabaseUrl) throw new Error('E2E local target check failed: web Supabase URL does not match local Supabase.');
+  if (localTarget(web.VITE_QNOTES_API_URL, 'VITE_QNOTES_API_URL') !== apiUrl) throw new Error('E2E local target check failed: web API URL does not match local API.');
+  if (localTarget(functions.SUPABASE_URL, 'SUPABASE_URL') !== supabaseUrl) throw new Error('E2E local target check failed: function Supabase URL does not match local Supabase.');
+
+  const origins = (functions.QNOTES_ALLOWED_ORIGIN ?? '').split(',').map((value) => value.trim()).filter(Boolean);
+  if (!origins.length) throw new Error('E2E local setup is invalid: QNOTES_ALLOWED_ORIGIN is missing.');
+  origins.forEach((origin, index) => localTarget(origin, `QNOTES_ALLOWED_ORIGIN entry ${index + 1}`));
+
+  const inheritedTargets: Record<string, string> = {
+    QNOTES_URL: apiUrl,
+    SUPABASE_URL: supabaseUrl,
+    VITE_SUPABASE_URL: supabaseUrl,
+    VITE_QNOTES_API_URL: apiUrl,
+  };
+  for (const [name, expected] of Object.entries(inheritedTargets)) {
+    if (process.env[name] && localTarget(process.env[name], `inherited ${name}`) !== expected) {
+      throw new Error(`E2E local target check failed: inherited ${name} does not match the local target.`);
+    }
+  }
+  if (process.env.QNOTES_E2E_EXTERNAL_API && !['0', '1'].includes(process.env.QNOTES_E2E_EXTERNAL_API)) {
+    throw new Error('E2E local target check failed: QNOTES_E2E_EXTERNAL_API must be 0 or 1.');
+  }
+}
+
+assertLocalE2ETargets();
 
 
 interface LocalEnv {
