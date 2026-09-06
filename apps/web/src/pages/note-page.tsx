@@ -22,6 +22,7 @@ import { useNoteAutosave } from '../hooks/use-note-autosave';
 import { useCreateNote } from '../hooks/use-create-note';
 import { useSyncRecovery } from '../hooks/use-sync-recovery';
 import { formatUpdatedAt } from '../lib/utils';
+import { captureFullPageScreenshot, screenshotFile, waitForScreenshotLayout } from '../lib/screenshot';
 import { noteQueryKeys, refreshNoteViews, type WorkspaceQueryKeys } from '../note-query-keys';
 import { withoutSearchMatch, type AppSearchParams } from '../navigation-context';
 
@@ -238,6 +239,23 @@ function LoadedNoteSession({ note, userId, search, queryKeys }: LoadedNoteSessio
     } catch (error: unknown) { toast(error instanceof Error ? error.message : 'Unable to recover the draft.', 'error'); }
   };
   const leaveWithDraft = async () => { try { await autosave.preserveDraft(); blocker.proceed?.(); } catch { /* status and error are shown by the editor */ } };
+  const captureEntirePage = useCallback(async () => {
+    const target = document.querySelector<HTMLElement>('[data-screenshot-capture-target]');
+    if (!target) throw new Error('The current page could not be captured.');
+    const previousView = view;
+    const previousScrollTop = target.scrollTop;
+    const previousScrollLeft = target.scrollLeft;
+    try {
+      if (previousView !== 'preview') setView('preview');
+      await waitForScreenshotLayout();
+      return screenshotFile(await captureFullPageScreenshot(target), 'full-page');
+    } finally {
+      if (previousView !== 'preview') setView(previousView);
+      await waitForScreenshotLayout();
+      target.scrollTop = previousScrollTop;
+      target.scrollLeft = previousScrollLeft;
+    }
+  }, [view]);
   const noteForCopy = { ...note, title: autosave.title, tags: autosave.tags, contentMarkdown: autosave.value };
   return <AppShell title={autosave.title || 'Untitled note'} notes={notesQuery.data?.items ?? []} activeNoteId={note.id} onNew={() => void create()} onSelectNote={(id) => void navigate({ to: '/notes/$noteId', params: { noteId: id }, search: withoutSearchMatch(search) })} onRealtimeEvent={event} onRealtimeReconnect={reconnect}>
     <div className="q-main-body q-main-body-wide"><Link to="/" search={withoutSearchMatch(search)} className="q-note-back">← Back to {search.q ? 'search results' : 'notes'}</Link>
@@ -247,7 +265,7 @@ function LoadedNoteSession({ note, userId, search, queryKeys }: LoadedNoteSessio
         <div className="q-editor-controls"><div className="q-toolbar" aria-label="Note view"><Button variant={view === 'edit' ? 'secondary' : 'ghost'} size="sm" onClick={() => setView('edit')}>Edit</Button><Button variant={view === 'preview' ? 'secondary' : 'ghost'} size="sm" onClick={() => setView('preview')}>Preview</Button></div><NotebookPicker notebooks={notebooksQuery.data?.items ?? []} value={note.notebookId} disabled={Boolean(note.deletedAt) || movingNotebook || autosave.dirty || autosave.status === 'saving' || autosave.status === 'pending'} onChange={(notebookId) => void moveNotebook(notebookId)} /><div className="q-editor-actions"><NoteToolbar note={noteForCopy} onDelete={() => void updateDeletion('delete')} onRestore={() => void updateDeletion('restore')} onExport={() => void exportNote()} /></div></div>
         {view === 'edit' ? <EditorErrorBoundary><Suspense fallback={<div className="q-empty">Loading editor…</div>}><NoteEditor key={note.id} value={autosave.value} onChange={autosave.change} readOnly={Boolean(note.deletedAt)} /></Suspense></EditorErrorBoundary> : <NotePreview markdown={autosave.value} />}
         <div className="q-editor-footer"><span className="q-small">{note.deletedAt ? 'Read-only note in Trash.' : 'Markdown is saved after 800ms of quiet.'}</span></div>
-      </section>{!note.deletedAt ? <aside className="q-panel-stack"><AttachmentPanel noteId={note.id} attachments={attachmentsQuery.data ?? []} onRefresh={() => attachmentsQuery.refetch()} /></aside> : null}</div>
+      </section>{!note.deletedAt ? <aside className="q-panel-stack"><AttachmentPanel noteId={note.id} attachments={attachmentsQuery.data ?? []} onRefresh={() => attachmentsQuery.refetch()} onCaptureFullPage={captureEntirePage} /></aside> : null}</div>
     </div>
     <ConflictResolver open={Boolean(conflict)} baseMarkdown={note.contentMarkdown} localMarkdown={autosave.value} remoteNote={conflict?.remote ?? null} remoteDeleted={conflict?.remoteDeleted ?? false} error={conflict?.error} onUseMine={saveMine} onUseRemote={saveRemote} onSaveMerged={saveMerged} onSaveAsNew={() => void saveAsNew()} onCancel={() => setConflict(null)} />
     <Dialog open={blocker.status === 'blocked'} onOpenChange={(open) => { if (!open) blocker.reset?.(); }}><DialogContent><DialogHeader><DialogTitle>Save is still pending</DialogTitle><DialogDescription>The server did not confirm the latest edit. Your local draft remains available. Retry, stay here, or leave only after the draft is durably stored on this account.</DialogDescription></DialogHeader><div className="q-dialog-actions"><Button variant="outline" onClick={() => blocker.reset?.()}>Stay and edit</Button><Button variant="secondary" onClick={() => { blocker.reset?.(); autosave.retry(); }}>Retry save</Button><Button onClick={() => void leaveWithDraft()}>Leave with draft</Button></div></DialogContent></Dialog>

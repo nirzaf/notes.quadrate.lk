@@ -10,8 +10,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@codemirror/state": "6.7.1",
     "@codemirror/lang-markdown": "6.3.3",
+    "@codemirror/state": "6.7.1",
     "@qnotes/api-client": "workspace:*",
     "@qnotes/markdown": "workspace:*",
     "@qnotes/shared": "workspace:*",
@@ -25,12 +25,13 @@
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "codemirror": "6.0.1",
+    "dom-to-image-more": "3.10.2",
     "dompurify": "3.4.13",
     "lucide-react": "0.468.0",
     "markdown-it": "14.2.0",
-    "tailwind-merge": "3.3.1",
     "react": "19.1.1",
-    "react-dom": "19.1.1"
+    "react-dom": "19.1.1",
+    "tailwind-merge": "3.3.1"
   },
   "devDependencies": {
     "@tailwindcss/vite": "4.1.12",

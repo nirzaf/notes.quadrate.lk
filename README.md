@@ -10,7 +10,7 @@ The repository is a pnpm monorepo. The web app is a Vite/React PWA, the API is a
 - A Markdown editor with Edit and Preview views, 800 ms quiet-period autosave, copy-as-Markdown/plain text/rendered content, and one-click copyable blocks.
 - Personal notebooks. The sidebar and home page can show All notes, Unfiled notes, or one named notebook. Notes can be moved from the note editor.
 - Progressive local-first search in the web app, with recent local title/tag matches followed by server-side title/body relevance, structured notebook/tag/source/date filters, and results from copyable blocks and extracted attachment text. The API additionally supports semantic and hybrid search with opaque request-bound cursors.
-- Private attachments stored in Supabase Storage. Plain text, Markdown, and text-bearing PDFs are indexed asynchronously; PNG, JPEG, and WebP files are stored but report that image OCR is unsupported.
+- Private attachments stored in Supabase Storage. Plain text, Markdown, and text-bearing PDFs are indexed asynchronously; PNG, JPEG, and WebP files are stored but report that image OCR is unsupported. From a note's Attachments panel, screenshots can be captured as the Visible Area, the Entire Page, or a Cropped Zone and are sent through the same private attachment flow.
 - Versioned mutations, private Realtime Broadcast invalidation, reconnect recovery, IndexedDB draft persistence, and a conflict resolver for concurrent edits.
 - Personal API tokens with least-privilege scopes for scripts, agents, backups, and the CLI.
 - A guided Integrations page for read-only-by-default Hermes setup, explicit write scopes, real token expiry choices, one-time secret/config display, and separate API versus Hermes verification.
@@ -26,7 +26,7 @@ The home page provides a paginated recent-notes view, a search field, and a note
 
 Use the `+` action in the Notebooks section to create a notebook. Names are trimmed, limited to 80 characters, and unique per owner. Open a note and use its notebook selector to move it to a notebook or back to Unfiled. The selector is disabled while an edit is waiting to be saved.
 
-Inside a note, Edit opens the CodeMirror Markdown editor and Preview renders sanitized Markdown with copy buttons for fenced code and named copy blocks. The note is saved after 800 ms without changes. Delete is a soft delete that moves the note to the trash; the same note view exposes Restore for a deleted note. Export downloads the current note as `<slug>.md`.
+Inside a note, Edit opens the CodeMirror Markdown editor and Preview renders sanitized Markdown with copy buttons for fenced code and named copy blocks. The note is saved after 800 ms without changes. Open Attachments to upload a supported file or choose Screenshot: Visible Area asks the browser for a display/window capture, Entire Page captures the current Quadrate Notes page, and Cropped Zone opens an accessible keyboard- and pointer-driven crop selection. Screenshot capture requires browser permission and never uploads until the selected image is explicitly attached; image OCR remains unsupported. Delete is a soft delete that moves the note to the trash; the same note view exposes Restore for a deleted note. Export downloads the current note as `<slug>.md`.
 
 If another device changes a note while a local draft is dirty, the conflict dialog can use the local version, use the remote version, save a manually edited merge, or cancel while retaining the local draft. If the remote note was deleted, the local draft can be saved as a new note.
 

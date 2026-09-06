@@ -93,7 +93,7 @@ export function AppShell({ title = 'Quadrate Notes', notes = [], sidebarNotes: s
         <NoteList notes={filteredNotes} activeNoteId={activeNoteId} onNew={create} onSelect={select} />
         <div className="q-sidebar-footer"><span className="q-user-email" title={session?.user.email ?? ''}>{session?.user.email}</span><Button variant="ghost" size="sm" onClick={() => { void signOut().catch((error: unknown) => toast(error instanceof Error ? error.message : 'Unable to sign out.', 'error')); }}>Sign out</Button></div>
       </aside>
-      <main className="q-main"><header className="q-main-header"><h1 className="q-main-title">{title}</h1><div className="q-status"><span className="q-status-dot" />Private workspace</div></header>{children}</main>
+      <main className="q-main" data-screenshot-capture-target="true"><header className="q-main-header"><h1 className="q-main-title">{title}</h1><div className="q-status"><span className="q-status-dot" />Private workspace</div></header>{children}</main>
     </div>
     <nav className="q-mobile-nav" aria-label="Mobile navigation"><Link to="/" search={withoutSearchMatch(location.search as AppSearchParams)} data-active={location.pathname === '/'}>Notes</Link><Link to="/search" search={withoutSearchMatch(location.search as AppSearchParams)} data-active={location.pathname === '/search'}>Search</Link><button type="button" data-active={location.pathname === '/trash' || location.pathname.startsWith('/settings')} aria-expanded={moreOpen} onClick={() => setMoreOpen(true)}>More</button></nav>
     <button className="q-floating-new" onClick={() => { void create(); }} aria-label="Create a new note">+</button>

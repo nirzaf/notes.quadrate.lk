@@ -1,11 +1,29 @@
+import { Camera, Crop, Maximize2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { Attachment, UUID } from '@qnotes/shared';
 import { api } from '../api';
 import { supabase } from '../supabase';
+import {
+  captureVisibleScreenshot,
+  cropScreenshot,
+  isDisplayCaptureSupported,
+  isScreenshotCancellation,
+  screenshotFile,
+  ScreenshotCaptureError,
+  type CropRect,
+  type ScreenshotMode,
+} from '../lib/screenshot';
 import { Button } from './ui/button';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './ui/dropdown-menu';
+import { ScreenshotCropDialog } from './screenshot-crop-dialog';
 import { useToast } from './ui/toast';
 
-interface AttachmentPanelProps { noteId: UUID; attachments: Attachment[]; onRefresh: () => Promise<unknown> | void; }
+interface AttachmentPanelProps {
+  noteId: UUID;
+  attachments: Attachment[];
+  onRefresh: () => Promise<unknown> | void;
+  onCaptureFullPage: () => Promise<File>;
+}
 
 const terminalStatuses = new Set<Attachment['status']>(['ready', 'failed', 'unsupported', 'deleted']);
 
@@ -30,16 +48,24 @@ function errorMessage(error: string | null): string | null {
   return 'The file was kept, but its text could not be indexed.';
 }
 
-export function AttachmentPanel({ noteId, attachments, onRefresh }: AttachmentPanelProps): JSX.Element {
+function screenshotErrorMessage(error: unknown): { message: string; kind: 'error' | 'info' } {
+  if (isScreenshotCancellation(error)) return { message: 'Screenshot capture cancelled.', kind: 'info' };
+  if (error instanceof ScreenshotCaptureError) return { message: error.message, kind: error.code === 'unsupported' ? 'info' : 'error' };
+  return { message: error instanceof Error ? error.message : 'Unable to capture screenshot. Try again or upload an image file.', kind: 'error' };
+}
+
+export function AttachmentPanel({ noteId, attachments, onRefresh, onCaptureFullPage }: AttachmentPanelProps): JSX.Element {
   const [busy, setBusy] = useState(false);
   const [expanded, setExpanded] = useState(attachments.length > 0);
   const [monitoringExpired, setMonitoringExpired] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [fallbackUrls, setFallbackUrls] = useState<Record<string, string>>({});
+  const [cropSource, setCropSource] = useState<Blob | null>(null);
   const { toast } = useToast();
   const refreshRef = useRef(onRefresh);
   refreshRef.current = onRefresh;
   const waiting = attachments.some((attachment) => !terminalStatuses.has(attachment.status));
+  const displayCaptureSupported = isDisplayCaptureSupported();
 
   useEffect(() => { if (attachments.length) setExpanded(true); }, [attachments.length]);
   useEffect(() => {
@@ -65,18 +91,66 @@ export function AttachmentPanel({ noteId, attachments, onRefresh }: AttachmentPa
     setRefreshing(true); setMonitoringExpired(false);
     try { await refreshRef.current(); } finally { setRefreshing(false); }
   };
-  const upload = async (file: File) => {
-    setExpanded(true); setBusy(true);
+
+  const uploadAttachment = async (file: File, screenshot = false) => {
+    setExpanded(true);
     try {
       const request = await api.requestAttachmentUpload({ noteId, fileName: file.name, mimeType: file.type || 'application/octet-stream', sizeBytes: file.size });
       const uploaded = await supabase.storage.from('note-attachments').uploadToSignedUrl(request.path, request.token, file);
       if (uploaded.error) throw uploaded.error;
       await api.finalizeAttachment(request.attachment.id);
-      toast('Attachment uploaded. Text extraction and indexing are continuing.', 'success');
+      toast(screenshot ? 'Screenshot attached securely.' : 'Attachment uploaded. Text extraction and indexing are continuing.', 'success');
       await refreshRef.current();
-    } catch (error: unknown) { toast(error instanceof Error ? error.message : 'Attachment upload failed.', 'error'); }
-    finally { setBusy(false); }
+    } catch (error: unknown) {
+      toast(error instanceof Error ? error.message : 'Attachment upload failed.', 'error');
+    }
   };
+
+  const uploadFile = async (file: File) => {
+    setBusy(true);
+    try { await uploadAttachment(file); } finally { setBusy(false); }
+  };
+
+  const startScreenshot = async (mode: ScreenshotMode) => {
+    if (busy) return;
+    setBusy(true);
+    let waitingForCrop = false;
+    try {
+      if (mode === 'full-page') {
+        await uploadAttachment(await onCaptureFullPage(), true);
+      } else {
+        // This call stays at the start of the menu-selection handler so the browser can honor transient activation.
+        const source = await captureVisibleScreenshot();
+        if (mode === 'crop') {
+          waitingForCrop = true;
+          setCropSource(source);
+        } else {
+          await uploadAttachment(screenshotFile(source, 'visible'), true);
+        }
+      }
+    } catch (error: unknown) {
+      const result = screenshotErrorMessage(error);
+      toast(result.message, result.kind);
+    } finally {
+      if (!waitingForCrop) setBusy(false);
+    }
+  };
+
+  const cancelCrop = () => { setCropSource(null); setBusy(false); };
+  const confirmCrop = async (crop: CropRect) => {
+    if (!cropSource) return;
+    try {
+      const cropped = await cropScreenshot(cropSource, crop);
+      await uploadAttachment(screenshotFile(cropped, 'crop'), true);
+    } catch (error: unknown) {
+      const result = screenshotErrorMessage(error);
+      toast(result.message, result.kind);
+    } finally {
+      setCropSource(null);
+      setBusy(false);
+    }
+  };
+
   const open = async (attachment: Attachment) => {
     try {
       const result = await api.getAttachmentDownloadUrl(attachment.id);
@@ -84,5 +158,34 @@ export function AttachmentPanel({ noteId, attachments, onRefresh }: AttachmentPa
       if (!opened) { setFallbackUrls((current) => ({ ...current, [attachment.id]: result.signedUrl })); toast('Your browser blocked the attachment window. Use the temporary link beside the file.', 'info'); }
     } catch { toast('Unable to open attachment.', 'error'); }
   };
-  return <section className="q-card q-panel q-attachment-panel" aria-label="Attachments"><details open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}><summary><span><strong>Attachments</strong><span className="q-small">{attachments.length ? `${attachments.length} file${attachments.length === 1 ? '' : 's'}` : 'Optional supporting files'}</span></span><span aria-hidden="true">{expanded ? '−' : '+'}</span></summary><div className="q-attachment-content"><div className="q-field"><label className="q-label" htmlFor={`attachment-upload-${noteId}`}>Add a file</label><input id={`attachment-upload-${noteId}`} className="q-input" type="file" accept="text/plain,text/markdown,application/pdf,image/png,image/jpeg,image/webp" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void upload(file); event.currentTarget.value = ''; }} /><span className="q-field-help">TXT, Markdown, PDF, PNG, JPEG, or WebP · up to 20 MB. Images are stored, but OCR is not available.</span></div>{waiting && <div className="q-attachment-monitor" role="status">{monitoringExpired ? 'Processing is taking longer than expected.' : 'Checking extraction and indexing status…'}<Button type="button" variant="outline" size="sm" onClick={() => void refreshNow()} disabled={refreshing}>{refreshing ? 'Refreshing…' : 'Refresh status'}</Button></div>}<div className="q-attachment-list">{attachments.length ? attachments.map((attachment) => <div className="q-attachment-row" key={attachment.id}><div><div className="q-attachment-name">{attachment.originalFileName}</div><div className="q-small">{statusMessage(attachment)}</div>{errorMessage(attachment.extractionError) && <div className="q-field-error">{errorMessage(attachment.extractionError)}</div>}</div><div className="q-attachment-actions"><Button variant="ghost" size="sm" onClick={() => void open(attachment)} disabled={attachment.status === 'pending_upload'}>Open</Button>{fallbackUrls[attachment.id] && <a className="q-search-temporary-link" href={fallbackUrls[attachment.id]} target="_blank" rel="noreferrer">Open temporary link</a>}</div></div>) : <p>No attachments yet.</p>}</div></div></details></section>;
+
+  return <>
+    <section className="q-card q-panel q-attachment-panel" aria-label="Attachments">
+      <details open={expanded} onToggle={(event) => setExpanded(event.currentTarget.open)}>
+        <summary><span><strong>Attachments</strong><span className="q-small">{attachments.length ? `${attachments.length} file${attachments.length === 1 ? '' : 's'}` : 'Optional supporting files'}</span></span><span aria-hidden="true">{expanded ? '−' : '+'}</span></summary>
+        <div className="q-attachment-content">
+          <div className="q-field">
+            <label className="q-label" htmlFor={`attachment-upload-${noteId}`}>Add a file</label>
+            <input id={`attachment-upload-${noteId}`} className="q-input" type="file" accept="text/plain,text/markdown,application/pdf,image/png,image/jpeg,image/webp" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadFile(file); event.currentTarget.value = ''; }} />
+            <span className="q-field-help">TXT, Markdown, PDF, PNG, JPEG, or WebP · up to 20 MB. Images are stored, but OCR is not available.</span>
+            <div className="q-attachment-upload-actions" data-screenshot-exclude="true">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild><Button type="button" variant="outline" disabled={busy}><Camera size={16} aria-hidden="true" />Screenshot</Button></DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  <DropdownMenuItem className="q-screenshot-menu-item" disabled={!displayCaptureSupported} onSelect={() => { void startScreenshot('visible'); }}><Camera size={16} aria-hidden="true" /><span><strong>Visible Area</strong><small>Capture the screen or window you choose.</small></span></DropdownMenuItem>
+                  <DropdownMenuItem className="q-screenshot-menu-item" onSelect={() => { void startScreenshot('full-page'); }}><Maximize2 size={16} aria-hidden="true" /><span><strong>Entire Page</strong><small>Capture the current Quadrate Notes page.</small></span></DropdownMenuItem>
+                  <DropdownMenuItem className="q-screenshot-menu-item" disabled={!displayCaptureSupported} onSelect={() => { void startScreenshot('crop'); }}><Crop size={16} aria-hidden="true" /><span><strong>Cropped Zone</strong><small>Capture a screen area, then choose the crop.</small></span></DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              {!displayCaptureSupported && <span className="q-field-help">Screen capture is unavailable here. You can still upload an image file or capture the current page.</span>}
+            </div>
+            {busy && <span className="q-screenshot-status" role="status">Capturing or uploading screenshot…</span>}
+          </div>
+          {waiting && <div className="q-attachment-monitor" role="status">{monitoringExpired ? 'Processing is taking longer than expected.' : 'Checking extraction and indexing status…'}<Button type="button" variant="outline" size="sm" onClick={() => void refreshNow()} disabled={refreshing}>{refreshing ? 'Refreshing…' : 'Refresh status'}</Button></div>}
+          <div className="q-attachment-list">{attachments.length ? attachments.map((attachment) => <div className="q-attachment-row" key={attachment.id}><div><div className="q-attachment-name">{attachment.originalFileName}</div><div className="q-small">{statusMessage(attachment)}</div>{errorMessage(attachment.extractionError) && <div className="q-field-error">{errorMessage(attachment.extractionError)}</div>}</div><div className="q-attachment-actions"><Button variant="ghost" size="sm" onClick={() => void open(attachment)} disabled={attachment.status === 'pending_upload'}>Open</Button>{fallbackUrls[attachment.id] && <a className="q-search-temporary-link" href={fallbackUrls[attachment.id]} target="_blank" rel="noreferrer">Open temporary link</a>}</div></div>) : <p>No attachments yet.</p>}</div>
+        </div>
+      </details>
+    </section>
+    <ScreenshotCropDialog open={Boolean(cropSource)} source={cropSource} onOpenChange={(open) => { if (!open) cancelCrop(); }} onConfirm={confirmCrop} />
+  </>;
 }

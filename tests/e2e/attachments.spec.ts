@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { test, expect } from './test-fixtures';
 import { createClient } from '@supabase/supabase-js';
-import { apiJson, createNoteApi, invokeWorker, listAttachmentsApi, localEnv, OTHER, poll, searchItems, signInSession } from './helpers';
+import { apiJson, createNoteApi, getNoteApi, invokeWorker, listAttachmentsApi, localEnv, OTHER, poll, searchItems, signInPage, signInSession } from './helpers';
 
 const marker = 'Quadrate attachment search marker 8241';
 
@@ -87,4 +87,42 @@ test('refreshes attachment processing stages in the open note without a reload',
     await invokeWorker('attachment-worker');
     return row.textContent();
   }, { timeout: 20_000 }).toContain('Ready and searchable.');
+});
+
+test('offers the screenshot modes and leaves attachments unchanged when capture is cancelled', async ({ page }) => {
+  const session = await signInSession();
+  const note = await createNoteApi(session.access_token, `Screenshot cancel ${crypto.randomUUID()}`);
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getDisplayMedia: async () => { throw new DOMException('User cancelled screen capture.', 'AbortError'); } },
+    });
+  });
+  await signInPage(page);
+  await page.goto(`/notes/${note.id}`);
+  await page.getByText('Attachments', { exact: true }).click();
+  await page.getByRole('button', { name: 'Screenshot' }).click();
+  await expect(page.getByRole('menuitem', { name: /Visible Area/ })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: /Entire Page/ })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: /Cropped Zone/ })).toBeVisible();
+  await page.getByRole('menuitem', { name: /Visible Area/ }).click();
+  await expect(page.getByText('Screenshot capture cancelled.', { exact: true })).toBeVisible();
+  await expect.poll(() => listAttachmentsApi(session.access_token, note.id)).toHaveLength(0);
+});
+
+test('captures the current note page through the ordinary private attachment flow', async ({ page }) => {
+  const session = await signInSession();
+  const markdown = Array.from({ length: 80 }, (_, index) => `## Long section ${index + 1}\n\nThis content makes the current note page meaningfully scrollable for the full-page capture.`).join('\n\n');
+  const note = await createNoteApi(session.access_token, `Screenshot page ${crypto.randomUUID()}`, markdown);
+  const before = await getNoteApi(session.access_token, note.id);
+  await signInPage(page);
+  await page.goto(`/notes/${note.id}`);
+  await expect(page.locator('.cm-content')).toContainText('Long section 1');
+  await page.getByText('Attachments', { exact: true }).click();
+  await page.getByRole('button', { name: 'Screenshot' }).click();
+  await page.getByRole('menuitem', { name: /Entire Page/ }).click();
+  await expect(page.getByText('Screenshot attached securely.', { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect.poll(async () => (await listAttachmentsApi(session.access_token, note.id)).filter((item) => item.mimeType === 'image/png' && /^screenshot-page-.*\.png$/.test(item.originalFileName))).not.toHaveLength(0);
+  await expect.poll(() => getNoteApi(session.access_token, note.id)).toMatchObject({ contentMarkdown: before.contentMarkdown, title: before.title, tags: before.tags, version: before.version });
+  await expect(page.locator('.cm-content')).toBeVisible();
 });
