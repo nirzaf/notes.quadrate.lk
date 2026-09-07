@@ -12,10 +12,10 @@ test('discovers only the Edge test files and builds a non-shell Deno command', a
   assert.ok(files.includes('supabase/functions/embedding-worker/worker-budget.test.ts'));
 
   const args = edgeTestArguments(files);
-  assert.deepEqual(args.slice(0, 4), ['test', '--no-lock', '--allow-env=QNOTES_TOKEN_PEPPER', '--import-map=supabase/functions/deno.json']);
+  assert.deepEqual(args.slice(0, 5), ['test', '--no-lock', '--node-modules-dir=auto', '--allow-env=QNOTES_TOKEN_PEPPER', '--import-map=supabase/functions/deno.json']);
   assert.equal(args.some((arg) => arg.includes('*')), false);
   assert.equal(args.includes('--allow-all'), false);
-  assert.deepEqual(args.slice(4), files);
+  assert.deepEqual(args.slice(5), files);
 });
 
 test('uses the exact pinned Deno fallback when native Deno is unavailable', () => {
