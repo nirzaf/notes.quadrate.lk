@@ -4,6 +4,7 @@ import type { QNotesClient, QVaultClient } from '@qnotes/api-client';
 import { MAX_BLOCK_KEY_LENGTH, MAX_DEDUPE_KEY_LENGTH, MAX_MARKDOWN_CODE_UNITS, MAX_SEARCH_CURSOR_LENGTH, MAX_SEARCH_LIMIT, MAX_SEARCH_QUERY_LENGTH, MAX_SLUG_LENGTH, MAX_TAG_COUNT, MAX_TAG_LENGTH, MAX_TITLE_LENGTH, MAX_VAULT_BATCH_REVEAL, MAX_VAULT_DESCRIPTION_LENGTH, MAX_VAULT_ENVIRONMENT_NAME_LENGTH, MAX_VAULT_PROJECT_NAME_LENGTH, MAX_VAULT_PURPOSE_LENGTH, MAX_VAULT_SECRET_BYTES, MAX_VAULT_SECRET_NAME_LENGTH } from '@qnotes/shared';
 import { getBlockTool } from './tools/get-block.ts';
 import { readNoteContextTool } from './tools/read-note-context.ts';
+import { createPublicShareTool } from './tools/create-public-share.ts';
 import { resolvePublicShareTool } from './tools/resolve-public-share.ts';
 import { searchNotesTool } from './tools/search-notes.ts';
 import { toolResult, type ReadQNotesClient } from './tools/common.ts';
@@ -16,10 +17,18 @@ import type { WriteToolOptions } from './tools/write-notes.ts';
 import { moveNoteToNotebookTool, updateNoteTool } from './tools/write-notes.ts';
 import { VAULT_METADATA_TOOL_NAMES, VAULT_REVEAL_TOOL_NAMES, VAULT_WRITE_TOOL_NAMES, vaultCreateSecretTool, vaultDeleteSecretTool, vaultGetSecretTool, vaultGetSecretsTool, vaultListEnvironmentsTool, vaultListProjectsTool, vaultListSecretsTool, vaultRotateSecretTool } from './tools/vault.ts';
 
-export type McpProfile = 'read' | 'write';
+export type McpProfile = 'read' | 'share' | 'write';
 export type VaultMcpProfile = 'metadata' | 'reveal' | 'write';
 export const READ_TOOL_NAMES = ['search_notes', 'read_note_context', 'get_block', 'list_notebooks', 'resolve_public_share'] as const;
+export const SHARE_TOOL_NAMES = ['create_public_share'] as const;
 export const WRITE_TOOL_NAMES = ['capture_note', 'append_note', 'update_note', 'delete_note', 'restore_note', 'move_note_to_notebook'] as const;
+export const SHARE_PROFILE_TOOL_NAMES = [...READ_TOOL_NAMES, ...SHARE_TOOL_NAMES] as const;
+export const WRITE_PROFILE_TOOL_NAMES = [...READ_TOOL_NAMES, ...SHARE_TOOL_NAMES, ...WRITE_TOOL_NAMES] as const;
+export const PROFILE_TOOL_NAMES = {
+  read: READ_TOOL_NAMES,
+  share: SHARE_PROFILE_TOOL_NAMES,
+  write: WRITE_PROFILE_TOOL_NAMES,
+} as const;
 export { VAULT_METADATA_TOOL_NAMES, VAULT_REVEAL_TOOL_NAMES, VAULT_WRITE_TOOL_NAMES };
 export interface QNotesMcpServerOptions extends WriteToolOptions { vaultClient?: QVaultClient; vaultProfile?: VaultMcpProfile }
 
@@ -88,6 +97,20 @@ export function createQNotesMcpServer(client: QNotesClient & ReadQNotesClient, p
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, (args: Record<string, unknown>) => resolvePublicShareTool(client, args as Parameters<typeof resolvePublicShareTool>[1]));
   registerNotesResources(server, client);
+  if (profile === 'share' || profile === 'write') {
+    server.registerTool('create_public_share', {
+      description: 'Create one 24-hour public link for an exact note after checking its title and Markdown for obvious credential material. The note content is never returned or included in errors.',
+      inputSchema: {
+        noteId: z.string().uuid(),
+      },
+      outputSchema: {
+        url: z.string().url().regex(/^https:\/\/notes\.quadrate\.lk\/share#qns_[A-Za-z0-9_-]{43}$/),
+        noteId: z.string().uuid(),
+        expiresAt: z.string().datetime(),
+      },
+      annotations: { readOnlyHint: false, openWorldHint: false },
+    }, (args: Record<string, unknown>) => createPublicShareTool(client, args as Parameters<typeof createPublicShareTool>[1]));
+  }
   if (profile === 'write') {
     const writeClient = client as QNotesClient & WriteQNotesClient;
     server.registerTool('capture_note', {

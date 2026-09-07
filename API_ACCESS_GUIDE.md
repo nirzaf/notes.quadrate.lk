@@ -25,7 +25,7 @@ All `/api` routes except `/api/health` require an `Authorization: Bearer <token>
 
 The `/api/tokens` routes require a Supabase user-session JWT specifically. A personal token cannot create, list, or revoke personal tokens.
 
-Public sharing is deliberately separate from personal-token access. The owner share-management routes below require a Supabase user-session JWT specifically; a `qnt_...` personal token receives `403 INSUFFICIENT_SCOPE`. The unauthenticated resolver is `POST /public/share/resolve`, not an `/api` route, and accepts only a `qns_...` share secret in a small JSON body. The browser URL is `https://notes.quadrate.lk/share#qns_...`: the fragment is read locally and is not sent in the HTTP request URL.
+Public sharing is deliberately separate from note mutation scopes. The owner share-management routes below accept either a Supabase user-session JWT or a caller-owned `qnt_...` personal token with `shares:write`; an older personal token without that scope receives `403 INSUFFICIENT_SCOPE`. The unauthenticated resolver is `POST /public/share/resolve`, not an `/api` route, and accepts only a `qns_...` share secret in a small JSON body. The browser URL is `https://notes.quadrate.lk/share#qns_...`: the fragment is read locally and is not sent in the HTTP request URL.
 
 Set credentials in a shell without putting the token in a URL:
 
@@ -42,7 +42,7 @@ Create a token in the web app:
 
 1. Sign in to [Quadrate Notes](https://notes.quadrate.lk/).
 2. Open [Integrations](https://notes.quadrate.lk/settings/integrations) (the legacy `/settings/tokens` route remains available).
-3. Choose the read-only profile unless the client must write notes, then select the smallest optional scopes and a real expiry.
+3. Choose the read-only profile unless the client must create public links or write notes, then select the smallest profile and a real expiry. The public-sharing profile requires `notes:read`, `search:read`, and `shares:write`.
 4. Create the token and copy the complete `qnt_...` value immediately.
 
 The full token is returned only once and is held only in the Integrations page’s transient state; the settings page shows only its prefix afterward. The guided form offers 7-day, 30-day, 90-day, 1-year, and no-expiry choices and sends the corresponding ISO `expiresAt` (or `null`) to the existing token API. Tokens remain revocable.
@@ -54,6 +54,7 @@ The full token is returned only once and is held only in the Integrations page�
 | `notes:read` | List and read notes (including soft-deleted list results when requested), list notebooks, list/read blocks, read sync changes, and export individual active notes |
 | `notes:write` | Create, update, move, soft-delete, and restore notes; create notebooks |
 | `search:read` | Keyword, semantic, and hybrid search |
+| `shares:write` | Create, view, and revoke public links for the token owner’s notes |
 | `attachments:read` | List attachments and create 60-second download URLs |
 | `attachments:write` | Request signed uploads, finalize uploads, and delete attachments |
 
@@ -66,6 +67,8 @@ notes:read, search:read
 ```
 
 Add `attachments:read` to inspect or download attachments, and add `notes:write` only when the client must change notes or notebooks.
+
+For public-share management, use a separate least-privilege token with `notes:read, search:read, shares:write`. The `shares:write` scope is intentionally independent from note mutation scopes; a caller-owned `qnt_...` token is isolated to its own `owner_id`, and existing tokens without this scope continue to receive `403 INSUFFICIENT_SCOPE` on share-management routes.
 
 The token-management endpoints use a Supabase access token instead of `QNOTES_TOKEN`:
 
@@ -83,11 +86,11 @@ Use `GET /api/tokens` to list token metadata and `DELETE /api/tokens/:tokenId` t
 
 ## Public note sharing
 
-Create a public read-only link from an authenticated owner session. The raw `qns_...` value is generated from 32 random bytes, returned only by this response, and never stored. The database stores a short prefix plus a peppered, domain-separated HMAC-SHA-256 hash. `expiresAt` may be `null` or an ISO timestamp no more than one year in the future.
+Create a public read-only link from an authenticated owner session or a caller-owned personal token with `shares:write`. The raw `qns_...` value is generated from 32 random bytes, returned only by this response, and never stored. The database stores a short prefix plus a peppered, domain-separated HMAC-SHA-256 hash. `expiresAt` may be `null` or an ISO timestamp no more than one year in the future. A `shares:write` token can manage only notes belonging to its own token owner.
 
 ```bash
 curl -fsS -X POST \
-  -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+  -H "Authorization: Bearer $QNOTES_TOKEN" \
   -H 'Content-Type: application/json' \
   "$QNOTES_URL/api/notes/NOTE_UUID/share" \
   --data '{"expiresAt":"2026-09-13T12:00:00.000Z"}'
@@ -605,7 +608,13 @@ The default read profile exposes `search_notes`, `read_note_context`, `get_block
 - `qnotes://notes/{noteId}/documents/{documentId}`
 - `qnotes://notes/{noteId}/blocks/{blockKey}`
 
-`resolve_public_share` is the read-only MCP bridge for AI agents that already have a `qns_...` share secret. It delegates to the same unauthenticated `QNotesClient.resolvePublicShare` operation documented above and returns `title`, `contentMarkdown`, and `updatedAt`; it does not expose attachments or private metadata. Use a separate write profile and token for `capture_note`, `append_note`, `update_note`, `delete_note`, `restore_note`, and `move_note_to_notebook`. The server keeps reads as the default profile and only registers write tools when `QNOTES_MCP_PROFILE=write`; API scopes still enforce the token boundary. `mutationId` is optional in each write tool for compatibility, but a caller that may retry after an ambiguous transport result must supply the same mutation ID for the same logical operation. Keep the generated `QNOTES_MCP_DEVICE_ID` unchanged across process restarts; the existing owner-scoped `(owner_id, mutation_id)` receipt key plus the device ID in the request hash makes retry behavior durable across MCP processes. Omitted identity fields remain supported and receive fresh values, so those calls are new operations rather than durable retries. All write tools return a compact acknowledgment containing the note ID, title, resulting version, mutation ID, outcome, and note URI—never the full Markdown body. `capture_note` accepts optional `notebookId` and `dedupeKey`; its outcome distinguishes creation, an idempotent retry, and a deduplicated existing note. `append_note` preserves Markdown boundaries and uses the dedicated logical append endpoint, so a lost response can be retried without duplicating the addition. `update_note` preserves tags when `tags` is omitted and still requires the expected note version for a new update. `delete_note`, `restore_note`, and `move_note_to_notebook` require the expected version; deletion and restoration require `confirm: true`, deletion is soft-only, and there is no permanent purge tool. Public share creation and revocation remain owner-session REST operations because they require a Supabase user JWT rather than a personal MCP token.
+`resolve_public_share` is the read-only MCP bridge for AI agents that already have a `qns_...` share secret. It delegates to the same unauthenticated `QNotesClient.resolvePublicShare` operation documented above and returns `title`, `contentMarkdown`, and `updatedAt`; it does not expose attachments or private metadata. The profiles are deliberately exact:
+
+- `read` (default): `search_notes`, `read_note_context`, `get_block`, `list_notebooks`, and `resolve_public_share`, plus the read-only resources.
+- `share`: every `read` tool plus `create_public_share`. The tool pre-reads the selected note, blocks recognizable credential material, and creates exactly a 24-hour link; it returns only the URL, note ID, and expiry. It has no note mutation tools.
+- `write`: every `read` and `share` tool plus `capture_note`, `append_note`, `update_note`, `delete_note`, `restore_note`, and `move_note_to_notebook`.
+
+The native `share` profile uses the same caller-owned personal token as its QNotes client, via `QNOTES_TOKEN` (or the read-token fallback `QNOTES_READ_TOKEN`), and that token must include `notes:read`, `search:read`, and `shares:write`. It never accepts or configures a shared owner JWT. The `write` profile keeps its existing `QNOTES_WRITE_TOKEN` behavior; its `create_public_share` tool works only when that caller-owned token also has `shares:write`. API scopes still enforce the token boundary for note and share tools. `mutationId` is optional in each write tool for compatibility, but a caller that may retry after an ambiguous transport result must supply the same mutation ID for the same logical operation. Keep the generated `QNOTES_MCP_DEVICE_ID` unchanged across process restarts; the existing owner-scoped `(owner_id, mutation_id)` receipt key plus the device ID in the request hash makes retry behavior durable across MCP processes. Omitted identity fields remain supported and receive fresh values, so those calls are new operations rather than durable retries. All write tools return a compact acknowledgment containing the note ID, title, resulting version, mutation ID, outcome, and note URI—never the full Markdown body. `capture_note` accepts optional `notebookId` and `dedupeKey`; its outcome distinguishes creation, an idempotent retry, and a deduplicated existing note. `append_note` preserves Markdown boundaries and uses the dedicated logical append endpoint, so a lost response can be retried without duplicating the addition. `update_note` preserves tags when `tags` is omitted and still requires the expected note version for a new update. `delete_note`, `restore_note`, and `move_note_to_notebook` require the expected version; deletion and restoration require `confirm: true`, deletion is soft-only, and there is no permanent purge tool. Public share revocation uses the same `shares:write` caller token through REST.
 
 ```yaml
 mcp_servers:
@@ -642,12 +651,34 @@ mcp_servers:
     supports_parallel_tool_calls: false
     tools:
       include:
+        - create_public_share
         - capture_note
         - append_note
         - update_note
         - delete_note
         - restore_note
         - move_note_to_notebook
+      prompts: false
+
+  quadrate_notes_share:
+    command: "node"
+    args:
+      - "/absolute/path/notes.quadrate.lk/packages/mcp-server/dist/index.js"
+    env:
+      QNOTES_URL: "${QNOTES_URL}"
+      QNOTES_MCP_PROFILE: "share"
+      QNOTES_TOKEN: "${QNOTES_TOKEN}"
+    connect_timeout: 10
+    timeout: 20
+    supports_parallel_tool_calls: false
+    tools:
+      include:
+        - search_notes
+        - read_note_context
+        - get_block
+        - list_notebooks
+        - resolve_public_share
+        - create_public_share
       prompts: false
 ```
 
@@ -661,7 +692,7 @@ Gemini Spark can connect to the hosted read-only MCP endpoint:
 https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-mcp
 ```
 
-The endpoint exposes `search_notes`, `read_note_context`, and `get_block`, plus the read-only `qnotes://...` resources. It accepts a personal `qnt_...` token in the `Authorization: Bearer ...` header; the least-privilege token profile is `notes:read, search:read`. Write tools are not exposed by this endpoint.
+By default, the endpoint exposes `search_notes`, `read_note_context`, and `get_block`, plus the read-only `qnotes://...` resources. It accepts a personal `qnt_...` token in the `Authorization: Bearer ...` header; the least-privilege read token profile is `notes:read, search:read`. A deployment explicitly configured with `QNOTES_MCP_PROFILE=share` selects the share profile, and the authenticated caller’s own OAuth-resolved personal token must additionally have `shares:write` to use `create_public_share`; there is no server-side owner or share credential. Write note tools are never exposed by hosted MCP. Absent or unknown `QNOTES_MCP_PROFILE` values remain read-only.
 
 To connect it in Gemini Spark, open Connected Apps, enter the endpoint under **Custom apps for Spark**, and choose **Next**. The endpoint supports Gemini’s standard dynamic OAuth client registration and PKCE flow. When the Quadrate Notes authorization page opens, paste the personal `qnt_...` token created in Integrations and choose **Approve & Connect**. The server issues Gemini an encrypted, opaque read-only OAuth bearer token; the raw personal token is not placed in the authorization URL, and no write profile is available. Google’s current custom-app flow and its security warning are documented in [Gemini Spark’s custom-app instructions](https://support.google.com/gemini/answer/17209137). If Gemini falls back to **Advanced Settings**, use `qnotes-gemini` as the Client ID and leave Client secret empty; the authorization page still requests the personal token. The token is shown in full only once, so revoke it from [Personal API tokens](https://notes.quadrate.lk/settings/tokens) if it is exposed or no longer needed. The hosted endpoint accepts Google’s OAuth redirect hosts only.
 
@@ -703,9 +734,9 @@ All `/api` routes except health require a bearer credential. The public share re
 | `GET` | `/api/tokens` | Supabase user JWT |
 | `POST` | `/api/tokens` | Supabase user JWT |
 | `DELETE` | `/api/tokens/:tokenId` | Supabase user JWT |
-| `GET` | `/api/notes/:noteId/share` | Supabase user JWT |
-| `POST` | `/api/notes/:noteId/share` | Supabase user JWT |
-| `DELETE` | `/api/notes/:noteId/share` | Supabase user JWT |
+| `GET` | `/api/notes/:noteId/share` | Supabase user JWT or `shares:write` |
+| `POST` | `/api/notes/:noteId/share` | Supabase user JWT or `shares:write` |
+| `DELETE` | `/api/notes/:noteId/share` | Supabase user JWT or `shares:write` |
 | `POST` | `/public/share/resolve` | None; body must contain only a `qns_...` token |
 
 ## Troubleshooting and security
@@ -727,7 +758,7 @@ All `/api` routes except health require a bearer credential. The public share re
 - `422 UNSUPPORTED_ATTACHMENT_TYPE`: use one of the supported MIME types.
 - `422 DUPLICATE_BLOCK_KEY` or `INVALID_COPY_BLOCK`: fix the named/fenced Markdown block syntax and make named IDs unique within the note.
 - `403 CORS_ORIGIN_DENIED`: send the request from an origin in the server’s exact `QNOTES_ALLOWED_ORIGIN` allow-list.
-- `403 INSUFFICIENT_SCOPE` on a share-management route: use the Supabase user-session JWT, not a `qnt_...` personal token.
+- `403 INSUFFICIENT_SCOPE` on a share-management route: use a caller-owned `qnt_...` personal token with `shares:write`, or a Supabase user-session JWT. A personal token without `shares:write` remains denied.
 - `404 PUBLIC_SHARE_NOT_FOUND`: the share secret is invalid, expired, revoked, or the note was deleted. The response is intentionally indistinguishable across those cases.
 - `503 SEMANTIC_SEARCH_UNAVAILABLE`: embedding-backed retrieval or its database RPC failed; use `mode=keyword` temporarily or verify the embedding runtime and worker deployment. Query-embedding failures are returned as degraded keyword results instead.
 

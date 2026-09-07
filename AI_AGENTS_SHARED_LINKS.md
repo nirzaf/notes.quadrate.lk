@@ -28,13 +28,13 @@ Do not put the token in a path, query string, referrer, prompt transcript, or lo
 The resolver returns the exact saved `contentMarkdown` value inside a JSON response. No `Authorization` header or personal API token is needed.
 
 ```bash
-export QNOTES_SHARE_TOKEN='qns_<secret>'
+export QNOTES_PUBLIC_SHARE_TOKEN='qns_<secret>'
 
 curl --fail --silent --show-error \
   -X POST \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json' \
-  --data "{\"token\":\"$QNOTES_SHARE_TOKEN\"}" \
+  --data "{\"token\":\"$QNOTES_PUBLIC_SHARE_TOKEN\"}" \
   'https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-api/public/share/resolve'
 ```
 
@@ -78,7 +78,7 @@ The native and hosted read-only MCP profiles expose the same public resolver as 
 }
 ```
 
-The tool delegates to the existing API-client resolver and returns structured `title`, `contentMarkdown`, and `updatedAt` fields. It is read-only, does not require a private JWT, and does not expose attachments or workspace metadata. Public-share creation and revocation remain owner-session REST operations.
+The tool delegates to the existing API-client resolver and returns structured `title`, `contentMarkdown`, and `updatedAt` fields. It is read-only, does not require a private JWT, and does not expose attachments or workspace metadata. The native and optional hosted `share` profiles also expose `create_public_share` for an exact UUID note. That tool uses the same caller-owned `qnt_...` personal token as the rest of the MCP connection, pre-reads the title and Markdown, blocks obvious credential material without copying note content into errors or logs, and returns a `https://notes.quadrate.lk/share#qns_...` URL that expires exactly 24 hours after invocation. The token must include `shares:write`; no shared owner JWT or server-side share credential is used. The same `shares:write` token can manage that owner’s share through the REST get/create/revoke routes.
 
 ## Errors and security rules
 

@@ -39,7 +39,7 @@ export const MAX_PUBLIC_SHARE_EXPIRY_MS = 365 * 24 * 60 * 60 * 1000;
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SLUG_PATTERN = /^[a-z0-9][a-z0-9_-]{0,79}$/;
-const TOKEN_SCOPES: ApiTokenScope[] = ['notes:read', 'notes:write', 'search:read', 'attachments:read', 'attachments:write'];
+const TOKEN_SCOPES: ApiTokenScope[] = ['notes:read', 'notes:write', 'search:read', 'shares:write', 'attachments:read', 'attachments:write'];
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);

@@ -116,10 +116,10 @@ test('supports notebook listing, creation, and versioned note moves', async () =
   assert.deepEqual(JSON.parse(calls[2].init.body), { notebookId: 'n-1', expectedVersion: 1, deviceId: 'device-1', mutationId: 'mutation-1' });
 });
 
-test('keeps owner share management authenticated and validates safe metadata', async () => {
+test('keeps caller-owned share management authenticated and validates safe metadata', async () => {
   const calls = [];
   const metadata = { id: 'share-1', noteId: 'note-1', tokenPrefix: 'qns_Abcd1234', expiresAt: null, revokedAt: null, createdAt: '2026-01-01T00:00:00Z' };
-  const client = new QNotesClient({ getAccessToken: () => 'owner-jwt', baseUrl: 'http://example.test', fetchImplementation: async (url, init) => {
+  const client = new QNotesClient({ getAccessToken: () => 'qnt_synthetic-share-token', baseUrl: 'http://example.test', fetchImplementation: async (url, init) => {
     calls.push({ url, init });
     if (init?.method === 'POST') return jsonResponse({ data: { token: 'qns_A'.padEnd(47, 'a'), metadata } }, 201);
     if (init?.method === 'DELETE') return jsonResponse({ data: null });
@@ -129,7 +129,7 @@ test('keeps owner share management authenticated and validates safe metadata', a
   assert.deepEqual(await client.createPublicShare('note-1', { expiresAt: null }), { token: 'qns_A'.padEnd(47, 'a'), metadata });
   await client.revokePublicShare('note-1');
   assert.equal(calls[0].url, 'http://example.test/api/notes/note-1/share');
-  assert.equal(calls[0].init.headers.get('Authorization'), 'Bearer owner-jwt');
+  assert.equal(calls[0].init.headers.get('Authorization'), 'Bearer qnt_synthetic-share-token');
   assert.deepEqual(JSON.parse(calls[1].init.body), { expiresAt: null });
   assert.equal(calls[2].init.method, 'DELETE');
 });

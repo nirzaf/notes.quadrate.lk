@@ -13,6 +13,10 @@ const OAUTH_CODE_TTL_SECONDS = 90;
 const OAUTH_ACCESS_TTL_SECONDS = 30 * 24 * 60 * 60;
 const OAUTH_CLIENT_TTL_SECONDS = 90 * 24 * 60 * 60;
 const OAUTH_CONSENT_URL = Deno.env.get('QNOTES_MCP_CONSENT_URL')?.trim() || 'https://notes.quadrate.lk/oauth/authorize';
+// Hosted deployments intentionally support only read and the explicit share
+// profile. Every other value, including write, remains read-only. The caller's
+// OAuth-resolved personal token is the only QNotes credential used below.
+const HOSTED_MCP_PROFILE = Deno.env.get('QNOTES_MCP_PROFILE') === 'share' ? 'share' : 'read';
 
 interface OAuthCodePayload {
   type: 'authorization_code';
@@ -462,7 +466,7 @@ async function handle(request: Request): Promise<Response> {
     baseUrl: `${supabaseUrl.replace(/\/$/, '')}/functions/v1/qnotes-api`,
     getAccessToken: () => token,
   });
-  const server = createQNotesMcpServer(client, 'read');
+  const server = createQNotesMcpServer(client, HOSTED_MCP_PROFILE);
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,

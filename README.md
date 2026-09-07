@@ -14,10 +14,10 @@ The repository is a pnpm monorepo. The web app is a Vite/React PWA, the API is a
 - Versioned mutations, private Realtime Broadcast invalidation, reconnect recovery, IndexedDB draft persistence, and a conflict resolver for concurrent edits.
 - Personal API tokens with least-privilege scopes for scripts, agents, backups, and the CLI.
 - Revocable, read-only public note links using `qns_...` secrets held only in URL fragments; public views expose only the saved title and Markdown body, never attachments or workspace metadata.
-- A guided Integrations page for read-only-by-default Hermes setup, explicit write scopes, real token expiry choices, one-time secret/config display, and separate API versus Hermes verification.
+- A guided Integrations page for read-only-by-default Hermes setup, a least-privilege public-sharing profile, explicit write scopes, real token expiry choices, one-time secret/config display, and separate API versus Hermes verification.
 - Note Markdown exports and version-two workspace ZIP exports containing active notes, attachments, notebooks, and a manifest. Exports preflight metadata and archive-entry limits before downloading attachment bytes.
 
-The repository ships a native stdio MCP server in `packages/mcp-server` and a hosted, read-only Streamable HTTP MCP endpoint for Gemini Spark at `https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-mcp`, including standard OAuth discovery, dynamic client registration, PKCE consent, and public-share resolution through `resolve_public_share`. See [API_ACCESS_GUIDE.md](API_ACCESS_GUIDE.md) for the REST API, CLI, JavaScript client, and MCP setup.
+The repository ships a native stdio MCP server in `packages/mcp-server` and a hosted, read-only-by-default Streamable HTTP MCP endpoint for Gemini Spark at `https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-mcp`, including standard OAuth discovery, dynamic client registration, PKCE consent, and public-share resolution through `resolve_public_share`. An explicitly configured `QNOTES_MCP_PROFILE=share` hosted deployment can additionally expose guarded, 24-hour public-share creation when the authenticated caller’s personal token has `shares:write`; no shared owner credential is configured. Unknown or absent profile values remain read-only. See [API_ACCESS_GUIDE.md](API_ACCESS_GUIDE.md) for the REST API, CLI, JavaScript client, and MCP setup.
 
 ## Using the web app
 
@@ -165,7 +165,7 @@ pnpm exec supabase functions deploy qnotes-api embedding-worker attachment-worke
   --import-map supabase/functions/deno.json
 ```
 
-The hosted database must contain the migrations through `20260906000200_oauth_authorization_code_replay.sql`. The latest migration adds the HMAC-backed, service-only public share table, transactional create/rotate/revoke RPCs, the three-field resolver projection, and automatic revocation on soft delete; the preceding migrations add the transaction-safe logical append receipt, request-safe search functions, embedding input/version invariants, stale-vector requeueing, attachment page provenance, safe capture deduplication, and the daily embedding recovery schedule. The worker cron jobs read the project URL and internal worker secret from Supabase Vault, so those Vault secrets and the Edge Function secrets must be configured before expecting asynchronous embeddings or attachment extraction.
+The hosted database must contain the migrations through `20260907000300_api_tokens_shares_write.sql`. The public-sharing migrations add the HMAC-backed, service-only public share table, transactional create/rotate/revoke RPCs, the three-field resolver projection, automatic revocation on soft delete, and the caller-owned `shares:write` personal-token scope; the preceding migrations add the transaction-safe logical append receipt, request-safe search functions, embedding input/version invariants, stale-vector requeueing, attachment page provenance, safe capture deduplication, and the daily embedding recovery schedule. The worker cron jobs read the project URL and internal worker secret from Supabase Vault, so those Vault secrets and the Edge Function secrets must be configured before expecting asynchronous embeddings or attachment extraction.
 
 Build and deploy the web package to Cloudflare Pages with the hosted Supabase values:
 

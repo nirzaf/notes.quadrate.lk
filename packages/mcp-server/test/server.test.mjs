@@ -2,10 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { getBlockTool } from '../dist/tools/get-block.js';
 import { readNoteContextTool } from '../dist/tools/read-note-context.js';
+import { createPublicShareTool } from '../dist/tools/create-public-share.js';
 import { searchNotesTool } from '../dist/tools/search-notes.js';
 import { appendNoteTool, captureNoteTool, deleteNoteTool, restoreNoteTool, updateNoteTool } from '../dist/tools/write-notes.js';
 import { appendMarkdown } from '../dist/tools/common.js';
-import { READ_TOOL_NAMES, WRITE_TOOL_NAMES, createQNotesMcpServer } from '../dist/server.js';
+import { READ_TOOL_NAMES, SHARE_PROFILE_TOOL_NAMES, SHARE_TOOL_NAMES, WRITE_PROFILE_TOOL_NAMES, WRITE_TOOL_NAMES, createQNotesMcpServer } from '../dist/server.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
@@ -59,6 +60,92 @@ test('default MCP profile exposes only the read surface', () => {
   const server = createQNotesMcpServer(mockClient());
   assert.ok(server);
   assert.deepEqual(READ_TOOL_NAMES, ['search_notes', 'read_note_context', 'get_block', 'list_notebooks', 'resolve_public_share']);
+  assert.deepEqual(SHARE_TOOL_NAMES, ['create_public_share']);
+});
+
+test('MCP create_public_share uses an exact one-day expiry and constructs the public URL', async () => {
+  const noteId = '550e8400-e29b-41d4-a716-446655440000';
+  const token = `qns_${'A'.repeat(43)}`;
+  let received;
+  const result = await createPublicShareTool({
+    async getNote(receivedNoteId) {
+      assert.equal(receivedNoteId, noteId);
+      return { title: 'Release notes', contentMarkdown: '# Safe', id: noteId };
+    },
+    async createPublicShare(receivedNoteId, input) {
+      received = { noteId: receivedNoteId, input };
+      return { token, metadata: {} };
+    },
+  }, { noteId }, { now: () => new Date('2026-09-07T12:34:56.789Z') });
+
+  assert.deepEqual(received, {
+    noteId,
+    input: { expiresAt: '2026-09-08T12:34:56.789Z' },
+  });
+  assert.deepEqual(result.structuredContent, {
+    url: `https://notes.quadrate.lk/share#${token}`,
+    noteId,
+    expiresAt: '2026-09-08T12:34:56.789Z',
+  });
+});
+
+test('MCP create_public_share rejects sensitive notes before calling the share API', async () => {
+  let shareCalls = 0;
+  await assert.rejects(() => createPublicShareTool({
+    async getNote() {
+      return { title: 'Deployment', contentMarkdown: 'service_password: synthetic-secret-value', id: '550e8400-e29b-41d4-a716-446655440000' };
+    },
+    async createPublicShare() {
+      shareCalls += 1;
+      throw new Error('must not be called');
+    },
+  }, { noteId: '550e8400-e29b-41d4-a716-446655440000' }), /sensitive credential material/);
+  assert.equal(shareCalls, 0);
+});
+
+test('MCP create_public_share rejects malformed note IDs before reading or publishing', async () => {
+  let calls = 0;
+  await assert.rejects(() => createPublicShareTool({
+    async getNote() {
+      calls += 1;
+      throw new Error('must not be called');
+    },
+    async createPublicShare() {
+      calls += 1;
+      throw new Error('must not be called');
+    },
+  }, { noteId: 'not-a-uuid' }), /noteId must be a valid UUID/);
+  assert.equal(calls, 0);
+});
+
+test('MCP protocol exposes and invokes create_public_share only in the share-capable profiles', async () => {
+  const noteId = '550e8400-e29b-41d4-a716-446655440001';
+  const token = `qns_${'B'.repeat(43)}`;
+  let received;
+  const { client } = await connectedProtocol('share', protocolClient({
+    async getNote() {
+      return { id: noteId, title: 'Safe note', contentMarkdown: '# Safe', slug: 'safe', contentPlain: 'Safe', tags: [], notebookId: null, version: 1, createdAt: '2026-01-01', updatedAt: '2026-01-01', deletedAt: null };
+    },
+    async createPublicShare(receivedNoteId, input) {
+      received = { noteId: receivedNoteId, input };
+      return { token, metadata: {} };
+    },
+  }));
+  const invalid = await client.callTool({ name: 'create_public_share', arguments: { noteId: 'not-a-uuid' } });
+  assert.equal(invalid.isError, true);
+  const result = await client.callTool({ name: 'create_public_share', arguments: { noteId } });
+  assert.deepEqual(received.noteId, noteId);
+  assert.equal(typeof received.input.expiresAt, 'string');
+  assert.equal(result.structuredContent.noteId, noteId);
+  assert.equal(result.structuredContent.url, `https://notes.quadrate.lk/share#${token}`);
+  assert.deepEqual(JSON.parse(result.content[0].text), {
+    url: `https://notes.quadrate.lk/share#${token}`,
+    noteId,
+    expiresAt: result.structuredContent.expiresAt,
+  });
+  assert.equal('contentMarkdown' in result.structuredContent, false);
+  assert.equal(result.content[0].text.includes('Safe note'), false);
+  await client.close();
 });
 
 test('MCP list_notebooks is available in the read profile and delegates to the API client', async () => {
@@ -161,9 +248,18 @@ test('MCP protocol advertises the exact read and write tool profiles', async () 
   assert.deepEqual(readTools.tools.map((tool) => tool.name), READ_TOOL_NAMES);
   await read.client.close();
 
+  const share = await connectedProtocol('share', protocolClient());
+  const shareTools = await share.client.listTools();
+  assert.deepEqual(shareTools.tools.map((tool) => tool.name), SHARE_PROFILE_TOOL_NAMES);
+  assert.equal(shareTools.tools.some((tool) => tool.name === 'delete_note'), false);
+  assert.equal(shareTools.tools.some((tool) => tool.name === 'update_note'), false);
+  await share.client.close();
+
   const write = await connectedProtocol('write', protocolClient());
   const writeTools = await write.client.listTools();
-  assert.deepEqual(writeTools.tools.map((tool) => tool.name), [...READ_TOOL_NAMES, ...WRITE_TOOL_NAMES]);
+  assert.deepEqual(writeTools.tools.map((tool) => tool.name), WRITE_PROFILE_TOOL_NAMES);
+  assert.equal(writeTools.tools.some((tool) => tool.name === 'create_public_share'), true);
+  assert.deepEqual(WRITE_TOOL_NAMES, ['capture_note', 'append_note', 'update_note', 'delete_note', 'restore_note', 'move_note_to_notebook']);
   const deleteTool = writeTools.tools.find((tool) => tool.name === 'delete_note');
   assert.match(JSON.stringify(deleteTool.inputSchema), /confirm/);
   assert.match(JSON.stringify(deleteTool.inputSchema), /true/);

@@ -130,7 +130,7 @@ pnpm run test:unit
 pnpm exec supabase db push --linked --dry-run
 ```
 
-The current release includes the additive migrations through `20260906000200_oauth_authorization_code_replay.sql`. Review them in the dry-run output before applying; the latest migrations add the RLS-protected `notesdb.note_shares` table, service-only create/rotate/revoke/resolve RPCs, automatic share revocation on note soft-delete, and a service-only single-use hosted MCP authorization-code receipt. The preceding migrations add the transaction-safe logical append receipt for the REST API, CLI, and MCP write profile, while earlier migrations fix pagination and embedding queue races, preserve legacy RPC wrappers on the v2 contract, add restore dedupe conflict reporting, keep incompatible vectors out of semantic search, and add the daily stale-embedding recovery schedule.
+The current release includes the additive migrations through `20260907000300_api_tokens_shares_write.sql`. Review them in the dry-run output before applying; the latest migrations add the caller-owned `shares:write` personal-token scope, the RLS-protected `notesdb.note_shares` table, service-only create/rotate/revoke/resolve RPCs, automatic share revocation on note soft-delete, and a service-only single-use hosted MCP authorization-code receipt. The preceding migrations add the transaction-safe logical append receipt for the REST API, CLI, and MCP write profile, while earlier migrations fix pagination and embedding queue races, preserve legacy RPC wrappers on the v2 contract, add restore dedupe conflict reporting, keep incompatible vectors out of semantic search, and add the daily stale-embedding recovery schedule.
 
 ### 3. Apply pending production migrations
 

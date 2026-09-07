@@ -79,6 +79,7 @@ export type ApiTokenScope =
   | 'notes:read'
   | 'notes:write'
   | 'search:read'
+  | 'shares:write'
   | 'attachments:read'
   | 'attachments:write';
 

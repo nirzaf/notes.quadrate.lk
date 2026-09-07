@@ -9,19 +9,21 @@ import { Input } from './ui/input';
 import { useToast } from './ui/toast';
 import { useAuth } from '../auth-context';
 
-type IntegrationProfile = 'read' | 'write';
+type IntegrationProfile = 'read' | 'share' | 'write';
 type ExpiryChoice = '7d' | '30d' | '90d' | '1y' | 'never';
 type VerificationState = 'idle' | 'verifying' | 'verified' | 'failed';
 
 const requiredScopes: Record<IntegrationProfile, ApiTokenScope[]> = {
   read: ['notes:read', 'search:read'],
+  share: ['notes:read', 'search:read', 'shares:write'],
   write: ['notes:read', 'search:read', 'notes:write'],
 };
-const optionalScopes: ApiTokenScope[] = ['attachments:read', 'attachments:write'];
+const optionalScopes: ApiTokenScope[] = ['shares:write', 'attachments:read', 'attachments:write'];
 const scopeDescriptions: Record<ApiTokenScope, string> = {
   'notes:read': 'list and read notes, notebooks, and reusable blocks',
   'search:read': 'search note sections, blocks, and indexed attachment text',
   'notes:write': 'create, append, update, move, and restore notes',
+  'shares:write': 'create, view, and revoke public note links for your own notes',
   'attachments:read': 'list attachments and open private files',
   'attachments:write': 'upload, finalize, and delete attachments',
 };
@@ -161,13 +163,14 @@ export function TokenManager(): JSX.Element {
     <section className="q-card q-card-pad q-panel q-integration-setup">
       <p className="q-eyebrow">Hermes integration</p>
       <h3>Connect Hermes to Quadrate Notes</h3>
-      <p>Start with a read-only connection. Create the writing profile only when Hermes should change notes. Token scopes are enforced by the API, and attachment writing is never included by default.</p>
+      <p>Start with a read-only connection. Use the share profile when Hermes should create guarded 24-hour public links, or the writing profile when it should change notes. Token scopes are enforced by the API, and attachment writing is never included by default.</p>
       <form className="q-panel-stack" onSubmit={create}>
         <label className="q-field"><span className="q-label">Token name</span><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Hermes read-only" maxLength={80} /></label>
         <fieldset className="q-integration-fieldset">
           <legend className="q-label">Access profile</legend>
           <div className="q-integration-profiles">
             <label className="q-integration-profile"><input type="radio" name="hermes-profile" checked={profile === 'read'} onChange={() => chooseProfile('read')} /><span><strong>Read-only</strong><small>Search and read notes without write tools.</small></span></label>
+            <label className="q-integration-profile"><input type="radio" name="hermes-profile" checked={profile === 'share'} onChange={() => chooseProfile('share')} /><span><strong>Public sharing</strong><small>Create guarded 24-hour links without note mutation tools.</small></span></label>
             <label className="q-integration-profile"><input type="radio" name="hermes-profile" checked={profile === 'write'} onChange={() => chooseProfile('write')} /><span><strong>Writing</strong><small>Also allow capture, append, and update note tools.</small></span></label>
           </div>
         </fieldset>
@@ -181,7 +184,7 @@ export function TokenManager(): JSX.Element {
           </div>
         </fieldset>
         <label className="q-field"><span className="q-label">Token expiry</span><select className="q-input" value={expiry} onChange={(event) => setExpiry(event.target.value as ExpiryChoice)}>{expiryChoices.map((choice) => <option value={choice.value} key={choice.value}>{choice.label}</option>)}</select><span className="q-field-help">Choose “Does not expire” only when a long-lived token is intentional.</span></label>
-        <Button type="submit" disabled={creating || !name.trim()}>{creating ? 'Creating token…' : `Create ${profile === 'write' ? 'writing' : 'read-only'} token`}</Button>
+        <Button type="submit" disabled={creating || !name.trim()}>{creating ? 'Creating token…' : `Create ${profile === 'write' ? 'writing' : profile === 'share' ? 'sharing' : 'read-only'} token`}</Button>
       </form>
       {issued && <div className="q-token-issued" aria-live="polite">
         <div className="q-token-issued-heading"><strong>Token created successfully</strong><span className="q-small">{issued.metadata.name} · {expiryLabel(issued.metadata.expiresAt)}</span></div>
@@ -197,6 +200,6 @@ export function TokenManager(): JSX.Element {
       </div>}
     </section>
     <section className="q-card q-card-pad q-panel"><h3>Existing tokens</h3><div className="q-token-list">{tokens.length ? tokens.map((token) => <div className="q-token-row" key={token.id}><div><div className="q-token-name">{token.name}</div><div className="q-small">{token.tokenPrefix} · {token.scopes.join(', ')} · {expiryLabel(token.expiresAt)}{token.revokedAt ? ' · revoked' : ''}</div></div>{!token.revokedAt && <Button variant="ghost" size="sm" onClick={() => void revoke(token.id)}>Revoke</Button>}</div>) : <p>No personal tokens yet.</p>}</div></section>
-    <section className="q-card q-card-pad q-panel"><h3>Finish setup in Hermes</h3><p>Build this repository’s MCP server, put the selected token in Hermes’ environment-backed secret file, paste the generated entry into <code>~/.hermes/config.yaml</code>, then run <code>hermes mcp test quadrate_notes_&lt;profile&gt;</code>. The test result is the Hermes verification; an API check in this browser is only token/API verification.</p><p>For a writing token, retain the generated <code>QNOTES_MCP_DEVICE_ID</code> value across process restarts. Pass the same <code>mutationId</code> when retrying an ambiguous capture, append, or update. Omitting it remains supported, but each call is treated as a new operation.</p></section>
+    <section className="q-card q-card-pad q-panel"><h3>Finish setup in Hermes</h3><p>Build this repository’s MCP server, put the selected token in Hermes’ environment-backed secret file, paste the generated entry into <code>~/.hermes/config.yaml</code>, then run <code>hermes mcp test quadrate_notes_&lt;profile&gt;</code>. The test result is the Hermes verification; an API check in this browser is only token/API verification.</p><p>A share token must retain <code>shares:write</code> and is used as the caller-owned credential for share management. For a writing token, retain the generated <code>QNOTES_MCP_DEVICE_ID</code> value across process restarts. Pass the same <code>mutationId</code> when retrying an ambiguous capture, append, or update. Omitting it remains supported, but each call is treated as a new operation.</p></section>
   </div>;
 }

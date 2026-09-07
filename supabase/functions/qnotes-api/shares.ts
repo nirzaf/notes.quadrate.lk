@@ -1,6 +1,6 @@
 import type { Context } from 'hono';
 import { isUUID, QNotesValidationError, validateCreatePublicShareInput } from '@qnotes/shared';
-import { authFromContext, requireUserJwt } from '../_shared/auth.ts';
+import { authFromContext, requireScope } from '../_shared/auth.ts';
 import { appDbClient, assertSupabase, serviceClient } from '../_shared/database.ts';
 import { ApiError } from '../_shared/errors.ts';
 import { generateNoteShareToken, hashNoteShareToken, isValidNoteShareToken, noteShareTokenPrefix } from '../_shared/share-token.ts';
@@ -58,7 +58,7 @@ async function loadPublicSharedNote(token: unknown): Promise<{ title: string; co
 
 export async function getPublicShare(context: Context): Promise<Response> {
   const auth = authFromContext(context);
-  requireUserJwt(auth);
+  requireScope(auth, 'shares:write');
   const noteId = ownerNoteId(context);
   await findOwnedNote(auth.userId, noteId, true);
   const result = await appDbClient.from('note_shares').select('id, note_id, token_prefix, expires_at, revoked_at, created_at').eq('owner_id', auth.userId).eq('note_id', noteId).is('revoked_at', null).order('created_at', { ascending: false }).limit(1).maybeSingle();
@@ -68,7 +68,7 @@ export async function getPublicShare(context: Context): Promise<Response> {
 
 export async function createPublicShare(context: Context): Promise<Response> {
   const auth = authFromContext(context);
-  requireUserJwt(auth);
+  requireScope(auth, 'shares:write');
   const noteId = ownerNoteId(context);
   const note = await findOwnedNote(auth.userId, noteId);
   let input;
@@ -102,7 +102,7 @@ export async function createPublicShare(context: Context): Promise<Response> {
 
 export async function revokePublicShare(context: Context): Promise<Response> {
   const auth = authFromContext(context);
-  requireUserJwt(auth);
+  requireScope(auth, 'shares:write');
   const noteId = ownerNoteId(context);
   await findOwnedNote(auth.userId, noteId, true);
   assertSupabase(await serviceClient.rpc('qnotes_revoke_note_share', { p_owner_id: auth.userId, p_note_id: noteId }));

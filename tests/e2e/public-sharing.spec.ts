@@ -65,14 +65,29 @@ test('soft deletion revokes a link permanently across restore', async () => {
   expect((await resolvePublicShareApi(share.token)).response.status).toBe(404);
 });
 
-test('personal qnt tokens cannot manage or resolve public shares', async () => {
+test('shares:write tokens manage only their owner shares and older qnt tokens remain denied', async () => {
   const session = await signInSession(OWNER);
   const note = await createNoteApi(session.access_token, `Share token boundary ${crypto.randomUUID()}`, 'Boundary body.');
-  const tokenResponse = await apiJson('/api/tokens', session.access_token, { method: 'POST', body: JSON.stringify({ name: `share-boundary-${crypto.randomUUID()}`, scopes: ['notes:read'], expiresAt: null }) });
-  const personalToken = String(data(tokenResponse.body).token);
-  const ownerAttempt = await apiJson(`/api/notes/${note.id}/share`, personalToken, { method: 'POST', body: JSON.stringify({ expiresAt: null }) });
-  expect(ownerAttempt.response.status).toBe(403);
-  expect((await resolvePublicShareApi(personalToken)).response.status).toBe(404);
+  const otherSession = await signInSession(OTHER);
+  const otherNote = await createNoteApi(otherSession.access_token, `Other owner share boundary ${crypto.randomUUID()}`, 'Other owner body.');
+
+  const oldTokenResponse = await apiJson('/api/tokens', session.access_token, { method: 'POST', body: JSON.stringify({ name: `share-boundary-old-${crypto.randomUUID()}`, scopes: ['notes:read'], expiresAt: null }) });
+  const oldToken = String(data(oldTokenResponse.body).token);
+  for (const method of ['GET', 'POST', 'DELETE'] as const) {
+    const denied = await apiJson(`/api/notes/${note.id}/share`, oldToken, { method, ...(method === 'POST' ? { body: JSON.stringify({ expiresAt: null }) } : {}) });
+    expect(denied.response.status).toBe(403);
+  }
+
+  const shareTokenResponse = await apiJson('/api/tokens', session.access_token, { method: 'POST', body: JSON.stringify({ name: `share-boundary-${crypto.randomUUID()}`, scopes: ['shares:write'], expiresAt: null }) });
+  const shareToken = String(data(shareTokenResponse.body).token);
+  const created = await apiJson(`/api/notes/${note.id}/share`, shareToken, { method: 'POST', body: JSON.stringify({ expiresAt: null }) });
+  expect(created.response.status).toBe(201);
+  const share = data(created.body);
+  expect((await apiJson(`/api/notes/${note.id}/share`, shareToken)).response.status).toBe(200);
+  expect((await apiJson(`/api/notes/${otherNote.id}/share`, shareToken)).response.status).toBe(404);
+  expect((await apiJson(`/api/notes/${note.id}/share`, shareToken, { method: 'DELETE' })).response.status).toBe(200);
+  expect((await resolvePublicShareApi(String(share.token))).response.status).toBe(404);
+  expect((await resolvePublicShareApi(shareToken)).response.status).toBe(404);
 });
 
 test('share dialog shows the raw link once and safe metadata after reopening', async ({ page }) => {
