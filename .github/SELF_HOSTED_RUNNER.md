@@ -6,7 +6,8 @@ x64 runner with the `qnotes-ci` label. The workflow is
 core checks by default. The local Supabase integration and path-gated search
 checks are available on capable runners when the repository Actions variable
 `QNOTES_RUN_LOCAL_SUPABASE` is set to `true`. A push to `master` deploys after
-the core checks pass, so a restricted gateway cannot block prototype releases.
+core passes and after any enabled local-Supabase checks pass, so a restricted
+gateway cannot block prototype releases.
 
 ## Runner requirements
 
@@ -84,3 +85,5 @@ therefore require Docker user namespaces. To enable them, add the repository
 Actions variable `QNOTES_RUN_LOCAL_SUPABASE` with value `true` under
 **Settings → Secrets and variables → Actions → Variables**. Leave it unset on
 restricted gateways; the core verification job and deployment remain usable.
+When enabled, both jobs become release-gate inputs and a failure prevents
+deployment.

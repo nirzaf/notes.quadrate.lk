@@ -22,8 +22,10 @@ self-hosted Linux/x64 runner labeled `qnotes-ci`. Pull requests run the core,
 integration, and path-gated search checks only when the repository Actions
 variable `QNOTES_RUN_LOCAL_SUPABASE` is `true`. By default, the core checks run
 without local Supabase containers. A push to `master` deploys after core passes
-through the GitHub `production` environment, so restricted gateways do not
-block prototype releases. The prototype environment currently has no reviewer
+through the GitHub `production` environment. If the variable is enabled, the
+integration and search jobs must also pass before deployment; restricted
+gateways can leave it unset so they do not block prototype releases. The
+prototype environment currently has no reviewer
 gate; add one before using this workflow for unattended production releases. See
 [`.github/SELF_HOSTED_RUNNER.md`](.github/SELF_HOSTED_RUNNER.md) for runner
 prerequisites, registration, and required secrets.

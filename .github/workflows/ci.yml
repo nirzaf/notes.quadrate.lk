@@ -178,9 +178,21 @@ jobs:
           fi
           pnpm exec supabase stop
 
+  release_gate:
+    name: release gate
+    needs: [core, integration, search_regression]
+    if: >-
+      ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/master' &&
+      needs.core.result == 'success' &&
+      (needs.integration.result == 'success' || needs.integration.result == 'skipped') &&
+      (needs.search_regression.result == 'success' || needs.search_regression.result == 'skipped') }}
+    runs-on: [self-hosted, linux, x64, qnotes-ci]
+    steps:
+      - run: echo 'Core verification passed; all enabled release checks passed.'
+
   deploy:
     name: deploy production
-    needs: [core]
+    needs: [release_gate]
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: [self-hosted, linux, x64, qnotes-ci]
     environment:
