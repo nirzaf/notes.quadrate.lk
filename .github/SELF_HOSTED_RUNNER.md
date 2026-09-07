@@ -47,3 +47,24 @@ Require an environment reviewer before deployment. The workflow never stores
 production secrets in the repository and does not use production credentials in
 the test jobs. The deployment applies migrations, deploys Edge Functions,
 builds Pages, and then verifies the public health endpoints.
+
+## Host-local deployment environment
+
+For the current runner host, the deployment job also reads the ignored file
+`/root/Desktop/notes.quadrate.lk/.env.local`. Set the runner service
+environment variable `QNOTES_CI_ENV_FILE` to a different absolute path when the
+runner is installed elsewhere. Only the deployment variables are exported to
+later steps, and each value is masked before export; the file is never copied to
+the repository checkout or uploaded as an artifact.
+
+The checked-in host file is currently owned by `root` with mode `600`. Do not
+run the runner as `root` just to read it. Instead, give the dedicated runner
+account controlled read access, or create a runner-owned `600` copy outside the
+checkout and set `QNOTES_CI_ENV_FILE` to that path. Keep the file out of the Git
+working tree and backups shared with other jobs.
+
+The current local file does not contain `SUPABASE_DB_PASSWORD` or
+`CLOUDFLARE_API_TOKEN`, so production deployment will stop until those are
+provided. Wrangler can use the existing `CLOUDFLARE_API_KEY` plus
+`CLOUDFLARE_EMAIL` pair as a compatibility fallback, but replace that broad
+global API key with a scoped Cloudflare API token when possible.

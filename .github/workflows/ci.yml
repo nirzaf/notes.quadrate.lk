@@ -182,6 +182,40 @@ jobs:
           corepack install --global "pnpm@${PNPM_VERSION}"
           pnpm --version
       - run: pnpm install --frozen-lockfile
+      - name: Load deployment environment from the runner host
+        shell: bash
+        run: |
+          local_env_file="${QNOTES_CI_ENV_FILE:-/root/Desktop/notes.quadrate.lk/.env.local}"
+          if [ ! -r "$local_env_file" ]; then
+            echo "Deployment environment file is not readable: $local_env_file"
+            exit 1
+          fi
+
+          # This file is trusted host configuration, not repository content. Export
+          # only the values needed by this job and mask each value before handing it
+          # to later steps through GITHUB_ENV.
+          set -a
+          . "$local_env_file"
+          set +a
+          for name in \
+            SUPABASE_ACCESS_TOKEN \
+            SUPABASE_DB_PASSWORD \
+            VITE_SUPABASE_PUBLISHABLE_KEY \
+            CLOUDFLARE_ACCOUNT_ID \
+            CLOUDFLARE_API_TOKEN \
+            CLOUDFLARE_API_KEY \
+            CLOUDFLARE_EMAIL; do
+            value="${!name:-}"
+            if [ -z "$value" ]; then
+              continue
+            fi
+            if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
+              echo "$name must be a single-line value"
+              exit 1
+            fi
+            printf '::add-mask::%s\n' "$value"
+            printf '%s=%s\n' "$name" "$value" >> "$GITHUB_ENV"
+          done
       - name: Check production deployment secrets
         shell: bash
         run: |
@@ -190,7 +224,6 @@ jobs:
             SUPABASE_DB_PASSWORD
             VITE_SUPABASE_PUBLISHABLE_KEY
             CLOUDFLARE_ACCOUNT_ID
-            CLOUDFLARE_API_TOKEN
           )
           for name in "${required[@]}"; do
             if [ -z "${!name:-}" ]; then
@@ -198,6 +231,13 @@ jobs:
               exit 1
             fi
           done
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ] && { \
+            [ -z "${CLOUDFLARE_API_KEY:-}" ] || \
+            [ -z "${CLOUDFLARE_EMAIL:-}" ]; \
+          }; then
+            echo "Missing Cloudflare credentials: provide CLOUDFLARE_API_TOKEN or CLOUDFLARE_API_KEY with CLOUDFLARE_EMAIL"
+            exit 1
+          fi
       - name: Link and preview production migrations
         run: |
           pnpm exec supabase link --project-ref "$SUPABASE_PROJECT_ID" --yes
