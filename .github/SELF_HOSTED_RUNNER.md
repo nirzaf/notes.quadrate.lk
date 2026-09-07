@@ -2,9 +2,11 @@
 
 Quadrate Notes runs its CI and production CD jobs on a repository-scoped Linux
 x64 runner with the `qnotes-ci` label. The workflow is
-[`.github/workflows/ci.yml`](workflows/ci.yml); pull requests run the core,
-integration, and search checks, while pushes to `master` deploy after all three
-checks pass.
+[`.github/workflows/ci.yml`](workflows/ci.yml). Pull requests and pushes run the
+core checks by default. The local Supabase integration and path-gated search
+checks are available on capable runners when the repository Actions variable
+`QNOTES_RUN_LOCAL_SUPABASE` is set to `true`. A push to `master` deploys after
+the core checks pass, so a restricted gateway cannot block prototype releases.
 
 ## Runner requirements
 
@@ -14,8 +16,8 @@ the production Supabase or Cloudflare host. The runner needs:
 - Git, curl, Corepack, and outbound HTTPS access.
 - Docker, for the local Supabase integration and search jobs.
 - A Docker-capable kernel with user namespaces enabled (`unshare -Ur true`),
-  or equivalent `CAP_SYS_ADMIN` support. The workflow checks this before
-  pulling Supabase images and fails fast when it is unavailable.
+  or equivalent `CAP_SYS_ADMIN` support. This is required only when the
+  optional local Supabase jobs are enabled.
 - Enough disk space for Supabase containers and Playwright Chromium.
 - A runner account able to install Chromium system dependencies, or Chromium
   dependencies preinstalled by the machine image.
@@ -74,3 +76,11 @@ environment. The current host file still does not contain
 `CLOUDFLARE_API_TOKEN`. Wrangler can use the existing `CLOUDFLARE_API_KEY` plus
 `CLOUDFLARE_EMAIL` pair as a compatibility fallback, but replace that broad
 global API key with a scoped Cloudflare API token when possible.
+
+## Optional local Supabase jobs
+
+The integration and search regression jobs start a local Supabase stack and
+therefore require Docker user namespaces. To enable them, add the repository
+Actions variable `QNOTES_RUN_LOCAL_SUPABASE` with value `true` under
+**Settings → Secrets and variables → Actions → Variables**. Leave it unset on
+restricted gateways; the core verification job and deployment remain usable.

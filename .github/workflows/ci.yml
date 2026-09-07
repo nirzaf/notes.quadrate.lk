@@ -38,6 +38,9 @@ jobs:
       - run: pnpm run verify:edge-shared
 
   integration:
+    # Local Supabase containers are opt-in because some self-hosted gateways do
+    # not permit the user namespaces required by the Supabase CLI.
+    if: ${{ vars.QNOTES_RUN_LOCAL_SUPABASE == 'true' }}
     name: integration
     runs-on: [self-hosted, linux, x64, qnotes-ci]
     steps:
@@ -87,6 +90,9 @@ jobs:
         run: pnpm exec supabase stop
 
   search_regression:
+    # Enable with the repository Actions variable QNOTES_RUN_LOCAL_SUPABASE=true
+    # on a runner that supports local Supabase containers.
+    if: ${{ vars.QNOTES_RUN_LOCAL_SUPABASE == 'true' }}
     name: search regression
     runs-on: [self-hosted, linux, x64, qnotes-ci]
     steps:
@@ -174,7 +180,7 @@ jobs:
 
   deploy:
     name: deploy production
-    needs: [core, integration, search_regression]
+    needs: [core]
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     runs-on: [self-hosted, linux, x64, qnotes-ci]
     environment:
