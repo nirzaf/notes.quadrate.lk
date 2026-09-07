@@ -14,6 +14,7 @@ Use Node.js 18+, pnpm 12.1.0, and Deno 2.9.6+.
 - `pnpm run test:unit` runs Node and package tests; `pnpm run test:edge` runs every `supabase/functions/**/*.test.ts` file through the checked-in Deno import map.
 - `pnpm run verify:local` performs preflight, then runs the verification gate. It requires Docker/Supabase, ignored env files, and Chromium. Run `pnpm run verify:search -- --seed` before changes under `packages/markdown/`, `supabase/functions/qnotes-api/search.ts`, `supabase/functions/embedding-worker/`, search migrations, fixtures/baselines, or search evaluation scripts.
 - After changing shared source, run `pnpm run sync:edge` and then `pnpm run verify:edge-shared`. Run focused E2E with `pnpm exec playwright test tests/e2e/navigation.spec.ts tests/e2e/accessibility.spec.ts --project=chromium`; accessibility coverage uses axe without broad suppressions.
+- Run the recovery-specific round-trip gate separately with `pnpm exec playwright test tests/e2e/workspace-recovery.spec.ts --project=chromium`; it verifies dry-run safety, conflicts, private attachments, token/share exclusion, and retry idempotency.
 
 ## Coding and Testing Conventions
 
