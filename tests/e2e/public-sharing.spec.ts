@@ -23,7 +23,7 @@ test('renders a saved note publicly through the fragment without private API req
   expect(data(resolved.body)).not.toHaveProperty('attachments');
   expect(resolved.response.headers.get('cache-control')).toBe('no-store');
 
-  const getResolver = await publicApiJson('/public/share/resolve?token=qns_test', { headers: { Accept: 'text/markdown' } });
+  const getResolver = await publicApiJson('/public/share/resolve?token=qns_test');
   expect([404, 405]).toContain(getResolver.response.status);
   expect(JSON.stringify(getResolver.body)).not.toContain('Public marker 4127');
 
@@ -45,7 +45,7 @@ test('rotates and revokes links while keeping the old secret unusable', async ()
   expect(second.token).not.toBe(first.token);
   expect((await resolvePublicShareApi(first.token)).response.status).toBe(404);
   expect((await resolvePublicShareApi(second.token)).response.status).toBe(200);
-  const getResolver = await publicApiJson('/public/share/resolve?token=qns_test', { headers: { Accept: 'text/markdown' } });
+  const getResolver = await publicApiJson('/public/share/resolve?token=qns_test');
   expect([404, 405]).toContain(getResolver.response.status);
   const revoked = await apiJson(`/api/notes/${note.id}/share`, session.access_token, { method: 'DELETE' });
   expect(revoked.response.status).toBe(200);
