@@ -1,4 +1,4 @@
-select plan(17);
+select plan(16);
 
 select ok(to_regclass('notesdb.vault_projects') is not null, 'Vault projects table exists');
 select ok(to_regclass('notesdb.vault_environments') is not null, 'Vault environments table exists');
