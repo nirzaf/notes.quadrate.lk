@@ -66,17 +66,8 @@ jobs:
       - run: pnpm run seed:test-users
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm exec supabase test db
-      - name: Run focused local E2E suites
-        run: >-
-          pnpm exec playwright test
-          tests/e2e/navigation.spec.ts
-          tests/e2e/mobile-home.spec.ts
-          tests/e2e/attachments.spec.ts
-          tests/e2e/public-sharing.spec.ts
-          tests/e2e/accessibility.spec.ts
-          tests/e2e/oauth-replay.spec.ts
-          tests/e2e/workspace-recovery.spec.ts
-          --project=chromium
+      - name: Run complete local E2E suite
+        run: pnpm run test:e2e
       - name: Stop the local Supabase stack
         if: always()
         run: pnpm exec supabase stop

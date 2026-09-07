@@ -2,10 +2,10 @@
 
 The workflow in [`workflows/ci.yml`](workflows/ci.yml) uses GitHub-hosted
 `ubuntu-latest` runners. Pull requests run the core checks, local Supabase
-integration tests, and the search regression job. Search evaluation remains
-path-gated after the job starts. A push to `master` runs the release gate and
-then deploys the production Supabase functions, migrations, frontend, and
-Cloudflare Pages site.
+integration tests with the complete Playwright E2E suite, and the search
+regression job. Search evaluation remains path-gated after the job starts. A
+push to `master` runs the release gate and then deploys the production
+Supabase functions, migrations, frontend, and Cloudflare Pages site.
 
 ## Production environment
 

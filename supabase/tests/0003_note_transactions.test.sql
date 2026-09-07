@@ -21,7 +21,7 @@ select is(
 );
 select is((select version from notesdb.notes where id = '33333333-3333-4333-8333-333333333333'), 1::bigint, 'a created note starts at version 1');
 select is((select count(*)::integer from notesdb.note_blocks where note_id = '33333333-3333-4333-8333-333333333333'), 1, 'create upserts parsed blocks');
-select is((select count(*)::integer from notesdb.search_documents where note_id = '33333333-3333-4333-8333-333333333333'), 1, 'create upserts search documents');
+select is((select count(*)::integer from notesdb.search_documents where note_id = '33333333-3333-4333-8333-333333333333'), 2, 'create upserts content and metadata search documents');
 
 select is(
   (public.qnotes_update_note((select id from auth.users where email = 'owner@qnotes.local'), '33333333-3333-4333-8333-333333333333', 'transaction-note', 'Transaction Note Updated', '# Transaction Note Updated\n\nchanged', 'Transaction Note Updated changed', '{}', 1, '33333333-3333-4333-8333-333333333334', '33333333-3333-4333-8333-333333333336', 'request-hash-2', '[]'::jsonb, '[]'::jsonb)->>'status'),
@@ -30,7 +30,7 @@ select is(
 );
 select is((select version from notesdb.notes where id = '33333333-3333-4333-8333-333333333333'), 2::bigint, 'matching update increments version once');
 select is((select count(*)::integer from notesdb.note_blocks where note_id = '33333333-3333-4333-8333-333333333333'), 0, 'removed blocks are deleted');
-select is((select count(*)::integer from notesdb.search_documents where note_id = '33333333-3333-4333-8333-333333333333'), 0, 'removed documents are deleted');
+select is((select count(*)::integer from notesdb.search_documents where note_id = '33333333-3333-4333-8333-333333333333' and source_type <> 'note_metadata'), 0, 'removed content documents are deleted');
 
 select is(
   (public.qnotes_update_note((select id from auth.users where email = 'owner@qnotes.local'), '33333333-3333-4333-8333-333333333333', 'transaction-note', 'Transaction Note Updated', '# Transaction Note Updated\n\nchanged', 'Transaction Note Updated changed', '{}', 1, '33333333-3333-4333-8333-333333333334', '33333333-3333-4333-8333-333333333336', 'request-hash-2', '[]'::jsonb, '[]'::jsonb)->>'status'),

@@ -19,10 +19,11 @@ Database migrations create application objects in the `notesdb` schema. Do not r
 
 The repository workflow at `.github/workflows/ci.yml` uses GitHub-hosted
 `ubuntu-latest` runners. Pull requests run the core checks, local Supabase
-integration tests, and the path-gated search regression job. A push to `master`
-deploys after the complete release gate through the GitHub `production`
-environment. See [`.github/GITHUB_ACTIONS.md`](.github/GITHUB_ACTIONS.md) for
-the runner model, production secrets, and local reproduction commands.
+integration tests with the complete Playwright E2E suite, and the path-gated
+search regression job. A push to `master` deploys after the complete release
+gate through the GitHub `production` environment. See
+[`.github/GITHUB_ACTIONS.md`](.github/GITHUB_ACTIONS.md) for the runner model,
+production secrets, and local reproduction commands.
 
 Required deployment values are stored as secrets in the GitHub `production`
 environment: `SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_PASSWORD`,

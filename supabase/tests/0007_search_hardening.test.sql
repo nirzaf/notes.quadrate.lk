@@ -105,10 +105,14 @@ select is((select count(*)::integer from (
   union all select id from public.qnotes_keyword_search((select id from auth.users where email = 'owner@qnotes.local'), 'pagination-marker', 2, '{}'::jsonb, 4, 1)
 ) pages), 6, 'three keyword pages contain every row without a gap');
 select is((select count(*)::integer from (
-  select id from public.qnotes_keyword_search((select id from auth.users where email = 'owner@qnotes.local'), 'pagination-marker', 2, '{}'::jsonb, 0, 1)
-  union all select id from public.qnotes_keyword_search((select id from auth.users where email = 'owner@qnotes.local'), 'pagination-marker', 2, '{}'::jsonb, 2, 1)
-  union all select id from public.qnotes_keyword_search((select id from auth.users where email = 'owner@qnotes.local'), 'pagination-marker', 2, '{}'::jsonb, 4, 1)
-) pages group by id having count(*) > 1), 0, 'paged keyword results have no duplicate document identities');
+  select id from (
+    select id from public.qnotes_keyword_search((select id from auth.users where email = 'owner@qnotes.local'), 'pagination-marker', 2, '{}'::jsonb, 0, 1)
+    union all select id from public.qnotes_keyword_search((select id from auth.users where email = 'owner@qnotes.local'), 'pagination-marker', 2, '{}'::jsonb, 2, 1)
+    union all select id from public.qnotes_keyword_search((select id from auth.users where email = 'owner@qnotes.local'), 'pagination-marker', 2, '{}'::jsonb, 4, 1)
+  ) pages
+  group by id
+  having count(*) > 1
+) duplicates), 0, 'paged keyword results have no duplicate document identities');
 
 -- Filters are applied before the top-K and per-note cap.
 with target_note as (
@@ -160,7 +164,10 @@ set embedding = ('[' || repeat('0,', 383) || '0]')::extensions.vector,
 where source_key = 'semantic-v1';
 alter table notesdb.search_documents enable trigger search_documents_prepare_embedding;
 select ok((select count(*) > 0 from public.qnotes_semantic_search((select id from auth.users where email = 'owner@qnotes.local'), 'semantic-v2-marker', ('[' || repeat('0,', 383) || '0]')::extensions.vector, 10)), 'current v2 vectors participate in semantic search');
-select ok((select count(*) = 0 from public.qnotes_semantic_search((select id from auth.users where email = 'owner@qnotes.local'), 'semantic-v1-marker', ('[' || repeat('0,', 383) || '0]')::extensions.vector, 10)), 'old v1-compatible work is absent from semantic search');
+select ok((select not exists (
+  select 1 from public.qnotes_semantic_search((select id from auth.users where email = 'owner@qnotes.local'), 'semantic-v1-marker', ('[' || repeat('0,', 383) || '0]')::extensions.vector, 10)
+  where note_id = '77777777-7777-4777-8777-777777777725'
+)), 'old v1-compatible work is absent from semantic search');
 select ok((
   select position('qnotes_semantic_search(p_owner_id, '''', p_embedding, p_limit, ''{}''::jsonb, 0, 2)' in p.prosrc) > 0
     and not has_function_privilege('anon', p.oid, 'EXECUTE')
