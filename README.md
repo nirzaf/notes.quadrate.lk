@@ -68,7 +68,7 @@ PostgreSQL full-text and relevance-ranked keyword search is available immediatel
 
 The browser subscribes to the private `user:<user-id>:notes` Realtime channel and receives metadata-only `note.changed` events. IndexedDB stores drafts, a notes sync cursor, and recent authoritative note snapshots. Access tokens are not stored in IndexedDB or the service-worker cache.
 
-CI runs the core typecheck/unit/Edge/build/generated-parity checks, local Supabase SQL and focused E2E suites, and a path-gated search regression job. The proposed required checks are `CI / core`, `CI / integration`, and `CI / search regression`; configure them in branch protection only after verifying these exact names in GitHub. See [SECURITY.md](SECURITY.md) for the full-history secret-scan and private vulnerability-reporting procedure.
+CI runs the core typecheck/unit/Edge/build/generated-parity checks, local Supabase SQL and focused E2E suites, and a path-gated search regression job on the repository's labeled self-hosted runner. A successful push to `master` runs the protected production CD job, which applies migrations, deploys Supabase Edge Functions, publishes Cloudflare Pages, and verifies the live health endpoints. See [.github/SELF_HOSTED_RUNNER.md](.github/SELF_HOSTED_RUNNER.md) for runner setup and production secrets. The proposed required checks are `CI / core`, `CI / integration`, and `CI / search regression`; configure them in branch protection only after verifying these exact names in GitHub. See [SECURITY.md](SECURITY.md) for the full-history secret-scan and private vulnerability-reporting procedure.
 
 ## Local development
 

@@ -16,7 +16,7 @@ env:
 jobs:
   core:
     name: core
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, qnotes-ci]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -39,7 +39,7 @@ jobs:
 
   integration:
     name: integration
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, qnotes-ci]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -76,7 +76,7 @@ jobs:
 
   search_regression:
     name: search regression
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, qnotes-ci]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -146,3 +146,86 @@ jobs:
             kill "$(cat .tmp/search-functions.pid)" 2>/dev/null || true
           fi
           pnpm exec supabase stop
+
+  deploy:
+    name: deploy production
+    needs: [core, integration, search_regression]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: [self-hosted, linux, x64, qnotes-ci]
+    environment:
+      name: production
+      url: https://notes.quadrate.lk/
+    concurrency:
+      group: qnotes-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      SUPABASE_PROJECT_ID: ciyoandzjezgqxjpcrin
+      VITE_SUPABASE_URL: https://ciyoandzjezgqxjpcrin.supabase.co
+      VITE_QNOTES_API_URL: https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-api
+      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Enable the pinned package manager
+        run: |
+          corepack enable
+          corepack install --global "pnpm@${PNPM_VERSION}"
+          pnpm --version
+      - run: pnpm install --frozen-lockfile
+      - name: Check production deployment secrets
+        shell: bash
+        run: |
+          required=(
+            SUPABASE_ACCESS_TOKEN
+            SUPABASE_DB_PASSWORD
+            VITE_SUPABASE_PUBLISHABLE_KEY
+            CLOUDFLARE_ACCOUNT_ID
+            CLOUDFLARE_API_TOKEN
+          )
+          for name in "${required[@]}"; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required production environment secret: $name"
+              exit 1
+            fi
+          done
+      - name: Link and preview production migrations
+        run: |
+          pnpm exec supabase link --project-ref "$SUPABASE_PROJECT_ID" --yes
+          pnpm exec supabase db push --linked --dry-run
+      - name: Apply production migrations
+        run: pnpm exec supabase db push --linked --yes
+      - name: Deploy Supabase Edge Functions
+        run: >-
+          pnpm exec supabase functions deploy
+          qnotes-api embedding-worker attachment-worker qnotes-mcp
+          --project-ref "$SUPABASE_PROJECT_ID"
+          --no-verify-jwt
+          --use-api
+          --import-map supabase/functions/deno.json
+      - name: Build the production frontend
+        run: pnpm run build
+      - name: Deploy Cloudflare Pages
+        run: >-
+          npx --yes wrangler@4.128.0 pages deploy apps/web/dist
+          --project-name notes-quadrate-lk
+          --branch master
+          --commit-hash "$GITHUB_SHA"
+          --commit-message "$(git log -1 --pretty=%s)"
+          --commit-dirty=false
+      - name: Verify production endpoints
+        run: |
+          curl --fail --silent --show-error --retry 5 --retry-delay 5 https://notes.quadrate.lk/ >/dev/null
+          curl --fail --silent --show-error --retry 5 --retry-delay 5 \
+            https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-api/api/health >/dev/null
+          curl --fail --silent --show-error --retry 5 --retry-delay 5 \
+            https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-mcp/health >/dev/null

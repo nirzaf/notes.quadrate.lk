@@ -15,6 +15,22 @@ Database migrations create application objects in the `notesdb` schema. Do not r
 - A scoped Cloudflare API token with Pages edit access, or an interactive Wrangler login.
 - Production secrets available from a password manager. Never commit them or put them in Vite variables.
 
+## GitHub Actions CI/CD
+
+The repository workflow at `.github/workflows/ci.yml` uses a dedicated
+self-hosted Linux/x64 runner labeled `qnotes-ci`. Pull requests run the core,
+integration, and path-gated search checks. A push to `master` runs the same
+checks and then deploys production through a protected GitHub `production`
+environment. See [`.github/SELF_HOSTED_RUNNER.md`](.github/SELF_HOSTED_RUNNER.md)
+for runner prerequisites, registration, and required secrets.
+
+Configure the `production` environment with required reviewers before adding
+deployment credentials. Required secrets are `SUPABASE_ACCESS_TOKEN`,
+`SUPABASE_DB_PASSWORD`, `VITE_SUPABASE_PUBLISHABLE_KEY`,
+`CLOUDFLARE_ACCOUNT_ID`, and `CLOUDFLARE_API_TOKEN`. The Cloudflare token only
+needs Pages Edit access. The Supabase database password is used only by the
+non-interactive migration step.
+
 The repository pins pnpm to `12.1.0`:
 
 ```bash
