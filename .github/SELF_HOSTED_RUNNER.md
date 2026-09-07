@@ -43,10 +43,12 @@ Create a GitHub **production environment** and add these secrets there:
 - `CLOUDFLARE_ACCOUNT_ID`
 - `CLOUDFLARE_API_TOKEN` (Cloudflare Pages Edit scope)
 
-Require an environment reviewer before deployment. The workflow never stores
-production secrets in the repository and does not use production credentials in
-the test jobs. The deployment applies migrations, deploys Edge Functions,
-builds Pages, and then verifies the public health endpoints.
+The `production` environment currently has no reviewer protection because this
+prototype deploys without a manual approval gate. Add an environment reviewer
+before treating the workflow as a production release process. The workflow
+never stores production secrets in the repository and does not use production
+credentials in the test jobs. The deployment applies migrations, deploys Edge
+Functions, builds Pages, and then verifies the public health endpoints.
 
 ## Host-local deployment environment
 
