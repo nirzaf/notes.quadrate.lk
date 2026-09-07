@@ -16,7 +16,7 @@ env:
 jobs:
   core:
     name: core
-    runs-on: [self-hosted, linux, x64, qnotes-ci]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -38,11 +38,8 @@ jobs:
       - run: pnpm run verify:edge-shared
 
   integration:
-    # Local Supabase containers are opt-in because some self-hosted gateways do
-    # not permit the user namespaces required by the Supabase CLI.
-    if: ${{ vars.QNOTES_RUN_LOCAL_SUPABASE == 'true' }}
     name: integration
-    runs-on: [self-hosted, linux, x64, qnotes-ci]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -60,12 +57,7 @@ jobs:
         shell: bash
         run: |
           if ! docker info >/dev/null 2>&1; then
-            echo 'Docker daemon is unavailable on this self-hosted runner.'
-            exit 1
-          fi
-          if ! unshare -Ur true >/dev/null 2>&1; then
-            echo 'This self-hosted runner cannot create user namespaces required by local Supabase containers.'
-            echo 'Use a VM or host with CAP_SYS_ADMIN/user namespaces enabled for the qnotes-ci runner.'
+            echo 'Docker daemon is unavailable on the GitHub-hosted runner.'
             exit 1
           fi
       - name: Start the local Supabase stack
@@ -90,11 +82,8 @@ jobs:
         run: pnpm exec supabase stop
 
   search_regression:
-    # Enable with the repository Actions variable QNOTES_RUN_LOCAL_SUPABASE=true
-    # on a runner that supports local Supabase containers.
-    if: ${{ vars.QNOTES_RUN_LOCAL_SUPABASE == 'true' }}
     name: search regression
-    runs-on: [self-hosted, linux, x64, qnotes-ci]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -137,12 +126,7 @@ jobs:
         shell: bash
         run: |
           if ! docker info >/dev/null 2>&1; then
-            echo 'Docker daemon is unavailable on this self-hosted runner.'
-            exit 1
-          fi
-          if ! unshare -Ur true >/dev/null 2>&1; then
-            echo 'This self-hosted runner cannot create user namespaces required by local Supabase containers.'
-            echo 'Use a VM or host with CAP_SYS_ADMIN/user namespaces enabled for the qnotes-ci runner.'
+            echo 'Docker daemon is unavailable on the GitHub-hosted runner.'
             exit 1
           fi
       - name: Start the local Supabase stack
@@ -159,6 +143,7 @@ jobs:
             > .tmp/search-functions.log 2>&1 &
           echo $! > .tmp/search-functions.pid
           for attempt in {1..60}; do
+            : "$attempt"
             if curl --fail --silent http://127.0.0.1:54321/functions/v1/qnotes-api/api/health >/dev/null; then
               exit 0
             fi
@@ -186,7 +171,7 @@ jobs:
       needs.core.result == 'success' &&
       (needs.integration.result == 'success' || needs.integration.result == 'skipped') &&
       (needs.search_regression.result == 'success' || needs.search_regression.result == 'skipped') }}
-    runs-on: [self-hosted, linux, x64, qnotes-ci]
+    runs-on: ubuntu-latest
     steps:
       - run: echo 'Core verification passed; all enabled release checks passed.'
 
@@ -196,7 +181,7 @@ jobs:
     if: >-
       ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/master' &&
       needs.release_gate.result == 'success' }}
-    runs-on: [self-hosted, linux, x64, qnotes-ci]
+    runs-on: ubuntu-latest
     environment:
       name: production
       url: https://notes.quadrate.lk/
@@ -214,6 +199,8 @@ jobs:
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_API_KEY: ${{ secrets.CLOUDFLARE_API_KEY }}
+      CLOUDFLARE_EMAIL: ${{ secrets.CLOUDFLARE_EMAIL }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -227,40 +214,6 @@ jobs:
           corepack install --global "pnpm@${PNPM_VERSION}"
           pnpm --version
       - run: pnpm install --frozen-lockfile
-      - name: Load deployment environment from the runner host
-        shell: bash
-        run: |
-          local_env_file="${QNOTES_CI_ENV_FILE:-/root/Desktop/notes.quadrate.lk/.env.local}"
-          if [ ! -r "$local_env_file" ]; then
-            echo "Deployment environment file is not readable: $local_env_file"
-            exit 1
-          fi
-
-          # This file is trusted host configuration, not repository content. Export
-          # only the values needed by this job and mask each value before handing it
-          # to later steps through GITHUB_ENV.
-          set -a
-          . "$local_env_file"
-          set +a
-          for name in \
-            SUPABASE_ACCESS_TOKEN \
-            SUPABASE_DB_PASSWORD \
-            VITE_SUPABASE_PUBLISHABLE_KEY \
-            CLOUDFLARE_ACCOUNT_ID \
-            CLOUDFLARE_API_TOKEN \
-            CLOUDFLARE_API_KEY \
-            CLOUDFLARE_EMAIL; do
-            value="${!name:-}"
-            if [ -z "$value" ]; then
-              continue
-            fi
-            if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
-              echo "$name must be a single-line value"
-              exit 1
-            fi
-            printf '::add-mask::%s\n' "$value"
-            printf '%s=%s\n' "$name" "$value" >> "$GITHUB_ENV"
-          done
       - name: Check production deployment secrets
         shell: bash
         run: |

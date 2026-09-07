@@ -17,24 +17,20 @@ Database migrations create application objects in the `notesdb` schema. Do not r
 
 ## GitHub Actions CI/CD
 
-The repository workflow at `.github/workflows/ci.yml` uses a dedicated
-self-hosted Linux/x64 runner labeled `qnotes-ci`. Pull requests run the core,
-integration, and path-gated search checks only when the repository Actions
-variable `QNOTES_RUN_LOCAL_SUPABASE` is `true`. By default, the core checks run
-without local Supabase containers. A push to `master` deploys after core passes
-through the GitHub `production` environment. If the variable is enabled, the
-integration and search jobs must also pass before deployment; restricted
-gateways can leave it unset so they do not block prototype releases. The
-prototype environment currently has no reviewer
-gate; add one before using this workflow for unattended production releases. See
-[`.github/SELF_HOSTED_RUNNER.md`](.github/SELF_HOSTED_RUNNER.md) for runner
-prerequisites, registration, and required secrets.
+The repository workflow at `.github/workflows/ci.yml` uses GitHub-hosted
+`ubuntu-latest` runners. Pull requests run the core checks, local Supabase
+integration tests, and the path-gated search regression job. A push to `master`
+deploys after the complete release gate through the GitHub `production`
+environment. See [`.github/GITHUB_ACTIONS.md`](.github/GITHUB_ACTIONS.md) for
+the runner model, production secrets, and local reproduction commands.
 
-Required deployment values are `SUPABASE_ACCESS_TOKEN`,
-`SUPABASE_DB_PASSWORD`, `VITE_SUPABASE_PUBLISHABLE_KEY`,
-`CLOUDFLARE_ACCOUNT_ID`, and `CLOUDFLARE_API_TOKEN`. The Cloudflare token only
-needs Pages Edit access. The Supabase database password is used only by the
-non-interactive migration step.
+Required deployment values are stored as secrets in the GitHub `production`
+environment: `SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_PASSWORD`,
+`VITE_SUPABASE_PUBLISHABLE_KEY`, `CLOUDFLARE_ACCOUNT_ID`, and
+`CLOUDFLARE_API_TOKEN`. The Cloudflare token only needs Pages Edit access. The
+Supabase database password is used only by the non-interactive migration step.
+The workflow accepts `CLOUDFLARE_API_KEY` plus `CLOUDFLARE_EMAIL` as a
+compatibility fallback when a scoped token is unavailable.
 
 The repository pins pnpm to `12.1.0`:
 
