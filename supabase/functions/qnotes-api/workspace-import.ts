@@ -69,6 +69,7 @@ function integerField(value: unknown, field: string, maximum: number): number {
 
 export interface WorkspaceArchiveInspection {
   manifest: WorkspaceBackupManifest;
+  sourceFormatVersion: 1 | 2;
   entries: number;
   uncompressedBytes: number;
   noteMarkdownBytes: number;
@@ -95,10 +96,47 @@ export interface ExistingWorkspaceIdentity {
  */
 export async function workspaceImportUuid(ownerId: string, backupId: string, kind: WorkspaceImportItemKind, sourceId: string): Promise<string> {
   const digest = await sha256Hex(`qnotes:workspace-import:${kind}:${ownerId}:${backupId}:${sourceId}`);
+  return uuidFromHex(digest);
+}
+
+function uuidFromHex(digest: string): string {
   const hex = digest.slice(0, 32).split('');
   hex[12] = '5';
   hex[16] = ['8', '9', 'a', 'b'][Number.parseInt(hex[16] ?? '8', 16) % 4] ?? '8';
   return `${hex.slice(0, 8).join('')}-${hex.slice(8, 12).join('')}-${hex.slice(12, 16).join('')}-${hex.slice(16, 20).join('')}-${hex.slice(20).join('')}`;
+}
+
+function legacySafeName(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/^\.+/, '').slice(0, 160) || 'note';
+}
+
+async function legacyBackupId(files: Readonly<Record<string, Uint8Array>>): Promise<string> {
+  const encoder = new TextEncoder();
+  const prefix = encoder.encode('qnotes:legacy-workspace-backup:v1');
+  const entries = Object.keys(files).sort().map((path) => ({ path: encoder.encode(path), bytes: files[path] as Uint8Array }));
+  const totalBytes = 16 + prefix.byteLength + entries.reduce((total, entry) => total + 16 + entry.path.byteLength + entry.bytes.byteLength, 0);
+  if (!Number.isSafeInteger(totalBytes)) throw new WorkspaceArchiveError('The legacy backup is too large to identify safely.');
+  const canonical = new Uint8Array(totalBytes);
+  const view = new DataView(canonical.buffer);
+  let offset = 0;
+  view.setBigUint64(offset, BigInt(prefix.byteLength));
+  offset += 8;
+  canonical.set(prefix, offset);
+  offset += prefix.byteLength;
+  view.setBigUint64(offset, BigInt(entries.length));
+  offset += 8;
+  for (const entry of entries) {
+    view.setBigUint64(offset, BigInt(entry.path.byteLength));
+    offset += 8;
+    canonical.set(entry.path, offset);
+    offset += entry.path.byteLength;
+    view.setBigUint64(offset, BigInt(entry.bytes.byteLength));
+    offset += 8;
+    canonical.set(entry.bytes, offset);
+    offset += entry.bytes.byteLength;
+  }
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', canonical));
+  return uuidFromHex(Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join(''));
 }
 
 export function safeImportFileName(value: string): string {
@@ -151,7 +189,7 @@ export function workspaceImportConflicts(manifest: WorkspaceBackupManifest, exis
   return conflicts;
 }
 
-export function inspectWorkspaceArchive(archive: Uint8Array, maxBytes: number, maxAttachmentBytes = maxBytes): WorkspaceArchiveInspection {
+export async function inspectWorkspaceArchive(archive: Uint8Array, maxBytes: number, maxAttachmentBytes = maxBytes): Promise<WorkspaceArchiveInspection> {
   if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0 || archive.byteLength > maxBytes) throw new WorkspaceArchiveError('The backup archive exceeds the configured size limit.');
   let entries = 0;
   let uncompressedBytes = 0;
@@ -182,10 +220,58 @@ export function inspectWorkspaceArchive(archive: Uint8Array, maxBytes: number, m
     throw new WorkspaceArchiveError('The backup manifest is not valid JSON.');
   }
   const root = record(raw);
-  if (root.format !== 'quadrate-notes-workspace' || root.formatVersion !== 2 || !isUUID(root.backupId)) throw new WorkspaceArchiveError('The backup manifest version is unsupported.');
-  if (!Array.isArray(root.notebooks) || !Array.isArray(root.notes)) throw new WorkspaceArchiveError('The backup manifest must contain notebooks and notes arrays.');
-  const notebookValues = root.notebooks;
-  const noteValues = root.notes;
+  let sourceFormatVersion: 1 | 2;
+  let normalizedRoot: Record<string, unknown>;
+  if (root.format === 'quadrate-notes-workspace' && root.formatVersion === 2 && isUUID(root.backupId)) {
+    sourceFormatVersion = 2;
+    normalizedRoot = root;
+  } else if (root.format === undefined && root.formatVersion === undefined && Object.keys(root).sort().join(',') === 'exportedAt,notes' && Array.isArray(root.notes)) {
+    if (root.notes.length > MAX_EXPORT_ENTRIES) throw new WorkspaceArchiveError('The legacy backup manifest contains too many records.');
+    const legacyNotes = root.notes.map((value, index) => {
+      const item = record(value);
+      const id = stringField(item.id, `notes[${index}].id`, 64);
+      const slug = stringField(item.slug, `notes[${index}].slug`, 80);
+      if (!isUUID(id) || !SAFE_SLUG.test(slug)) throw new WorkspaceArchiveError('The legacy backup contains an invalid note identity.');
+      const attachmentValues = item.attachments;
+      if (!Array.isArray(item.tags) || !Array.isArray(attachmentValues)) throw new WorkspaceArchiveError('The legacy backup note must contain tags and attachments arrays.');
+      const attachments = attachmentValues.map((attachmentValue, attachmentIndex) => {
+        const attachment = record(attachmentValue);
+        return {
+          id: attachment.id,
+          originalFileName: attachment.originalFileName,
+          mimeType: attachment.mimeType,
+          sizeBytes: attachment.sizeBytes,
+          path: attachment.path,
+        };
+      });
+      return {
+        id,
+        slug,
+        title: item.title,
+        tags: item.tags,
+        notebookId: null,
+        version: item.version,
+        createdAt: item.createdAt,
+        updatedAt: item.updatedAt,
+        markdownPath: `notes/${legacySafeName(slug)}.md`,
+        attachments,
+      };
+    });
+    sourceFormatVersion = 1;
+    normalizedRoot = {
+      format: 'quadrate-notes-workspace',
+      formatVersion: 2,
+      backupId: await legacyBackupId(files),
+      exportedAt: root.exportedAt,
+      notebooks: [],
+      notes: legacyNotes,
+    };
+  } else {
+    throw new WorkspaceArchiveError('The backup manifest version is unsupported.');
+  }
+  if (!Array.isArray(normalizedRoot.notebooks) || !Array.isArray(normalizedRoot.notes)) throw new WorkspaceArchiveError('The backup manifest must contain notebooks and notes arrays.');
+  const notebookValues = normalizedRoot.notebooks;
+  const noteValues = normalizedRoot.notes;
   if (notebookValues.length + noteValues.length > MAX_EXPORT_ENTRIES) throw new WorkspaceArchiveError('The backup manifest contains too many records.');
   const notebookIds = new Set<string>();
   const notebooks = notebookValues.map((value, index) => {
@@ -243,5 +329,5 @@ export function inspectWorkspaceArchive(archive: Uint8Array, maxBytes: number, m
   });
   for (const path of Object.keys(files)) if (!paths.has(path)) throw new WorkspaceArchiveError('The backup contains an unexpected archive entry.');
   if (notes.length + notes.reduce((count, note) => count + note.attachments.length, 0) + 1 !== entries) throw new WorkspaceArchiveError('The backup manifest does not account for every archive entry.');
-  return { manifest: { format: 'quadrate-notes-workspace', formatVersion: 2, backupId: String(root.backupId), exportedAt: stringField(root.exportedAt, 'exportedAt', 64), notebooks, notes }, entries, uncompressedBytes, noteMarkdownBytes, attachmentBytes, files };
+  return { manifest: { format: 'quadrate-notes-workspace', formatVersion: 2, backupId: String(normalizedRoot.backupId), exportedAt: stringField(normalizedRoot.exportedAt, 'exportedAt', 64), notebooks, notes }, sourceFormatVersion, entries, uncompressedBytes, noteMarkdownBytes, attachmentBytes, files };
 }

@@ -39,12 +39,13 @@ const manifest = {
   notes: [{ id: '550e8400-e29b-41d4-a716-446655440001', slug: 'hello', title: 'Hello', tags: [], notebookId: null, version: 1, createdAt: '2026-09-06T00:00:00.000Z', updatedAt: '2026-09-06T00:00:00.000Z', markdownPath: 'notes/hello-550e8400-e29b-41d4-a716-446655440001.md', attachments: [] }],
 };
 
-test('validates a version-two workspace archive and its byte manifest', () => {
+test('validates a version-two workspace archive and its byte manifest', async () => {
   const archive = zipSync({
     'manifest.json': strToU8(JSON.stringify(manifest)),
     [manifest.notes[0].markdownPath]: strToU8('# Hello\n'),
   });
-  const inspection = inspectWorkspaceArchive(archive, 1_000);
+  const inspection = await inspectWorkspaceArchive(archive, 1_000);
+  assert.equal(inspection.sourceFormatVersion, 2);
   assert.equal(inspection.entries, 2);
   assert.equal(inspection.noteMarkdownBytes, 8);
   assert.equal(new TextDecoder().decode(inspection.files[manifest.notes[0].markdownPath]), '# Hello\n');
@@ -69,24 +70,45 @@ test('validates Markdown syntax before a restore can be marked ready', async () 
     'manifest.json': strToU8(JSON.stringify(manifest)),
     [manifest.notes[0].markdownPath]: strToU8(':::copy {id="broken"}\nmissing closing marker'),
   });
-  const inspection = inspectWorkspaceArchive(invalidArchive, 10_000);
+  const inspection = await inspectWorkspaceArchive(invalidArchive, 10_000);
   await assert.rejects(validateWorkspaceContents(inspection), /not closed/);
 });
 
-test('rejects path traversal and attachment size mismatches before any restore action', () => {
+test('accepts the legacy workspace archive format with a stable normalized identity', async () => {
+  const attachmentId = '550e8400-e29b-41d4-a716-446655440002';
+  const legacy = {
+    exportedAt: '2026-09-06T00:00:00.000Z',
+    notes: [{ id: manifest.notes[0].id, slug: 'hello', title: 'Hello', tags: ['demo'], version: 3, createdAt: manifest.exportedAt, updatedAt: manifest.exportedAt, attachments: [{ id: attachmentId, originalFileName: 'hello.txt', mimeType: 'text/plain', sizeBytes: 5, path: `attachments/hello/${attachmentId}-hello.txt` }] }],
+  };
+  const archive = zipSync({
+    'manifest.json': strToU8(JSON.stringify(legacy)),
+    'notes/hello.md': strToU8('# Hello\n'),
+    [`attachments/hello/${attachmentId}-hello.txt`]: strToU8('hello'),
+  });
+  const inspection = await inspectWorkspaceArchive(archive, 10_000);
+  const retry = await inspectWorkspaceArchive(archive, 10_000);
+  assert.equal(inspection.sourceFormatVersion, 1);
+  assert.equal(inspection.manifest.formatVersion, 2);
+  assert.equal(inspection.manifest.notes[0]?.notebookId, null);
+  assert.equal(inspection.manifest.notes[0]?.markdownPath, 'notes/hello.md');
+  assert.equal(inspection.manifest.backupId, retry.manifest.backupId);
+  assert.equal(inspection.attachmentBytes, 5);
+});
+
+test('rejects path traversal and attachment size mismatches before any restore action', async () => {
   const unsafe = zipSync({ 'manifest.json': strToU8(JSON.stringify(manifest)), '../escape.md': strToU8('nope') });
-  assert.throws(() => inspectWorkspaceArchive(unsafe, 10_000), WorkspaceArchiveError);
+  await assert.rejects(inspectWorkspaceArchive(unsafe, 10_000), WorkspaceArchiveError);
   const broken = JSON.parse(JSON.stringify(manifest)) as { notes: { attachments: unknown[] }[] };
   broken.notes[0].attachments = [{ id: '550e8400-e29b-41d4-a716-446655440002', originalFileName: 'x.txt', mimeType: 'text/plain', sizeBytes: 10, path: 'attachments/hello/x.txt' }];
   const archive = zipSync({ 'manifest.json': strToU8(JSON.stringify(broken)), [manifest.notes[0].markdownPath]: strToU8('# Hello\n'), 'attachments/hello/x.txt': strToU8('short') });
-  assert.throws(() => inspectWorkspaceArchive(archive, 10_000), WorkspaceArchiveError);
+  await assert.rejects(inspectWorkspaceArchive(archive, 10_000), WorkspaceArchiveError);
   const invalidVersion = JSON.parse(JSON.stringify(manifest)) as typeof manifest;
   invalidVersion.notes[0].version = 0;
   const invalidVersionArchive = zipSync({ 'manifest.json': strToU8(JSON.stringify(invalidVersion)), [manifest.notes[0].markdownPath]: strToU8('# Hello\n') });
-  assert.throws(() => inspectWorkspaceArchive(invalidVersionArchive, 10_000), WorkspaceArchiveError);
+  await assert.rejects(inspectWorkspaceArchive(invalidVersionArchive, 10_000), WorkspaceArchiveError);
 });
 
-test('rejects an individual attachment above the configured attachment limit', () => {
+test('rejects an individual attachment above the configured attachment limit', async () => {
   const oversized = JSON.parse(JSON.stringify(manifest)) as WorkspaceBackupManifest;
   oversized.notes[0]!.attachments = [{ id: '550e8400-e29b-41d4-a716-446655440002', originalFileName: 'large.txt', mimeType: 'text/plain', sizeBytes: 3, path: 'attachments/hello/large.txt' }];
   const archive = zipSync({
@@ -94,25 +116,25 @@ test('rejects an individual attachment above the configured attachment limit', (
     [manifest.notes[0].markdownPath]: strToU8('# Hello\n'),
     'attachments/hello/large.txt': strToU8('big'),
   });
-  assert.throws(() => inspectWorkspaceArchive(archive, 10_000, 2), WorkspaceArchiveError);
+  await assert.rejects(inspectWorkspaceArchive(archive, 10_000, 2), WorkspaceArchiveError);
 });
 
-test('rejects an archive that exceeds the configured compressed-byte limit', () => {
-  assert.throws(() => inspectWorkspaceArchive(new Uint8Array(11), 10), WorkspaceArchiveError);
+test('rejects an archive that exceeds the configured compressed-byte limit', async () => {
+  await assert.rejects(inspectWorkspaceArchive(new Uint8Array(11), 10), WorkspaceArchiveError);
 });
 
 test('rejects duplicate ZIP filenames before interpreting the manifest', async () => {
   await assert.rejects(duplicateArchive().then((archive) => inspectWorkspaceArchive(archive, 10_000)), WorkspaceArchiveError);
 });
 
-test('rejects malformed record arrays and duplicate attachment identities across notes', () => {
+test('rejects malformed record arrays and duplicate attachment identities across notes', async () => {
   const missingArrays = JSON.parse(JSON.stringify(manifest)) as Record<string, unknown>;
   delete missingArrays.notes;
   const missingArraysArchive = zipSync({
     'manifest.json': strToU8(JSON.stringify(missingArrays)),
     [manifest.notes[0].markdownPath]: strToU8('# Hello\n'),
   });
-  assert.throws(() => inspectWorkspaceArchive(missingArraysArchive, 10_000), WorkspaceArchiveError);
+  await assert.rejects(inspectWorkspaceArchive(missingArraysArchive, 10_000), WorkspaceArchiveError);
 
   const duplicated = JSON.parse(JSON.stringify(manifest)) as WorkspaceBackupManifest;
   const attachment = { id: '550e8400-e29b-41d4-a716-446655440002', originalFileName: 'one.txt', mimeType: 'text/plain', sizeBytes: 3, path: 'attachments/hello/one.txt' };
@@ -125,7 +147,7 @@ test('rejects malformed record arrays and duplicate attachment identities across
     'attachments/hello/one.txt': strToU8('one'),
     'attachments/second/two.txt': strToU8('two'),
   });
-  assert.throws(() => inspectWorkspaceArchive(duplicatedArchive, 10_000), WorkspaceArchiveError);
+  await assert.rejects(inspectWorkspaceArchive(duplicatedArchive, 10_000), WorkspaceArchiveError);
 });
 
 test('reports owner and backup identity conflicts without mutating data', () => {

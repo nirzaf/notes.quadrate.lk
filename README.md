@@ -209,7 +209,7 @@ pnpm --filter @qnotes/cli exec node dist/index.js append erpnext-production "Con
 pnpm --filter @qnotes/cli exec node dist/index.js export --workspace --output notes-backup.zip --force
 ```
 
-Workspace backups can be validated first and then explicitly restored through the API. The restore creates new owner-scoped identities, preserves Markdown, tags, notebooks, and private attachments, rejects conflicts instead of overwriting existing data, and can be retried safely with the same archive:
+Workspace backups can be validated first and then explicitly restored through the API. The restore creates new owner-scoped identities, preserves Markdown, tags, notebooks, and private attachments, rejects conflicts instead of overwriting existing data, and can be retried safely with the same archive. Current version-two backups are supported, and the importer also safely normalizes the repository's legacy pre-v2 backup format (which has no notebook relationships); malformed or unsupported manifests are rejected rather than guessed:
 
 ```bash
 curl -fsS -X POST -H "Authorization: Bearer $QNOTES_TOKEN" -H 'Content-Type: application/zip' \

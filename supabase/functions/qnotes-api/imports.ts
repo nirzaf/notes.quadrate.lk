@@ -266,7 +266,7 @@ function summary(inspection: WorkspaceArchiveInspection, archiveBytes: number, c
     ready: conflicts.length === 0,
     message: dryRun ? 'Backup archive is valid and unchanged; no workspace data was written.' : 'Workspace backup restored without overwriting existing data.',
     format: manifest.format,
-    formatVersion: manifest.formatVersion,
+    formatVersion: inspection.sourceFormatVersion,
     backupId: manifest.backupId,
     compressedBytes: archiveBytes,
     declaredUncompressedBytes: inspection.uncompressedBytes,
@@ -290,7 +290,7 @@ export async function inspectWorkspaceImport(context: Context): Promise<Response
   if (context.req.query('dryRun') === 'false' && !confirmed) throw new ApiError(409, 'VALIDATION_ERROR', 'Workspace restore requires explicit confirm=true after a successful dry run.');
   const archive = new Uint8Array(await context.req.arrayBuffer());
   try {
-    const inspection = inspectWorkspaceArchive(archive, workspaceMaxBytes(), attachmentMaxBytes());
+    const inspection = await inspectWorkspaceArchive(archive, workspaceMaxBytes(), attachmentMaxBytes());
     await validateWorkspaceContents(inspection);
     const conflicts = await workspaceConflicts(auth.userId, inspection.manifest);
     if (!confirmed) {
