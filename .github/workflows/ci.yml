@@ -193,7 +193,9 @@ jobs:
   deploy:
     name: deploy production
     needs: [release_gate]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    if: >-
+      ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/master' &&
+      needs.release_gate.result == 'success' }}
     runs-on: [self-hosted, linux, x64, qnotes-ci]
     environment:
       name: production
