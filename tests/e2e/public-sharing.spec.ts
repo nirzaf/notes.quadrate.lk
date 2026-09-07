@@ -8,7 +8,7 @@ function data(body: unknown): Record<string, unknown> {
 
 test('renders a saved note publicly through the fragment without private API requests', async ({ browser }) => {
   const session = await signInSession();
-  const note = await createNoteApi(session.access_token, `Public view ${crypto.randomUUID()}`, '# Public heading\n\nPublic marker 4127.');
+  const note = await createNoteApi(session.access_token, `Public view ${crypto.randomUUID()}`, '# Public heading\n\n## Public subheading\n\n### Public detail\n\nPublic marker 4127.');
   const share = await createPublicShareApi(session.access_token, note.id);
   const context = await browser.newContext();
   const page = await context.newPage();
@@ -19,7 +19,7 @@ test('renders a saved note publicly through the fragment without private API req
 
   const resolved = await resolvePublicShareApi(share.token);
   expect(resolved.response.status).toBe(200);
-  expect(data(resolved.body)).toEqual({ title: note.title, contentMarkdown: '# Public heading\n\nPublic marker 4127.', updatedAt: expect.any(String) });
+  expect(data(resolved.body)).toEqual({ title: note.title, contentMarkdown: '# Public heading\n\n## Public subheading\n\n### Public detail\n\nPublic marker 4127.', updatedAt: expect.any(String) });
   expect(data(resolved.body)).not.toHaveProperty('attachments');
   expect(resolved.response.headers.get('cache-control')).toBe('no-store');
 
@@ -29,6 +29,24 @@ test('renders a saved note publicly through the fragment without private API req
 
   await page.goto(`/share#${share.token}`);
   await expect(page.getByRole('heading', { name: note.title })).toBeVisible();
+  await expect(page.locator('.q-public-share-note .q-preview h3')).toBeVisible();
+  const titleFontSize = await page.locator('.q-public-share-note > header > h1').evaluate((element) => Number.parseFloat(getComputedStyle(element).fontSize));
+  const bodyHeadingSizes = await page.locator('.q-public-share-note .q-preview').evaluate((preview) => {
+    const getHeadingSize = (selector: 'h1' | 'h2' | 'h3'): number => {
+      const heading = preview.querySelector(selector);
+      if (!heading) throw new Error(`Missing Markdown ${selector} heading.`);
+      return Number.parseFloat(getComputedStyle(heading).fontSize);
+    };
+    return {
+      h1: getHeadingSize('h1'),
+      h2: getHeadingSize('h2'),
+      h3: getHeadingSize('h3'),
+    };
+  });
+  expect(titleFontSize).toBeLessThanOrEqual(48);
+  expect(bodyHeadingSizes.h1).toBeLessThan(titleFontSize);
+  expect(bodyHeadingSizes.h1).toBeGreaterThan(bodyHeadingSizes.h2);
+  expect(bodyHeadingSizes.h2).toBeGreaterThan(bodyHeadingSizes.h3);
   await expect(page.locator('.q-public-share-note')).toContainText('Public marker 4127.');
   await expect(page.locator('.q-attachment-panel')).toHaveCount(0);
   expect(functionRequests.every((url) => url.endsWith('/public/share/resolve'))).toBe(true);
