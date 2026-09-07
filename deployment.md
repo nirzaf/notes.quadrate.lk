@@ -20,12 +20,13 @@ Database migrations create application objects in the `notesdb` schema. Do not r
 The repository workflow at `.github/workflows/ci.yml` uses a dedicated
 self-hosted Linux/x64 runner labeled `qnotes-ci`. Pull requests run the core,
 integration, and path-gated search checks. A push to `master` runs the same
-checks and then deploys production through a protected GitHub `production`
-environment. See [`.github/SELF_HOSTED_RUNNER.md`](.github/SELF_HOSTED_RUNNER.md)
-for runner prerequisites, registration, and required secrets.
+checks and then deploys production through the GitHub `production` environment.
+The prototype environment currently has no reviewer gate; add one before using
+this workflow for unattended production releases. See
+[`.github/SELF_HOSTED_RUNNER.md`](.github/SELF_HOSTED_RUNNER.md) for runner
+prerequisites, registration, and required secrets.
 
-Configure the `production` environment with required reviewers before adding
-deployment credentials. Required secrets are `SUPABASE_ACCESS_TOKEN`,
+Required deployment values are `SUPABASE_ACCESS_TOKEN`,
 `SUPABASE_DB_PASSWORD`, `VITE_SUPABASE_PUBLISHABLE_KEY`,
 `CLOUDFLARE_ACCOUNT_ID`, and `CLOUDFLARE_API_TOKEN`. The Cloudflare token only
 needs Pages Edit access. The Supabase database password is used only by the
