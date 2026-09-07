@@ -63,8 +63,9 @@ account controlled read access, or create a runner-owned `600` copy outside the
 checkout and set `QNOTES_CI_ENV_FILE` to that path. Keep the file out of the Git
 working tree and backups shared with other jobs.
 
-The current local file does not contain `SUPABASE_DB_PASSWORD` or
-`CLOUDFLARE_API_TOKEN`, so production deployment will stop until those are
-provided. Wrangler can use the existing `CLOUDFLARE_API_KEY` plus
+Production deployment requires `SUPABASE_DB_PASSWORD`; keep it in the secure
+runner environment file or provide it through the protected production
+environment. The current host file still does not contain
+`CLOUDFLARE_API_TOKEN`. Wrangler can use the existing `CLOUDFLARE_API_KEY` plus
 `CLOUDFLARE_EMAIL` pair as a compatibility fallback, but replace that broad
 global API key with a scoped Cloudflare API token when possible.
