@@ -53,6 +53,8 @@ jobs:
           corepack enable
           corepack install --global "pnpm@${PNPM_VERSION}"
       - run: pnpm install --frozen-lockfile
+      - name: Build workspace for integration tests
+        run: pnpm run build
       - name: Validate Docker runtime prerequisites
         shell: bash
         run: |
