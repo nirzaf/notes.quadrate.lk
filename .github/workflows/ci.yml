@@ -53,6 +53,18 @@ jobs:
           corepack enable
           corepack install --global "pnpm@${PNPM_VERSION}"
       - run: pnpm install --frozen-lockfile
+      - name: Validate Docker runtime prerequisites
+        shell: bash
+        run: |
+          if ! docker info >/dev/null 2>&1; then
+            echo 'Docker daemon is unavailable on this self-hosted runner.'
+            exit 1
+          fi
+          if ! unshare -Ur true >/dev/null 2>&1; then
+            echo 'This self-hosted runner cannot create user namespaces required by local Supabase containers.'
+            echo 'Use a VM or host with CAP_SYS_ADMIN/user namespaces enabled for the qnotes-ci runner.'
+            exit 1
+          fi
       - name: Start the local Supabase stack
         run: pnpm exec supabase start
       - run: pnpm run local:env
@@ -114,6 +126,19 @@ jobs:
           corepack install --global "pnpm@${PNPM_VERSION}"
       - run: pnpm install --frozen-lockfile
         if: steps.scope.outputs.required == 'true'
+      - name: Validate Docker runtime prerequisites
+        if: steps.scope.outputs.required == 'true'
+        shell: bash
+        run: |
+          if ! docker info >/dev/null 2>&1; then
+            echo 'Docker daemon is unavailable on this self-hosted runner.'
+            exit 1
+          fi
+          if ! unshare -Ur true >/dev/null 2>&1; then
+            echo 'This self-hosted runner cannot create user namespaces required by local Supabase containers.'
+            echo 'Use a VM or host with CAP_SYS_ADMIN/user namespaces enabled for the qnotes-ci runner.'
+            exit 1
+          fi
       - name: Start the local Supabase stack
         if: steps.scope.outputs.required == 'true'
         run: pnpm exec supabase start

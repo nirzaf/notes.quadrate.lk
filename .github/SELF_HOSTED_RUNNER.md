@@ -13,6 +13,9 @@ the production Supabase or Cloudflare host. The runner needs:
 
 - Git, curl, Corepack, and outbound HTTPS access.
 - Docker, for the local Supabase integration and search jobs.
+- A Docker-capable kernel with user namespaces enabled (`unshare -Ur true`),
+  or equivalent `CAP_SYS_ADMIN` support. The workflow checks this before
+  pulling Supabase images and fails fast when it is unavailable.
 - Enough disk space for Supabase containers and Playwright Chromium.
 - A runner account able to install Chromium system dependencies, or Chromium
   dependencies preinstalled by the machine image.
