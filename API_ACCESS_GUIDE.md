@@ -732,3 +732,22 @@ All `/api` routes except health require a bearer credential. The public share re
 - `503 SEMANTIC_SEARCH_UNAVAILABLE`: embedding-backed retrieval or its database RPC failed; use `mode=keyword` temporarily or verify the embedding runtime and worker deployment. Query-embedding failures are returned as degraded keyword results instead.
 
 Do not use the Supabase database password, service-role key, publishable key, or an Auth session token as a replacement for a personal `qnt_...` token in a script or MCP adapter. If a personal token is exposed, revoke it immediately from [Integrations](https://notes.quadrate.lk/settings/integrations) and create a replacement.
+
+## Agent Vault API
+
+Agent Vault is intentionally outside the `/api/*` Notes routes. Its routes
+live under `/vault/*` and accept a Supabase user JWT or a scoped `qvt_...`
+agent token. `qnt_...` and `qns_...` credentials are rejected by Vault.
+
+The Vault API supports project/environment metadata, encrypted secret create,
+rotate, delete, metadata-only reads, explicit single or bounded batch reveal,
+and JWT-only agent-token/grant/audit administration. Secret mutations require
+an `expectedVersion` and UUID `mutationId`; the server binds the mutation to a
+domain-separated HMAC of the canonical request, so a mutation ID cannot be
+reused for a different request. Reveal requests require a bounded `purpose`,
+write no plaintext to metadata or audit, and return `Cache-Control: no-store`.
+
+The complete route table, limits, MCP profiles, and data-boundary rules are in
+[VAULT_ACCESS_GUIDE.md](VAULT_ACCESS_GUIDE.md). For the native adapter, set
+`QVAULT_TOKEN` and `QVAULT_MCP_PROFILE` explicitly. `QVAULT_URL` defaults to
+`QNOTES_URL`; do not place either token in browser code or a committed env file.

@@ -3,3 +3,5 @@ export type { CreateNoteOutcome, CreateNoteResult, GetNoteParams, ListNotesParam
 export type { SearchContext, SearchContextSource, SearchContextTokenBudget, SearchRequest, SearchResponse } from '@qnotes/shared';
 export type { AppendNoteInput, CreatePublicShareInput, CreatePublicShareResult, PublicShareMetadata, PublicSharedNote } from '@qnotes/shared';
 export { QNotesHttpError } from './http-error.ts';
+export { QVaultClient, QVaultProtocolError } from './vault-client.ts';
+export type { QNotesClientOptions as QVaultClientOptions } from './client.ts';

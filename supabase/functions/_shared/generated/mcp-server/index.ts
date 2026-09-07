@@ -1,6 +1,6 @@
-import { QNotesClient } from '@qnotes/api-client';
+import { QNotesClient, QVaultClient } from '@qnotes/api-client';
 import { isUUID } from '@qnotes/shared';
-import { runQNotesMcpServer, type McpProfile } from './server.ts';
+import { runQNotesMcpServer, type McpProfile, type VaultMcpProfile } from './server.ts';
 
 function requiredEnvironment(name: string): string {
   const value = process.env[name];
@@ -14,5 +14,11 @@ const token = profile === 'write' ? requiredEnvironment('QNOTES_WRITE_TOKEN') : 
 const configuredDeviceId = process.env.QNOTES_MCP_DEVICE_ID;
 if (configuredDeviceId && !isUUID(configuredDeviceId)) throw new Error('QNOTES_MCP_DEVICE_ID must be a UUID. Keep this value stable across MCP process restarts when retrying writes.');
 const client = new QNotesClient({ baseUrl, getAccessToken: () => token });
-
-await runQNotesMcpServer(client, profile, configuredDeviceId ? { deviceId: configuredDeviceId } : {});
+const vaultToken = process.env.QVAULT_TOKEN;
+const vaultProfile: VaultMcpProfile | undefined = vaultToken
+  ? (process.env.QVAULT_MCP_PROFILE === 'write' ? 'write' : process.env.QVAULT_MCP_PROFILE === 'reveal' ? 'reveal' : 'metadata')
+  : undefined;
+const vaultClient = vaultToken
+  ? new QVaultClient({ baseUrl: process.env.QVAULT_URL?.trim() || baseUrl, getAccessToken: () => vaultToken })
+  : undefined;
+await runQNotesMcpServer(client, profile, { ...(configuredDeviceId ? { deviceId: configuredDeviceId } : {}), ...(vaultClient && vaultProfile ? { vaultClient, vaultProfile } : {}) });

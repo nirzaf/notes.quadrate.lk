@@ -8,6 +8,7 @@ import { TokensPage } from './pages/tokens-page';
 import { TrashPage } from './pages/trash-page';
 import { OAuthAuthorizePage } from './pages/oauth-authorize-page';
 import { PublicSharePage } from './pages/public-share-page';
+import { VaultPage } from './pages/vault-page';
 import { currentAppPath, safeInternalPath, validateAppSearch } from './navigation-context';
 
 function RecoveryState({ title, message, onRetry }: { title: string; message: string; onRetry?: () => void }): JSX.Element {
@@ -61,7 +62,10 @@ export const noteRoute = createRoute({ getParentRoute: () => rootRoute, path: '/
 export const integrationsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/settings/integrations', component: TokensPage });
 export const tokensRoute = createRoute({ getParentRoute: () => rootRoute, path: '/settings/tokens', component: TokensPage });
 export const trashRoute = createRoute({ getParentRoute: () => rootRoute, path: '/trash', component: TrashPage });
-export const routeTree = rootRoute.addChildren([loginRoute, oauthAuthorizeRoute, publicShareRoute, homeRoute, searchRoute, noteRoute, integrationsRoute, tokensRoute, trashRoute]);
+export const vaultRoute = createRoute({ getParentRoute: () => rootRoute, path: '/vault', component: VaultPage });
+export const vaultAgentsRoute = createRoute({ getParentRoute: () => rootRoute, path: '/vault/agents', component: VaultPage });
+export const vaultAuditRoute = createRoute({ getParentRoute: () => rootRoute, path: '/vault/audit', component: VaultPage });
+export const routeTree = rootRoute.addChildren([loginRoute, oauthAuthorizeRoute, publicShareRoute, homeRoute, searchRoute, noteRoute, integrationsRoute, tokensRoute, trashRoute, vaultRoute, vaultAgentsRoute, vaultAuditRoute]);
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });
 
 declare module '@tanstack/react-router' {

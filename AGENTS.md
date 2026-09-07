@@ -27,3 +27,11 @@ Use short imperative Conventional Commit-style subjects such as `feat: ...`, `fi
 ## Security and Configuration
 
 Never commit tokens, service-role keys, production Vite values, or ignored `.env` files. Local E2E setup is restricted to loopback Supabase and dedicated test users. Do not run database resets against production; follow `deployment.md` for linked migrations and releases. Run the full-history scan in `SECURITY.md` before visibility changes. Workspace backup imports require a dry run followed by explicit `confirm=true`, reject conflicts without overwriting existing data, use stable retry identities, and keep attachments private.
+
+Agent Vault is a separate `/vault/*` plane. Keep qnt/qns/Notes behavior and the
+hosted HTTP MCP surface unchanged. Vault plaintext must never enter Notes
+search, embeddings, logs, browser persistence, public shares, or workspace
+backups. Use only service-only Vault RPCs for encrypted values; keep
+`QNOTES_VAULT_TOKEN_PEPPER` server-side; require qvt grant checks, reveal audit
+before return, bounded batch limits, expected versions, and replay-safe
+mutation IDs. Do not add Vault credentials to fixtures, snapshots, or docs.

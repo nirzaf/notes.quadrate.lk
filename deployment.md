@@ -212,3 +212,14 @@ Use the Cloudflare Pages deployment list to roll back to the last known-good pro
 - **Workers return 401 or cron jobs do nothing:** the Edge Function `QNOTES_INTERNAL_WORKER_SECRET` and Vault `qnotes_internal_worker_secret` values must match exactly.
 - **Migration history differs:** inspect the linked migration history and repository migrations before using any include-all option; do not force a reset.
 - **Wrong Pages target:** run `pages project list` and verify `notes-quadrate-lk` before uploading.
+
+## Agent Vault release notes
+
+The additive migration `20260907000200_agent_vault.sql` adds the isolated
+Agent Vault plane, Supabase Vault-backed service-only RPCs, qvt grants, audit,
+and replay receipts. Before any non-local rollout, provision the server-only
+`QNOTES_VAULT_TOKEN_PEPPER` in the Edge Function environment and review the
+Vault-specific access guide. Do not put it in `VITE_*`, browser storage, GitHub
+secrets, or a production deployment as part of local development. This feature
+must not change qnt/qns Notes or hosted-MCP behavior, and the migration must be
+reviewed and applied separately from frontend deployment.

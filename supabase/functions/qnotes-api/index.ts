@@ -17,9 +17,13 @@ import { exportNote, exportWorkspace, workspaceMaxBytes } from './exports.ts';
 import { inspectWorkspaceImport } from './imports.ts';
 import { listNotebooks, createNotebook } from './notebooks.ts';
 import { createPublicShare, getPublicShare, resolvePublicShare, revokePublicShare } from './shares.ts';
+import { authenticateVaultRequest, type VaultAuthContext } from '../_shared/vault-auth.ts';
+import { createVaultAgentToken, createVaultEnvironment, createVaultProject, createVaultSecret, createVaultSecretBySelector, deleteVaultSecret, getVaultSecret, listVaultAgentTokens, listVaultAudit, listVaultEnvironments, listVaultProjects, listVaultSecrets, listVaultSecretsBySelector, replaceVaultAgentGrants, revealVaultSecret, revealVaultSecrets, revokeVaultAgentToken, rotateVaultSecret } from './vault.ts';
+import { MAX_VAULT_SECRET_BYTES } from '@qnotes/shared';
 
 interface Variables {
   auth: AuthContext;
+  vaultAuth: VaultAuthContext;
   requestId: string;
 }
 
@@ -39,7 +43,8 @@ app.use('*', async (context, next) => {
     await next();
   } finally {
     const auth = context.get('auth');
-    console.info(JSON.stringify({ requestId, method: context.req.method, route: requestRoute(context), status: context.res.status, authKind: auth?.authKind ?? 'none', duration: Math.round(performance.now() - started) }));
+    const vaultAuth = context.get('vaultAuth');
+    console.info(JSON.stringify({ requestId, method: context.req.method, route: requestRoute(context), status: context.res.status, authKind: auth?.authKind ?? vaultAuth?.authKind ?? 'none', duration: Math.round(performance.now() - started) }));
   }
   context.res.headers.set('x-request-id', requestId);
   return context.res;
@@ -51,6 +56,17 @@ app.use('/api/*', async (context, next) => {
   context.set('auth', auth);
   return next();
 });
+
+app.use('/vault/*', async (context, next) => {
+  const auth = await authenticateVaultRequest(context.req.raw);
+  context.set('vaultAuth', auth);
+  return next();
+});
+
+app.use('/vault/*', bodyLimit({
+  maxSize: MAX_VAULT_SECRET_BYTES + 16_384,
+  onError: (context) => context.json(errorBody(new ApiError(413, 'VAULT_SECRET_TOO_LARGE', 'The Vault request is too large.'), context.get('requestId') ?? crypto.randomUUID()), 413),
+}));
 
 app.use('/public/share/resolve', async (context, next) => {
   context.header('Cache-Control', 'no-store');
@@ -74,6 +90,12 @@ app.onError((error, context) => {
     response.headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive, nosnippet');
     response.headers.set('Referrer-Policy', 'no-referrer');
     response.headers.set('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
+  }
+  if (context.req.path.startsWith('/vault/secrets/reveal') || context.req.path === '/vault/agent-tokens') {
+    response.headers.set('Cache-Control', 'no-store');
+    response.headers.set('Pragma', 'no-cache');
+    response.headers.set('X-Content-Type-Options', 'nosniff');
+    response.headers.set('Referrer-Policy', 'no-referrer');
   }
   return response;
 });
@@ -123,6 +145,25 @@ app.post('/api/import/workspace', bodyLimit({
   maxSize: workspaceMaxBytes(),
   onError: (context) => context.json(errorBody(new ApiError(413, 'EXPORT_TOO_LARGE', 'The backup archive exceeds the configured size limit.'), context.get('requestId') ?? crypto.randomUUID()), 413),
 }), inspectWorkspaceImport);
+
+app.get('/vault/projects', listVaultProjects);
+app.post('/vault/projects', createVaultProject);
+app.get('/vault/projects/:projectRef/environments', listVaultEnvironments);
+app.post('/vault/projects/:projectRef/environments', createVaultEnvironment);
+app.get('/vault/environments/:environmentId/secrets', listVaultSecrets);
+app.post('/vault/environments/:environmentId/secrets', createVaultSecret);
+app.get('/vault/projects/:projectRef/environments/:environmentRef/secrets', listVaultSecretsBySelector);
+app.post('/vault/projects/:projectRef/environments/:environmentRef/secrets', createVaultSecretBySelector);
+app.get('/vault/secrets/:secretId', getVaultSecret);
+app.patch('/vault/secrets/:secretId', rotateVaultSecret);
+app.delete('/vault/secrets/:secretId', deleteVaultSecret);
+app.post('/vault/secrets/reveal', revealVaultSecret);
+app.post('/vault/secrets/reveal-batch', revealVaultSecrets);
+app.get('/vault/agent-tokens', listVaultAgentTokens);
+app.post('/vault/agent-tokens', createVaultAgentToken);
+app.delete('/vault/agent-tokens/:tokenId', revokeVaultAgentToken);
+app.patch('/vault/agent-tokens/:tokenId/grants', replaceVaultAgentGrants);
+app.get('/vault/audit', listVaultAudit);
 
 app.notFound((context) => context.json(errorBody(new ApiError(404, 'NOTE_NOT_FOUND', 'The requested resource was not found.'), context.get('requestId') ?? crypto.randomUUID()), 404));
 
