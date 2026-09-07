@@ -68,6 +68,41 @@ async function signIn(env) {
   return body.access_token;
 }
 
+async function adminRequest(env, path, init = {}) {
+  if (!env.serviceRoleKey) throw new Error('Seeded search regression checks require serviceRoleKey in .tmp/local-env.json.');
+  const headers = new Headers(init.headers);
+  headers.set('apikey', env.serviceRoleKey);
+  headers.set('Authorization', `Bearer ${env.serviceRoleKey}`);
+  headers.set('Content-Type', 'application/json');
+  const response = await fetch(`${env.supabaseUrl}${path}`, { ...init, headers });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(`Local Supabase admin request failed with HTTP ${response.status}.`);
+  return body;
+}
+
+async function ensureSeedUser(env) {
+  const email = 'hermes-evaluation@qnotes.local';
+  const password = 'Qnotes-Evaluation-2026!';
+  const listing = await adminRequest(env, '/auth/v1/admin/users?page=1&per_page=100');
+  let user = listing.users?.find((candidate) => candidate.email === email);
+  if (!user) {
+    user = await adminRequest(env, '/auth/v1/admin/users', {
+      method: 'POST',
+      body: JSON.stringify({ email, password, email_confirm: true }),
+    });
+  }
+  try {
+    return await signIn({ ...env, token: undefined });
+  } catch (error) {
+    if (!user?.id) throw error;
+    await adminRequest(env, `/auth/v1/admin/users/${user.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ password, email_confirm: true }),
+    });
+    return signIn({ ...env, token: undefined });
+  }
+}
+
 async function request(env, token, path, init = {}) {
   const started = performance.now();
   const headers = new Headers(init.headers);
@@ -143,7 +178,7 @@ async function main() {
   }
 
   const env = await localEnvironment();
-  const token = await signIn(env);
+  const token = shouldSeed ? await ensureSeedUser(env) : await signIn(env);
   const stable = await runStableEvaluator(env, token);
   const corpusBySlug = new Map(fixture.corpus.map((item) => [item.slug, item]));
   const notebookResponse = bodyData((await request(env, token, '/notebooks')).body, 'Notebook listing');
