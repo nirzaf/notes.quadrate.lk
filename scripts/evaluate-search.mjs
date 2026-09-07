@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { calculateMetrics } from './search-evaluation-metrics.mjs';
+import { createClient } from '@supabase/supabase-js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const argument = (name) => {
@@ -113,9 +114,13 @@ async function seedAttachment(env, token, note, spec) {
   if (existing) return existing;
   const bytes = await readFile(resolve(root, spec.fixturePath));
   const requested = bodyData(await request(env, '/attachments/upload-url', token, { method: 'POST', body: JSON.stringify({ noteId: note.id, fileName: spec.fileName, mimeType: spec.mimeType, sizeBytes: bytes.byteLength }) }));
-  const uploadUrl = `${env.supabaseUrl.replace(/\/$/, '')}/storage/v1/object/upload/sign/${requested.path}?token=${encodeURIComponent(requested.token)}`;
-  const upload = await fetch(uploadUrl, { method: 'PUT', headers: { apikey: env.serviceRoleKey, Authorization: `Bearer ${env.serviceRoleKey}`, 'Content-Type': spec.mimeType }, body: bytes });
-  if (!upload.ok) throw new Error(`Attachment upload failed with HTTP ${upload.status}: ${await upload.text()}`);
+  const storage = createClient(env.supabaseUrl, env.publishableKey, { auth: { autoRefreshToken: false, persistSession: false } });
+  const upload = await storage.storage.from('note-attachments').uploadToSignedUrl(
+    requested.path,
+    requested.token,
+    new Blob([bytes], { type: spec.mimeType }),
+  );
+  if (upload.error) throw new Error(`Attachment upload failed: ${upload.error.message}`);
   return bodyData(await request(env, `/attachments/${requested.attachment.id}/finalize`, token, { method: 'POST' }));
 }
 
