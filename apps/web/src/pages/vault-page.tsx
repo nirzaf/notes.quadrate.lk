@@ -37,6 +37,33 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
+function grantScope(grant: VaultAgentGrant): GrantScope {
+  if (grant.secretId) return 'secret';
+  if (grant.environmentId) return 'environment';
+  return 'project';
+}
+
+function grantActionLabel(action: VaultAgentGrant['action']): string {
+  return { 'metadata:read': 'Metadata read', 'secret:reveal': 'Secret reveal', 'secret:write': 'Secret write', 'secret:delete': 'Secret delete' }[action];
+}
+
+function grantScopeLabel(grant: VaultAgentGrant, projects: AgentsPanelProps['projects'], environments: AgentsPanelProps['environments'], secrets: VaultSecretMetadata[]): string {
+  const project = projects.find((item) => item.id === grant.projectId);
+  const environment = environments.find((item) => item.id === grant.environmentId);
+  const secret = secrets.find((item) => item.id === grant.secretId);
+  if (grantScope(grant) === 'secret') return `Secret · ${secret?.name ?? grant.secretId}`;
+  if (grantScope(grant) === 'environment') return `Environment · ${environment?.name ?? grant.environmentId}`;
+  return `Project · ${project?.name ?? grant.projectId}`;
+}
+
+function grantTargetLabel(grant: VaultAgentGrant, projects: AgentsPanelProps['projects'], environments: AgentsPanelProps['environments']): string {
+  const project = projects.find((item) => item.id === grant.projectId);
+  const environment = environments.find((item) => item.id === grant.environmentId);
+  return grantScope(grant) === 'secret'
+    ? `${project?.name ?? grant.projectId} / ${environment?.name ?? grant.environmentId}`
+    : grantScope(grant) === 'environment' ? `Project: ${project?.name ?? grant.projectId}` : 'All environments and secrets in this project';
+}
+
 export function VaultPage(): JSX.Element {
   const { session } = useAuth();
   const { toast } = useToast();
@@ -71,6 +98,9 @@ export function VaultPage(): JSX.Element {
   const [tokenSecretId, setTokenSecretId] = useState<string | null>(null);
   const [tokenAction, setTokenAction] = useState<VaultAgentGrant['action']>('metadata:read');
   const [tokenExpiry, setTokenExpiry] = useState<TokenExpiry>('never');
+  const [draftGrants, setDraftGrants] = useState<VaultAgentGrant[]>([]);
+  const [editingTokenId, setEditingTokenId] = useState<string | null>(null);
+  const [editingGrants, setEditingGrants] = useState<VaultAgentGrant[]>([]);
   const [issuedToken, setIssuedToken] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -166,22 +196,57 @@ export function VaultPage(): JSX.Element {
 
   const createAgentToken = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!selectedProject) return;
-    const grant: VaultAgentGrant = { projectId: selectedProject.id, environmentId: tokenScope === 'project' ? null : selectedEnvironment?.id ?? null, secretId: tokenScope === 'secret' ? tokenSecretId : null, action: tokenAction };
-    if (tokenScope !== 'project' && !grant.environmentId) { toast('Select an environment before creating this scoped grant.', 'error'); return; }
-    if (tokenScope === 'secret' && !grant.secretId) { toast('Select a secret before creating a secret-scoped grant.', 'error'); return; }
+    if (!draftGrants.length) { toast('Add at least one grant before creating a Vault agent token.', 'error'); return; }
     setBusy(true);
     try {
-      const result = await vaultApi.createAgentToken({ name: tokenName, expiresAt: tokenExpiresAt(tokenExpiry), grants: [grant] });
-      setTokenName(''); setIssuedToken(result.token); await tokensQuery.refetch(); toast('Vault agent token created. Copy it now; it is shown only once.', 'success');
+      const result = await vaultApi.createAgentToken({ name: tokenName, expiresAt: tokenExpiresAt(tokenExpiry), grants: draftGrants });
+      setTokenName(''); setDraftGrants([]); setIssuedToken(result.token); await tokensQuery.refetch(); toast('Vault agent token created. Copy it now; it is shown only once.', 'success');
     } catch (error: unknown) { toast(errorMessage(error, 'Unable to create Vault agent token.'), 'error'); }
+    finally { setBusy(false); }
+  };
+
+  const buildSelectedGrant = (): VaultAgentGrant | null => {
+    if (!selectedProject) { toast('Select a project before adding a grant.', 'error'); return null; }
+    const grant: VaultAgentGrant = { projectId: selectedProject.id, environmentId: tokenScope === 'project' ? null : selectedEnvironment?.id ?? null, secretId: tokenScope === 'secret' ? tokenSecretId : null, action: tokenAction };
+    if (tokenScope !== 'project' && !grant.environmentId) { toast('Select an environment before adding this scoped grant.', 'error'); return null; }
+    if (tokenScope === 'secret' && !grant.secretId) { toast('Select a secret before adding a secret-scoped grant.', 'error'); return null; }
+    return grant;
+  };
+
+  const addGrant = (target: 'draft' | 'editing') => {
+    const grant = buildSelectedGrant();
+    if (!grant) return;
+    const current = target === 'draft' ? draftGrants : editingGrants;
+    if (current.some((item) => item.projectId === grant.projectId && item.environmentId === grant.environmentId && item.secretId === grant.secretId && item.action === grant.action)) {
+      toast('That grant is already in the set.', 'error');
+      return;
+    }
+    if (target === 'draft') setDraftGrants((items) => [...items, grant]);
+    else setEditingGrants((items) => [...items, grant]);
+  };
+
+  const beginEditingToken = (token: Awaited<ReturnType<typeof vaultApi.listAgentTokens>>[number]) => {
+    setEditingTokenId(token.id);
+    setEditingGrants(token.grants);
+  };
+
+  const replaceAgentGrants = async () => {
+    if (!editingTokenId) return;
+    setBusy(true);
+    try {
+      await vaultApi.replaceAgentGrants(editingTokenId, editingGrants);
+      await tokensQuery.refetch();
+      setEditingTokenId(null);
+      setEditingGrants([]);
+      toast('Vault agent grants replaced.', 'success');
+    } catch (error: unknown) { toast(errorMessage(error, 'Unable to replace Vault agent grants.'), 'error'); }
     finally { setBusy(false); }
   };
 
   const copyIssuedToken = async () => { if (issuedToken) { await navigator.clipboard?.writeText(issuedToken); toast('Token copied. It will not be read back by Quadrate.', 'success'); } };
   const copyRevealedSecret = async () => { if (revealedSecret) { await navigator.clipboard?.writeText(revealedSecret.value); toast('Secret copied. Quadrate does not read the clipboard.', 'success'); } };
 
-  const content = section === 'agents' ? <AgentsPanel projects={projectsQuery.data ?? []} selectedProject={selectedProject} onProjectSelect={(id) => setProjectId(id)} environments={environmentsQuery.data ?? []} selectedEnvironment={selectedEnvironment} onEnvironmentSelect={(id) => setEnvironmentId(id)} secrets={secretsQuery.data ?? []} tokenSecretId={tokenSecretId} setTokenSecretId={setTokenSecretId} tokenName={tokenName} setTokenName={setTokenName} tokenScope={tokenScope} setTokenScope={setTokenScope} tokenAction={tokenAction} setTokenAction={setTokenAction} tokenExpiry={tokenExpiry} setTokenExpiry={setTokenExpiry} onSubmit={createAgentToken} busy={busy} tokens={tokensQuery.data ?? []} issuedToken={issuedToken} closeIssuedToken={() => setIssuedToken(null)} copyIssuedToken={() => void copyIssuedToken()} onRevoke={async (id) => { await vaultApi.revokeAgentToken(id); await tokensQuery.refetch(); toast('Vault agent token revoked.', 'success'); }} />
+  const content = section === 'agents' ? <AgentsPanel projects={projectsQuery.data ?? []} selectedProject={selectedProject} onProjectSelect={(id) => setProjectId(id)} environments={environmentsQuery.data ?? []} selectedEnvironment={selectedEnvironment} onEnvironmentSelect={(id) => setEnvironmentId(id)} secrets={secretsQuery.data ?? []} tokenSecretId={tokenSecretId} setTokenSecretId={setTokenSecretId} tokenName={tokenName} setTokenName={setTokenName} tokenScope={tokenScope} setTokenScope={setTokenScope} tokenAction={tokenAction} setTokenAction={setTokenAction} tokenExpiry={tokenExpiry} setTokenExpiry={setTokenExpiry} draftGrants={draftGrants} editingTokenId={editingTokenId} editingGrants={editingGrants} onAddGrant={addGrant} onRemoveDraftGrant={(index) => setDraftGrants((items) => items.filter((_, itemIndex) => itemIndex !== index))} onRemoveEditingGrant={(index) => setEditingGrants((items) => items.filter((_, itemIndex) => itemIndex !== index))} onSubmit={createAgentToken} onBeginEdit={beginEditingToken} onCancelEdit={() => { setEditingTokenId(null); setEditingGrants([]); }} onReplace={replaceAgentGrants} busy={busy} tokens={tokensQuery.data ?? []} issuedToken={issuedToken} closeIssuedToken={() => setIssuedToken(null)} copyIssuedToken={() => void copyIssuedToken()} onRevoke={async (id) => { await vaultApi.revokeAgentToken(id); await tokensQuery.refetch(); toast('Vault agent token revoked.', 'success'); }} />
     : section === 'audit' ? <AuditPanel events={auditQuery.data ?? []} />
       : <VaultWorkspace projects={projectsQuery.data ?? []} selectedProject={selectedProject} onProjectSelect={(id) => setProjectId(id)} projectName={projectName} setProjectName={setProjectName} projectSlug={projectSlug} setProjectSlug={setProjectSlug} projectDescription={projectDescription} setProjectDescription={setProjectDescription} onCreateProject={createProject} environments={environmentsQuery.data ?? []} selectedEnvironment={selectedEnvironment} onEnvironmentSelect={(id) => setEnvironmentId(id)} environmentName={environmentName} setEnvironmentName={setEnvironmentName} environmentSlug={environmentSlug} setEnvironmentSlug={setEnvironmentSlug} onCreateEnvironment={createEnvironment} secrets={secretsQuery.data ?? []} secretName={secretName} setSecretName={setSecretName} secretValue={secretValue} setSecretValue={setSecretValue} secretDescription={secretDescription} setSecretDescription={setSecretDescription} changeSecretId={changeSecretId} setChangeSecretId={setChangeSecretId} onSaveSecret={saveSecret} onReveal={reveal} revealedSecret={revealedSecret} onHide={() => setRevealedSecret(null)} onCopy={copyRevealedSecret} onDelete={removeSecret} busy={busy} />;
 
@@ -210,7 +275,16 @@ type AgentsPanelProps = {
   setTokenAction: (value: VaultAgentGrant['action']) => void;
   tokenExpiry: TokenExpiry;
   setTokenExpiry: (value: TokenExpiry) => void;
+  draftGrants: VaultAgentGrant[];
+  editingTokenId: string | null;
+  editingGrants: VaultAgentGrant[];
+  onAddGrant: (target: 'draft' | 'editing') => void;
+  onRemoveDraftGrant: (index: number) => void;
+  onRemoveEditingGrant: (index: number) => void;
   onSubmit: (event: React.FormEvent<HTMLFormElement>) => void;
+  onBeginEdit: (token: Awaited<ReturnType<typeof vaultApi.listAgentTokens>>[number]) => void;
+  onCancelEdit: () => void;
+  onReplace: () => Promise<void>;
   busy: boolean;
   tokens: Awaited<ReturnType<typeof vaultApi.listAgentTokens>>;
   issuedToken: string | null;
@@ -219,8 +293,44 @@ type AgentsPanelProps = {
   onRevoke: (id: string) => Promise<void>;
 };
 
+function GrantList(props: { grants: VaultAgentGrant[]; projects: AgentsPanelProps['projects']; environments: AgentsPanelProps['environments']; secrets: VaultSecretMetadata[]; onRemove?: (index: number) => void; label: string }): JSX.Element {
+  return <ul className="q-vault-grant-list" aria-label={props.label}>{props.grants.map((grant, index) => <li className="q-vault-grant" key={grant.id ?? `${grant.projectId}-${grant.environmentId ?? 'project'}-${grant.secretId ?? 'all'}-${grant.action}-${index}`}><div><strong>{grantScopeLabel(grant, props.projects, props.environments, props.secrets)}</strong><small>{grantTargetLabel(grant, props.projects, props.environments)} · {grantActionLabel(grant.action)}</small></div>{props.onRemove ? <Button type="button" size="sm" variant="ghost" onClick={() => props.onRemove?.(index)}>Remove</Button> : null}</li>)}</ul>;
+}
+
 function AgentsPanel(props: AgentsPanelProps) {
-  return <div className="q-vault-stack"><section className="q-card q-card-pad"><div className="q-section-heading"><div className="q-section-heading-main"><h2>Agent credentials</h2></div></div><p className="q-field-help">qvt_ tokens are separate from qnt_ Notes tokens. A raw token is shown once and never stored in browser persistence.</p>{props.issuedToken ? <div className="q-vault-issued" role="status"><strong>Copy this token now</strong><code>{props.issuedToken}</code><div className="q-dialog-actions"><Button type="button" onClick={props.copyIssuedToken}>Copy token</Button><Button type="button" variant="ghost" onClick={props.closeIssuedToken}>Close</Button></div></div> : null}<form className="q-vault-form" onSubmit={props.onSubmit}><label className="q-field"><span className="q-label">Token name</span><input className="q-input" required maxLength={80} value={props.tokenName} onChange={(event) => props.setTokenName(event.target.value)} placeholder="Hermes deployer" /></label><label className="q-field"><span className="q-label">Project</span><select className="q-input" required value={props.selectedProject?.id ?? ''} onChange={(event) => props.onProjectSelect(event.target.value)} disabled={!props.projects.length}><option value="">Select a project</option>{props.projects.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}</select></label><label className="q-field"><span className="q-label">Grant scope</span><select className="q-input" value={props.tokenScope} onChange={(event) => props.setTokenScope(event.target.value as GrantScope)}><option value="project">Selected project</option><option value="environment">Selected environment</option><option value="secret">Selected secret</option></select></label>{props.tokenScope !== 'project' ? <label className="q-field"><span className="q-label">Environment</span><select className="q-input" required value={props.selectedEnvironment?.id ?? ''} onChange={(event) => props.onEnvironmentSelect(event.target.value)} disabled={!props.environments.length}><option value="">Select an environment</option>{props.environments.map((environment) => <option value={environment.id} key={environment.id}>{environment.name}</option>)}</select></label> : null}{props.tokenScope === 'secret' ? <label className="q-field"><span className="q-label">Secret</span><select className="q-input" required value={props.tokenSecretId ?? ''} onChange={(event) => props.setTokenSecretId(event.target.value || null)} disabled={!props.secrets.length}><option value="">Select a secret</option>{props.secrets.map((secret) => <option value={secret.id} key={secret.id}>{secret.name}</option>)}</select></label> : null}<label className="q-field"><span className="q-label">Action</span><select className="q-input" value={props.tokenAction} onChange={(event) => props.setTokenAction(event.target.value as VaultAgentGrant['action'])}><option value="metadata:read">Metadata read</option><option value="secret:reveal">Secret reveal</option><option value="secret:write">Secret write</option><option value="secret:delete">Secret delete</option></select></label><label className="q-field"><span className="q-label">Token expiry</span><select className="q-input" value={props.tokenExpiry} onChange={(event) => props.setTokenExpiry(event.target.value as TokenExpiry)}>{tokenExpiryOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}</select></label><Button type="submit" disabled={props.busy || !props.projects.length}>Create qvt token</Button></form></section><section className="q-card q-card-pad"><div className="q-section-heading"><div className="q-section-heading-main"><h2>Issued tokens</h2><span className="q-count-badge">{props.tokens.length}</span></div></div>{props.tokens.length ? <div className="q-vault-token-list">{props.tokens.map((token) => <div className="q-vault-token" key={token.id}><div><strong>{token.name}</strong><small><code>{token.tokenPrefix}</code> · {token.revokedAt ? 'revoked' : 'active'} · last used {token.lastUsedAt ? new Date(token.lastUsedAt).toLocaleString() : 'never'}</small></div>{!token.revokedAt ? <Button type="button" size="sm" variant="danger" onClick={() => void props.onRevoke(token.id)}>Revoke</Button> : null}</div>)}</div> : <p className="q-empty">No qvt agent tokens yet.</p>}</section></div>;
+  return <div className="q-vault-stack">
+    <section className="q-card q-card-pad">
+      <div className="q-section-heading"><div className="q-section-heading-main"><h2>Agent credentials</h2></div></div>
+      <p className="q-field-help">qvt_ tokens are separate from qnt_ Notes tokens. A raw token is shown once and never stored in browser persistence.</p>
+      {props.issuedToken ? <div className="q-vault-issued" role="status"><strong>Copy this token now</strong><code>{props.issuedToken}</code><div className="q-dialog-actions"><Button type="button" onClick={props.copyIssuedToken}>Copy token</Button><Button type="button" variant="ghost" onClick={props.closeIssuedToken}>Close</Button></div></div> : null}
+      <form className="q-vault-form" onSubmit={props.onSubmit}>
+        <h3>New token</h3>
+        <label className="q-field"><span className="q-label">Token name</span><input className="q-input" required maxLength={80} value={props.tokenName} onChange={(event) => props.setTokenName(event.target.value)} placeholder="Hermes deployer" /></label>
+        <label className="q-field"><span className="q-label">Project</span><select className="q-input" required value={props.selectedProject?.id ?? ''} onChange={(event) => props.onProjectSelect(event.target.value)} disabled={!props.projects.length}><option value="">Select a project</option>{props.projects.map((project) => <option value={project.id} key={project.id}>{project.name}</option>)}</select></label>
+        <label className="q-field"><span className="q-label">Grant scope</span><select className="q-input" value={props.tokenScope} onChange={(event) => props.setTokenScope(event.target.value as GrantScope)}><option value="project">Selected project</option><option value="environment">Selected environment</option><option value="secret">Selected secret</option></select></label>
+        {props.tokenScope !== 'project' ? <label className="q-field"><span className="q-label">Environment</span><select className="q-input" required value={props.selectedEnvironment?.id ?? ''} onChange={(event) => props.onEnvironmentSelect(event.target.value)} disabled={!props.environments.length}><option value="">Select an environment</option>{props.environments.map((environment) => <option value={environment.id} key={environment.id}>{environment.name}</option>)}</select></label> : null}
+        {props.tokenScope === 'secret' ? <label className="q-field"><span className="q-label">Secret</span><select className="q-input" required value={props.tokenSecretId ?? ''} onChange={(event) => props.setTokenSecretId(event.target.value || null)} disabled={!props.secrets.length}><option value="">Select a secret</option>{props.secrets.map((secret) => <option value={secret.id} key={secret.id}>{secret.name}</option>)}</select></label> : null}
+        <label className="q-field"><span className="q-label">Action</span><select className="q-input" value={props.tokenAction} onChange={(event) => props.setTokenAction(event.target.value as VaultAgentGrant['action'])}><option value="metadata:read">Metadata read</option><option value="secret:reveal">Secret reveal</option><option value="secret:write">Secret write</option><option value="secret:delete">Secret delete</option></select></label>
+        <Button type="button" variant="outline" onClick={() => props.onAddGrant('draft')} disabled={props.busy || !props.projects.length}>Add grant</Button>
+        <section className="q-vault-grants" aria-labelledby="new-token-grants-heading"><div className="q-section-heading"><div className="q-section-heading-main"><h3 id="new-token-grants-heading">New token grants</h3><span className="q-count-badge">{props.draftGrants.length}</span></div></div>{props.draftGrants.length ? <GrantList grants={props.draftGrants} projects={props.projects} environments={props.environments} secrets={props.secrets} onRemove={props.onRemoveDraftGrant} label="New token grants" /> : <p className="q-empty">No grants added yet. Add at least one project, environment, or secret grant before creating the token.</p>}</section>
+        <label className="q-field"><span className="q-label">Token expiry</span><select className="q-input" value={props.tokenExpiry} onChange={(event) => props.setTokenExpiry(event.target.value as TokenExpiry)}>{tokenExpiryOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}</select></label>
+        <Button type="submit" disabled={props.busy || !props.projects.length || !props.draftGrants.length}>Create qvt token</Button>
+      </form>
+    </section>
+    <section className="q-card q-card-pad">
+      <div className="q-section-heading"><div className="q-section-heading-main"><h2>Issued tokens</h2><span className="q-count-badge">{props.tokens.length}</span></div></div>
+      {props.tokens.length ? <div className="q-vault-token-list">{props.tokens.map((token) => {
+        const grants = token.grants ?? [];
+        const editing = props.editingTokenId === token.id;
+        return <article className="q-vault-token" key={token.id}>
+          <div className="q-vault-token-main"><strong>{token.name}</strong><small><code>{token.tokenPrefix}</code> · {token.revokedAt ? 'revoked' : 'active'} · last used {token.lastUsedAt ? new Date(token.lastUsedAt).toLocaleString() : 'never'}</small>
+            {!editing ? <div className="q-vault-token-grants"><strong>Effective grants ({grants.length})</strong>{grants.length ? <GrantList grants={grants} projects={props.projects} environments={props.environments} secrets={props.secrets} label={`${token.name} effective grants`} /> : <small>No grants. This token cannot access Vault resources.</small>}</div> : <div className="q-vault-token-grants"><strong>Edit grant set ({props.editingGrants.length})</strong>{props.editingGrants.length ? <GrantList grants={props.editingGrants} projects={props.projects} environments={props.environments} secrets={props.secrets} onRemove={props.onRemoveEditingGrant} label={`${token.name} editable grants`} /> : <small>No grants. Saving removes every grant and leaves the token unable to access Vault resources.</small>}<div className="q-vault-actions"><Button type="button" size="sm" variant="outline" onClick={() => props.onAddGrant('editing')} disabled={props.busy}>Add selected grant</Button><Button type="button" size="sm" onClick={() => void props.onReplace()} disabled={props.busy}>Replace grant set</Button><Button type="button" size="sm" variant="ghost" onClick={props.onCancelEdit} disabled={props.busy}>Cancel</Button></div></div>}
+          </div>
+          {!editing ? <div className="q-vault-actions"><Button type="button" size="sm" variant="outline" onClick={() => props.onBeginEdit(token)}>Edit grants</Button>{!token.revokedAt ? <Button type="button" size="sm" variant="danger" onClick={() => void props.onRevoke(token.id)} disabled={props.busy}>Revoke</Button> : null}</div> : null}
+        </article>;
+      })}</div> : <p className="q-empty">No qvt agent tokens yet.</p>}
+    </section>
+  </div>;
 }
 
 function AuditPanel({ events }: { events: Awaited<ReturnType<typeof vaultApi.listAudit>> }): JSX.Element {

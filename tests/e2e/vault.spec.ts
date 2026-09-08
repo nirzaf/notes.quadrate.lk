@@ -1,5 +1,5 @@
 import { test, expect } from './test-fixtures';
-import { apiJson, signInSession } from './helpers';
+import { apiJson, signInPage, signInSession } from './helpers';
 
 const FAKE_SECRET = 'local-e2e-vault-value';
 const SECRET_NAME = 'CLOUDFLARE_API_TOKEN';
@@ -116,6 +116,85 @@ test('enforces qvt grants and isolates qnt and qns credentials', async () => {
     method: 'POST',
     body: JSON.stringify({ project: fixture.project.slug, environment: fixture.environment.slug, name: SECRET_NAME, purpose: 'Local E2E revoked-token verification' }),
   })).response.status).toBe(401);
+});
+
+test('lists effective multiple grants and replaces them without plaintext or raw qvt metadata', async () => {
+  const session = await signInSession();
+  const fixture = await createFixture(session.access_token);
+  const grants = [
+    { projectId: fixture.project.id, environmentId: null, secretId: null, action: 'metadata:read' },
+    { projectId: fixture.project.id, environmentId: fixture.environment.id, secretId: fixture.secret.id, action: 'secret:reveal' },
+  ];
+  const created = await apiJson('/vault/agent-tokens', session.access_token, {
+    method: 'POST',
+    body: JSON.stringify({ name: 'Multi-grant contract token', expiresAt: null, grants }),
+  });
+  expect(created.response.status).toBe(201);
+  const createdData = data<{ token: string; metadata: { id: string } }>(created.body);
+  expect(createdData.token).toMatch(/^qvt_[A-Za-z0-9_-]{43}$/);
+
+  const listed = await apiJson('/vault/agent-tokens', session.access_token);
+  expect(listed.response.status).toBe(200);
+  const listedToken = data<Array<{ id: string; grants: Array<Record<string, unknown>> }>>(listed.body).find((token) => token.id === createdData.metadata.id);
+  expect(listedToken?.grants).toHaveLength(2);
+  expect(listedToken?.grants).toEqual(expect.arrayContaining([
+    expect.objectContaining({ projectId: fixture.project.id, environmentId: null, secretId: null, action: 'metadata:read' }),
+    expect.objectContaining({ projectId: fixture.project.id, environmentId: fixture.environment.id, secretId: fixture.secret.id, action: 'secret:reveal' }),
+  ]));
+  expect(JSON.stringify(listed.body)).not.toContain(createdData.token);
+  expect(JSON.stringify(listed.body)).not.toContain(FAKE_SECRET);
+
+  const replaced = await apiJson(`/vault/agent-tokens/${createdData.metadata.id}/grants`, session.access_token, {
+    method: 'PATCH',
+    body: JSON.stringify({ grants: [grants[0]] }),
+  });
+  expect(replaced.response.status).toBe(200);
+  expect(data<Array<Record<string, unknown>>>(replaced.body)).toEqual([
+    expect.objectContaining({ projectId: fixture.project.id, environmentId: null, secretId: null, action: 'metadata:read' }),
+  ]);
+
+  const cleared = await apiJson(`/vault/agent-tokens/${createdData.metadata.id}/grants`, session.access_token, {
+    method: 'PATCH',
+    body: JSON.stringify({ grants: [] }),
+  });
+  expect(cleared.response.status).toBe(200);
+  expect(data<unknown[]>(cleared.body)).toEqual([]);
+});
+
+test('lets the Vault UI draft multiple grants, remove drafts, and clear an existing token', async ({ page }) => {
+  const session = await signInSession();
+  const fixture = await createFixture(session.access_token);
+  await signInPage(page);
+  await page.goto('/vault/agents');
+  await expect(page.getByRole('heading', { name: 'Agent credentials', exact: true })).toBeVisible();
+
+  await page.getByLabel('Token name').fill('UI multi-grant token');
+  await page.getByLabel('Project').selectOption(fixture.project.id);
+  await page.getByLabel('Grant scope').selectOption('project');
+  await page.getByRole('button', { name: 'Add grant', exact: true }).click();
+  await page.getByLabel('Grant scope').selectOption('environment');
+  await page.getByLabel('Environment').selectOption(fixture.environment.id);
+  await page.getByLabel('Action').selectOption('secret:reveal');
+  await page.getByRole('button', { name: 'Add grant', exact: true }).click();
+  await expect(page.locator('#new-token-grants-heading').locator('..')).toContainText('2');
+  await expect(page.getByRole('button', { name: 'Remove', exact: true })).toHaveCount(2);
+  await page.getByRole('button', { name: 'Remove', exact: true }).first().click();
+  await expect(page.getByRole('button', { name: 'Remove', exact: true })).toHaveCount(1);
+
+  await page.getByRole('button', { name: 'Create qvt token', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('Copy this token now');
+  const issued = await page.getByRole('status').locator('code').textContent();
+  expect(issued).toMatch(/^qvt_[A-Za-z0-9_-]{43}$/);
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(page.getByRole('status')).toHaveCount(0);
+
+  const tokenCard = page.getByRole('article').filter({ hasText: 'UI multi-grant token' });
+  await expect(tokenCard).toContainText('Effective grants (1)');
+  await tokenCard.getByRole('button', { name: 'Edit grants', exact: true }).click();
+  await expect(tokenCard).toContainText('Edit grant set (1)');
+  await tokenCard.getByRole('button', { name: 'Remove', exact: true }).click();
+  await tokenCard.getByRole('button', { name: 'Replace grant set', exact: true }).click();
+  await expect(tokenCard).toContainText('No grants. This token cannot access Vault resources.');
 });
 
 test('supports replay-safe rotation and explicit bounded batch reveal', async () => {

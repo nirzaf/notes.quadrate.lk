@@ -55,12 +55,17 @@ function isSecretMetadata(value: unknown): value is VaultSecretMetadata {
 
 function isAgentTokenMetadata(value: unknown): value is VaultAgentTokenMetadata {
   return isRecord(value) && isString(value.id) && isString(value.name) && /^qvt_[A-Za-z0-9_-]{8}$/.test(String(value.tokenPrefix))
-    && isNullableString(value.expiresAt) && isNullableString(value.lastUsedAt) && isNullableString(value.revokedAt) && isString(value.createdAt);
+    && isNullableString(value.expiresAt) && isNullableString(value.lastUsedAt) && isNullableString(value.revokedAt) && isString(value.createdAt)
+    && Array.isArray(value.grants) && value.grants.every(isGrant)
+    && Object.keys(value).every((key) => ['id', 'name', 'tokenPrefix', 'expiresAt', 'lastUsedAt', 'revokedAt', 'createdAt', 'grants'].includes(key));
 }
 
 function isGrant(value: unknown): value is VaultAgentGrant {
   return isRecord(value) && isString(value.projectId) && isNullableString(value.environmentId) && isNullableString(value.secretId)
-    && ['metadata:read', 'secret:reveal', 'secret:write', 'secret:delete'].includes(String(value.action));
+    && ['metadata:read', 'secret:reveal', 'secret:write', 'secret:delete'].includes(String(value.action))
+    && (value.id === undefined || isString(value.id)) && (value.createdAt === undefined || isString(value.createdAt))
+    && !Object.hasOwn(value, 'value')
+    && Object.keys(value).every((key) => ['id', 'projectId', 'environmentId', 'secretId', 'action', 'createdAt'].includes(key));
 }
 
 function isAuditEvent(value: unknown): value is VaultAuditEvent {
@@ -179,6 +184,11 @@ export class QVaultClient {
 
   createAgentToken(input: CreateVaultAgentTokenInput, options: RequestOptions = {}): Promise<CreateVaultAgentTokenResult> {
     return this.validated('/agent-tokens', tokenResult, 'agent token', { method: 'POST', body: JSON.stringify(input) }, options);
+  }
+
+  replaceAgentGrants(tokenId: string, grants: VaultAgentGrant[], options: RequestOptions = {}): Promise<VaultAgentGrant[]> {
+    return this.request<unknown>(`/agent-tokens/${encodeURIComponent(tokenId)}/grants`, { method: 'PATCH', body: JSON.stringify({ grants }) }, options)
+      .then((value) => listPayload(value, isGrant, 'agent grants'));
   }
 
   async revokeAgentToken(tokenId: string, options: RequestOptions = {}): Promise<void> {

@@ -87,6 +87,50 @@ audit metadata.
 | `PATCH` | `/vault/agent-tokens/:tokenId/grants` | Replace grants |
 | `GET` | `/vault/audit` | Read audit metadata (JWT only) |
 
+`GET /vault/agent-tokens` is a JWT-only administration request. Each token
+metadata item includes its effective `grants` array, with project,
+environment, secret, action, grant ID, and creation timestamp metadata. It
+never includes the token hash, a raw qvt value, secret ciphertext, or a secret
+plaintext value. A token can have several grants at different scopes, for
+example:
+
+```json
+{
+  "data": [{
+    "id": "token-id",
+    "name": "Hermes deployer",
+    "tokenPrefix": "qvt_Abcd1234",
+    "expiresAt": null,
+    "lastUsedAt": null,
+    "revokedAt": null,
+    "createdAt": "2026-09-08T00:00:00.000Z",
+    "grants": [
+      { "id": "grant-1", "projectId": "project-id", "environmentId": null, "secretId": null, "action": "metadata:read", "createdAt": "2026-09-08T00:00:00.000Z" },
+      { "id": "grant-2", "projectId": "project-id", "environmentId": "environment-id", "secretId": "secret-id", "action": "secret:reveal", "createdAt": "2026-09-08T00:00:00.000Z" }
+    ]
+  }]
+}
+```
+
+The Agent Vault page builds a grant set before issuing a token. Select a
+project, environment, or secret and an action, choose **Add grant**, and
+repeat for every permission the agent needs. Each draft can be removed before
+creation; creation requires at least one grant. Existing tokens show every
+effective scope and action and can be edited through the same JWT-only PATCH
+route. Send the complete replacement set as `{ "grants": [...] }`:
+
+```bash
+curl -X PATCH "$QNOTES_URL/vault/agent-tokens/$TOKEN_ID/grants" \
+  -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data '{"grants":[{"projectId":"project-id","environmentId":null,"secretId":null,"action":"metadata:read"}]}'
+```
+
+Replacement is an all-at-once operation and may use an empty array to remove
+all grants. The qvt credential itself remains valid but has no Vault access
+until grants are replaced. The successful response contains only the
+effective grant metadata; it never re-displays the raw qvt value.
+
 Reveal responses and token-creation responses use `Cache-Control: no-store`.
 The raw qvt token is returned only in the successful creation response. Keep
 the token in the native agent's secret environment and rotate/revoke it when
