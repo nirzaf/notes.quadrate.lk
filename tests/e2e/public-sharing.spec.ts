@@ -1,5 +1,5 @@
 import { test, expect } from './test-fixtures';
-import { apiJson, createNoteApi, createPublicShareApi, getNoteApi, OTHER, OWNER, publicApiJson, resolvePublicShareApi, signInPage, signInSession } from './helpers';
+import { apiJson, createNoteApi, createPublicShareApi, expectPreviewMode, getNoteApi, OTHER, OWNER, publicApiJson, resolvePublicShareApi, signInPage, signInSession } from './helpers';
 
 function data(body: unknown): Record<string, unknown> {
   if (!body || typeof body !== 'object' || !('data' in body) || !body.data || typeof body.data !== 'object') throw new Error(`Invalid API response: ${JSON.stringify(body)}`);
@@ -178,6 +178,7 @@ test('share dialog shows the raw link once and safe metadata after reopening', a
   const note = await createNoteApi(session.access_token, `Share dialog ${crypto.randomUUID()}`, 'Dialog body.');
   await signInPage(page);
   await page.goto(`/notes/${note.id}`);
+  await expectPreviewMode(page);
   await page.getByRole('button', { name: 'Share', exact: true }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();

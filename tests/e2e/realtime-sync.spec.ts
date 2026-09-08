@@ -1,5 +1,5 @@
 import { test, expect } from './test-fixtures';
-import { createDevice, getNoteApi, poll, signInSession, updateNoteApi } from './helpers';
+import { createDevice, expectEditorMode, expectPreviewMode, getNoteApi, poll, signInSession, updateNoteApi } from './helpers';
 
 function noteIdFromUrl(url: string): string {
   const match = new URL(url).pathname.match(/\/notes\/([^/]+)$/);
@@ -14,10 +14,13 @@ test('synchronizes committed autosaves, recovers after reconnect, and ignores se
     await deviceA.page.getByRole('button', { name: 'New note' }).first().click();
     await expect.poll(() => new URL(deviceA.page.url()).pathname, { timeout: 15_000 }).toMatch(/\/notes\/[0-9a-f-]+$/);
     const noteId = noteIdFromUrl(deviceA.page.url());
+    await expectEditorMode(deviceA.page);
 
     await expect.poll(() => deviceB.page.getByText('Untitled note', { exact: true }).count(), { timeout: 15_000 }).toBeGreaterThan(0);
     await deviceB.page.goto(`/notes/${noteId}`);
-    await expect(deviceB.page.locator('.cm-content')).toBeVisible();
+    await expectPreviewMode(deviceB.page);
+    await deviceB.page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await expectEditorMode(deviceB.page);
 
     let detailRequestsA = 0;
     deviceA.page.on('request', (request) => {

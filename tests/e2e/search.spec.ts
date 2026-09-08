@@ -1,5 +1,5 @@
 import { test, expect } from './test-fixtures';
-import { apiJson, createNoteApi, invokeWorker, localEnv, OTHER, signInPage, signInSession, poll, searchItems } from './helpers';
+import { apiJson, createNoteApi, expectPreviewMode, invokeWorker, localEnv, OTHER, signInPage, signInSession, poll, searchItems } from './helpers';
 
 test('filters notes by title and partial body matches, then covers semantic, hybrid, and isolation', async ({ page }) => {
   const session = await signInSession();
@@ -64,6 +64,7 @@ test('paginates ranked results and preserves the exact result context in navigat
   expect(noteUrl.searchParams.get('q')).toBe(marker);
   expect(noteUrl.searchParams.get('documentId')).toBeTruthy();
   await expect(page.getByRole('link', { name: /Back to search results/ })).toBeVisible();
+  await expectPreviewMode(page);
   await page.getByRole('link', { name: /Back to search results/ }).click();
   await expect(page).toHaveURL(/\/\?q=/);
   expect(new URL(page.url()).searchParams.get('q')).toBe(marker);

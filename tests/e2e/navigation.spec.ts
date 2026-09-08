@@ -1,6 +1,6 @@
 import { test, expect } from './test-fixtures';
 import type { Page } from '@playwright/test';
-import { createNoteApi, getNoteApi, OWNER, signInPage, signInSession } from './helpers';
+import { createNoteApi, expectEditorMode, expectPreviewMode, getNoteApi, OWNER, signInPage, signInSession } from './helpers';
 
 function capturePageErrors(page: Page): () => void {
   const errors: Error[] = [];
@@ -19,14 +19,17 @@ test('keeps Home, note, Tokens, and native Back/Forward transitions usable', asy
   await signInPage(page);
   await page.locator('.q-note-card').filter({ hasText: note.title }).click();
   await expect(page).toHaveURL(new RegExp(`/notes/${note.id}$`));
-  await expect(page.locator('.cm-content')).toContainText('Navigation fixture.');
+  await expectPreviewMode(page);
+  await expect(page.getByLabel('Rendered note preview')).toContainText('Navigation fixture.');
   await page.reload();
-  await expect(page.locator('.cm-content')).toContainText('Navigation fixture.');
+  await expectPreviewMode(page);
+  await expect(page.getByLabel('Rendered note preview')).toContainText('Navigation fixture.');
   await page.goBack();
   await expect(page.locator('.q-working-header h2')).toBeVisible();
   await expect(page.locator('.q-note-card').filter({ hasText: note.title })).toBeVisible();
   await page.goForward();
-  await expect(page.locator('.cm-content')).toContainText('Navigation fixture.');
+  await expectPreviewMode(page);
+  await expect(page.getByLabel('Rendered note preview')).toContainText('Navigation fixture.');
   await page.goBack();
 
   await page.getByRole('link', { name: 'Integrations' }).first().click();
@@ -57,6 +60,9 @@ test('does not move a delayed A save or its newer edit into B', async ({ page })
 
   await signInPage(page);
   await page.locator('.q-note-card').filter({ hasText: noteA.title }).click();
+  await expectPreviewMode(page);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await expectEditorMode(page);
   const firstPatchStarted = page.waitForRequest((request) => request.url().includes(`/api/notes/${noteA.id}`) && request.method() === 'PATCH');
   await page.locator('.cm-content').fill('A first revision.\n');
   await firstPatchStarted;
@@ -66,11 +72,17 @@ test('does not move a delayed A save or its newer edit into B', async ({ page })
   releaseFirstPatch();
   await navigation;
   await expect(page).toHaveURL(new RegExp(`/notes/${noteB.id}$`));
+  await expectPreviewMode(page);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await expectEditorMode(page);
   await expect(page.locator('.cm-content')).toContainText('B baseline.');
   await page.locator('.cm-content').fill('B final revision.\n');
   await expect.poll(() => getNoteApi(session.access_token, noteB.id), { timeout: 10_000 }).toMatchObject({ contentMarkdown: 'B final revision.\n' });
   await page.locator('.q-note-list .q-note-item').filter({ hasText: noteA.title }).click();
   await expect(page).toHaveURL(new RegExp(`/notes/${noteA.id}$`));
+  await expectPreviewMode(page);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await expectEditorMode(page);
   await expect(page.locator('.cm-content')).toContainText('A second revision while A is saving.');
   await expect.poll(() => getNoteApi(session.access_token, noteA.id), { timeout: 10_000 }).toMatchObject({ contentMarkdown: 'A second revision while A is saving.\n' });
   expect(await getNoteApi(session.access_token, noteB.id)).toMatchObject({ contentMarkdown: 'B final revision.\n' });
@@ -84,7 +96,7 @@ test('New note from the integrations page is a real mutation and navigation', as
   await page.getByRole('link', { name: 'Integrations' }).first().click();
   await page.getByRole('button', { name: 'Create a new note' }).first().click();
   await expect(page).toHaveURL(/\/notes\/[0-9a-f-]+$/);
-  await expect(page.locator('.cm-content')).toBeVisible();
+  await expectEditorMode(page);
   assertNoPageErrors();
 });
 
@@ -93,6 +105,7 @@ test('offers a starter note for an empty workspace and clears search quickly', a
   await expect(page.getByRole('heading', { name: 'Make your first note' })).toBeVisible();
   await page.getByRole('button', { name: 'Use starter note' }).click();
   await expect(page).toHaveURL(/\/notes\/[0-9a-f-]+$/);
+  await expectEditorMode(page);
   await expect(page.locator('.cm-content')).toContainText('private Markdown workspace');
   await expect(page.getByRole('status')).toContainText(/Saved/);
 
@@ -119,6 +132,7 @@ test('restores submitted search context after opening a result and refreshing', 
   await expect(matchingResult).toBeVisible({ timeout: 15_000 });
   await matchingResult.getByRole('button', { name: 'Open matching section' }).click();
   await expect(page).toHaveURL(new RegExp(`/notes/${note.id}`));
+  await expectPreviewMode(page);
   await page.goBack();
   await expect(search).toHaveValue(marker);
   await page.reload();
