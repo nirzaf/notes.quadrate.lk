@@ -78,3 +78,37 @@ test('QVaultClient rejects malformed reveal payloads without echoing the respons
     return true;
   });
 });
+
+test('QVaultClient validates safe audit actor identity and rejects secret fields', async () => {
+  const event = {
+    id: '880e8400-e29b-41d4-a716-446655440000',
+    actorKind: 'vault_agent',
+    actorTokenId: '990e8400-e29b-41d4-a716-446655440000',
+    actorTokenName: 'Deploy agent',
+    actorTokenPrefix: 'qvt_12345678',
+    action: 'secret:reveal',
+    projectId: project.id,
+    environmentId: secret.environmentId,
+    secretId: secret.id,
+    purpose: 'audit identity test',
+    success: false,
+    resultCode: 'access_denied',
+    requestId: 'aa0e8400-e29b-41d4-a716-446655440000',
+    occurredAt: '2026-01-03T00:00:00.000Z',
+  };
+  const userEvent = { ...event, id: 'aa0e8400-e29b-41d4-a716-446655440000', actorKind: 'user_jwt', actorTokenId: null, actorTokenName: null, actorTokenPrefix: null };
+  const client = new QVaultClient({ baseUrl: 'http://example.test', getAccessToken: () => 'jwt-test', fetchImplementation: async () => jsonResponse([event, userEvent]) });
+  assert.deepEqual(await client.listAudit(), [event, userEvent]);
+
+  const unsafeClient = new QVaultClient({
+    baseUrl: 'http://example.test',
+    getAccessToken: () => 'jwt-test',
+    fetchImplementation: async () => jsonResponse([{ ...event, actorTokenPrefix: 'qvt_' + 'A'.repeat(43), token_hash: 'must-not-leak', value: 'must-not-leak' }]),
+  });
+  await assert.rejects(() => unsafeClient.listAudit(), (error) => {
+    assert.ok(error instanceof QVaultProtocolError);
+    assert.match(error.message, /malformed audit events/);
+    assert.equal(error.message.includes('must-not-leak'), false);
+    return true;
+  });
+});

@@ -79,6 +79,9 @@ export type VaultAgentGrant = {
 export type VaultAuditEvent = {
   id: string;
   actorKind: VaultActorKind;
+  actorTokenId: string | null;
+  actorTokenName: string | null;
+  actorTokenPrefix: string | null;
   action: VaultAction;
   projectId: string | null;
   environmentId: string | null;

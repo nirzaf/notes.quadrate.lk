@@ -2,13 +2,9 @@ import { type VaultAction } from '@qnotes/shared';
 import { appDbClient } from './database.ts';
 import { ApiError } from './errors.ts';
 import type { VaultAuthContext } from './vault-auth.ts';
+import { recordVaultAgentAccessDenied, type VaultAuditDetails, type VaultAuditResource } from './vault-audit.ts';
 
-export interface VaultResource {
-  ownerId: string;
-  projectId: string;
-  environmentId?: string | null;
-  secretId?: string | null;
-}
+export type VaultResource = VaultAuditResource;
 
 interface GrantRow {
   project_id: string;
@@ -40,8 +36,11 @@ export async function canVaultAccess(auth: VaultAuthContext, action: VaultAction
   return grants.some((grant) => grantMatches(grant, action, resource));
 }
 
-export async function requireVaultAccess(auth: VaultAuthContext, action: VaultAction, resource: VaultResource): Promise<void> {
-  if (!await canVaultAccess(auth, action, resource)) throw new ApiError(403, 'VAULT_ACCESS_DENIED', 'Vault access is denied.');
+export async function requireVaultAccess(auth: VaultAuthContext, action: VaultAction, resource: VaultResource, details: VaultAuditDetails = {}): Promise<void> {
+  if (!await canVaultAccess(auth, action, resource)) {
+    await recordVaultAgentAccessDenied(auth, action, resource, details);
+    throw new ApiError(403, 'VAULT_ACCESS_DENIED', 'Vault access is denied.');
+  }
 }
 
 export function grantAllows(grants: GrantRow[], action: VaultAction, resource: VaultResource): boolean {
