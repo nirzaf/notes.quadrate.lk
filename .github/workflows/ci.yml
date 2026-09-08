@@ -176,6 +176,8 @@ jobs:
           corepack install --global "pnpm@${PNPM_VERSION}"
           pnpm --version
       - run: pnpm install --frozen-lockfile
+      - name: Build workspace for browser smoke
+        run: pnpm run build
       - name: Install the bundled Chromium browser
         run: pnpm exec playwright install --with-deps chromium
       - name: Validate Docker runtime prerequisites
