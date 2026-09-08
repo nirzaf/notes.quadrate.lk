@@ -37,6 +37,15 @@ Supabase database password is used only by the non-interactive migration step.
 The workflow accepts `CLOUDFLARE_API_KEY` plus `CLOUDFLARE_EMAIL` as a
 compatibility fallback when a scoped token is unavailable.
 
+After applying database migrations, the production job runs
+`pnpm run verify:vault` before deploying any Edge Function. The gate uses the
+pinned Supabase CLI to safely capture the secrets-list JSON, examines only each
+entry's `name` (checking that `QNOTES_VAULT_TOKEN_PEPPER` is present), ignores
+any `value` field, and never logs secret values. It also runs a linked,
+read-only boolean readiness query for the Supabase Vault extension/schema,
+Agent Vault metadata tables, service-only RPCs, and their execute privileges.
+`QNOTES_VAULT_TOKEN_PEPPER` is not a GitHub Actions environment secret.
+
 The repository pins pnpm to `12.1.0`:
 
 ```bash
@@ -80,12 +89,15 @@ Set the server-only Edge Function secrets in Supabase. `SUPABASE_URL` and `SUPAB
 ```bash
 read -rsp 'QNOTES token pepper: ' QNOTES_TOKEN_PEPPER
 printf '\n'
+read -rsp 'QNOTES Vault token pepper: ' QNOTES_VAULT_TOKEN_PEPPER
+printf '\n'
 read -rsp 'QNOTES worker secret: ' QNOTES_INTERNAL_WORKER_SECRET
 printf '\n'
 
 pnpm exec supabase secrets set --project-ref ciyoandzjezgqxjpcrin \
   QNOTES_ALLOWED_ORIGIN="https://notes.quadrate.lk" \
   QNOTES_TOKEN_PEPPER="$QNOTES_TOKEN_PEPPER" \
+  QNOTES_VAULT_TOKEN_PEPPER="$QNOTES_VAULT_TOKEN_PEPPER" \
   QNOTES_INTERNAL_WORKER_SECRET="$QNOTES_INTERNAL_WORKER_SECRET" \
   QNOTES_MAX_ATTACHMENT_BYTES="20971520" \
   QNOTES_EXPORT_MAX_BYTES="52428800"
@@ -134,7 +146,7 @@ pnpm run test:unit
 pnpm exec supabase db push --linked --dry-run
 ```
 
-The current release includes the additive migrations through `20260907000300_api_tokens_shares_write.sql`. Review them in the dry-run output before applying; the latest migrations add the caller-owned `shares:write` personal-token scope, the RLS-protected `notesdb.note_shares` table, service-only create/rotate/revoke/resolve RPCs, automatic share revocation on note soft-delete, and a service-only single-use hosted MCP authorization-code receipt. The preceding migrations add the transaction-safe logical append receipt for the REST API, CLI, and MCP write profile, while earlier migrations fix pagination and embedding queue races, preserve legacy RPC wrappers on the v2 contract, add restore dedupe conflict reporting, keep incompatible vectors out of semantic search, and add the daily stale-embedding recovery schedule.
+The current release includes the additive migrations through `20260908000100_agent_vault_batch_reveal.sql`. Review them in the dry-run output before applying; the latest migrations add the isolated Agent Vault metadata plane, service-only RPCs, replay protections, and bounded batch reveal alongside the caller-owned `shares:write` personal-token scope, the RLS-protected `notesdb.note_shares` table, service-only create/rotate/revoke/resolve RPCs, automatic share revocation on note soft-delete, and a service-only single-use hosted MCP authorization-code receipt. The preceding migrations add the transaction-safe logical append receipt for the REST API, CLI, and MCP write profile, while earlier migrations fix pagination and embedding queue races, preserve legacy RPC wrappers on the v2 contract, add restore dedupe conflict reporting, keep incompatible vectors out of semantic search, and add the daily stale-embedding recovery schedule.
 
 ### 3. Apply pending production migrations
 
@@ -144,7 +156,23 @@ pnpm exec supabase db push --linked
 
 When prompted, enter the production database password from the password manager. Review the migration list before accepting. Never use `db reset` on the hosted project.
 
-### 4. Deploy Supabase Edge Functions
+### 4. Verify production Vault readiness
+
+The migration must be applied before this check, and this check must pass
+before any function that depends on Agent Vault is deployed:
+
+```bash
+SUPABASE_PROJECT_ID=ciyoandzjezgqxjpcrin pnpm run verify:vault
+```
+
+This is a read-only verification. The captured secrets-list output is examined
+only for entry names; any secret value is ignored and never logged. The check
+does not create or rotate credentials, change database state, or expose a
+health route. It requires Supabase CLI authentication through the existing
+`SUPABASE_ACCESS_TOKEN`; do not put `QNOTES_VAULT_TOKEN_PEPPER` in the shell,
+Git, or a GitHub Actions secret for this check.
+
+### 5. Deploy Supabase Edge Functions
 
 ```bash
 pnpm exec supabase functions deploy qnotes-api embedding-worker attachment-worker qnotes-mcp \
@@ -156,7 +184,7 @@ pnpm exec supabase functions deploy qnotes-api embedding-worker attachment-worke
 
 The functions perform their own authentication. The worker functions additionally require the `x-qnotes-worker-secret` value supplied by the Vault cron jobs.
 
-### 5. Build the production frontend
+### 6. Build the production frontend
 
 Keep the `VITE_*` values in the current shell or CI secret store only:
 
@@ -166,7 +194,7 @@ pnpm run build
 
 This builds all workspace packages, builds `apps/web`, and verifies that generated Edge shared sources are synchronized.
 
-### 6. Deploy Cloudflare Pages
+### 7. Deploy Cloudflare Pages
 
 Deploy the generated `apps/web/dist` directory to the existing production project and attach the exact Git commit:
 
@@ -219,11 +247,12 @@ Use the Cloudflare Pages deployment list to roll back to the last known-good pro
 
 ## Agent Vault release notes
 
-The additive migration `20260907000200_agent_vault.sql` adds the isolated
-Agent Vault plane, Supabase Vault-backed service-only RPCs, qvt grants, audit,
-and replay receipts. Before any non-local rollout, provision the server-only
-`QNOTES_VAULT_TOKEN_PEPPER` in the Edge Function environment and review the
-Vault-specific access guide. Do not put it in `VITE_*`, browser storage, GitHub
-secrets, or a production deployment as part of local development. This feature
-must not change qnt/qns Notes or hosted-MCP behavior, and the migration must be
-reviewed and applied separately from frontend deployment.
+The additive migrations `20260907000200_agent_vault.sql` and
+`20260908000100_agent_vault_batch_reveal.sql` add the isolated Agent Vault
+plane, Supabase Vault-backed service-only RPCs, qvt grants, audit, replay
+receipts, and bounded batch reveal. Before any non-local rollout, provision the
+server-only `QNOTES_VAULT_TOKEN_PEPPER` in the Edge Function environment and
+run the readiness gate above. Do not put it in `VITE_*`, browser storage, Git,
+or GitHub Actions secrets. This feature must not change qnt/qns Notes or
+hosted-MCP behavior, and the migrations must be reviewed and applied before
+frontend deployment.

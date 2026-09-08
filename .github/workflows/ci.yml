@@ -383,6 +383,8 @@ jobs:
           pnpm exec supabase db push --linked --dry-run
       - name: Apply production migrations
         run: pnpm exec supabase db push --linked --yes
+      - name: Verify production Vault readiness
+        run: pnpm run verify:vault
       - name: Deploy Supabase Edge Functions
         run: >-
           pnpm exec supabase functions deploy

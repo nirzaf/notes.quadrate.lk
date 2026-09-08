@@ -68,7 +68,7 @@ PostgreSQL full-text and relevance-ranked keyword search is available immediatel
 
 The browser subscribes to the private `user:<user-id>:notes` Realtime channel and receives metadata-only `note.changed` events. IndexedDB stores drafts, a notes sync cursor, and recent authoritative note snapshots. Access tokens are not stored in IndexedDB or the service-worker cache.
 
-CI runs the core typecheck/unit/Edge/build/generated-parity checks, local Supabase SQL/database integration tests, the path-gated search regression job, and the bounded Chromium browser smoke job on GitHub-hosted `ubuntu-latest` runners. The browser smoke covers note navigation and edit/preview, Vault administration routes, public-share rendering, accessibility, and the attachment UI without starting background workers. The complete Playwright E2E suite remains a local/manual command (`pnpm run test:e2e`) and is not run by CI/CD. A successful push to `master` runs the production CD job only after the browser smoke and other enabled release checks pass. Deployment applies migrations, deploys Supabase Edge Functions, publishes Cloudflare Pages, and verifies the live health endpoints. See [.github/GITHUB_ACTIONS.md](.github/GITHUB_ACTIONS.md) for the runner setup and production secrets. The available check names are `CI / core`, `CI / integration`, `CI / search regression`, and `CI / browser smoke`. See [SECURITY.md](SECURITY.md) for the full-history secret-scan and vulnerability-reporting procedure.
+CI runs the core typecheck/unit/Edge/build/generated-parity checks, local Supabase SQL/database integration tests, the path-gated search regression job, and the bounded Chromium browser smoke job on GitHub-hosted `ubuntu-latest` runners. The browser smoke covers note navigation and edit/preview, Vault administration routes, public-share rendering, accessibility, and the attachment UI without starting background workers. The complete Playwright E2E suite remains a local/manual command (`pnpm run test:e2e`) and is not run by CI/CD. A successful push to `master` runs the production CD job only after the browser smoke and other enabled release checks pass. Deployment applies migrations, runs the read-only production Vault readiness gate, deploys Supabase Edge Functions, publishes Cloudflare Pages, and verifies the live health endpoints. The readiness gate safely captures the Supabase CLI JSON, examines only the `QNOTES_VAULT_TOKEN_PEPPER` entry by name, ignores any `value` field, and never logs secret values; the pepper is not a GitHub Actions secret. See [.github/GITHUB_ACTIONS.md](.github/GITHUB_ACTIONS.md) for the runner setup and production secrets. The available check names are `CI / core`, `CI / integration`, `CI / search regression`, and `CI / browser smoke`. See [SECURITY.md](SECURITY.md) for the full-history secret-scan and vulnerability-reporting procedure.
 
 ## Local development
 
@@ -163,6 +163,8 @@ pnpm run test:e2e:smoke
 
 The hosted project is `ciyoandzjezgqxjpcrin`, and the production web site is `https://notes.quadrate.lk`. Before a production deployment, set exact CORS origins and server-only secrets. Do not set `QNOTES_FAKE_EMBEDDINGS=1` in production; hosted workers need the Supabase AI runtime for `gte-small` embeddings.
 
+The hosted database must contain the migrations through `20260908000100_agent_vault_batch_reveal.sql`. The Agent Vault migrations add the isolated metadata plane, Supabase Vault-backed service-only RPCs, qvt grants, audit/replay protections, and bounded batch reveal. The public-sharing migrations add the HMAC-backed, service-only public share table, transactional create/rotate/revoke RPCs, the three-field resolver projection, automatic revocation on soft delete, and the caller-owned `shares:write` personal-token scope; the preceding migrations add the transaction-safe logical append receipt, request-safe search functions, embedding input/version invariants, stale-vector requeueing, attachment page provenance, safe capture deduplication, and the daily embedding recovery schedule. The worker cron jobs read the project URL and internal worker secret from Supabase Vault, so those Vault secrets and the Edge Function secrets must be configured before expecting asynchronous embeddings or attachment extraction. Before deploying Edge Functions, run `SUPABASE_PROJECT_ID=ciyoandzjezgqxjpcrin pnpm run verify:vault`; it checks the server-only `QNOTES_VAULT_TOKEN_PEPPER` by name and validates the database contract without revealing a value or returning database data.
+
 Deploy the API and worker functions with the repository import map:
 
 ```bash
@@ -170,8 +172,6 @@ pnpm exec supabase functions deploy qnotes-api embedding-worker attachment-worke
   --project-ref ciyoandzjezgqxjpcrin --no-verify-jwt --use-api \
   --import-map supabase/functions/deno.json
 ```
-
-The hosted database must contain the migrations through `20260907000300_api_tokens_shares_write.sql`. The public-sharing migrations add the HMAC-backed, service-only public share table, transactional create/rotate/revoke RPCs, the three-field resolver projection, automatic revocation on soft delete, and the caller-owned `shares:write` personal-token scope; the preceding migrations add the transaction-safe logical append receipt, request-safe search functions, embedding input/version invariants, stale-vector requeueing, attachment page provenance, safe capture deduplication, and the daily embedding recovery schedule. The worker cron jobs read the project URL and internal worker secret from Supabase Vault, so those Vault secrets and the Edge Function secrets must be configured before expecting asynchronous embeddings or attachment extraction.
 
 Build and deploy the web package to Cloudflare Pages with the hosted Supabase values:
 
@@ -188,7 +188,7 @@ npx wrangler pages deploy apps/web/dist --project-name notes-quadrate-lk
 
 Every exposed application table is protected by owner-based RLS. Browser clients receive only the Supabase publishable key and read through owner-scoped grants; writes, private attachment metadata, token operations, public share operations, and search RPCs are mediated by the Edge Function and service role. Personal tokens and public share secrets are scoped to separate formats and domain-separated HMAC-SHA-256 hashes. Personal tokens are optionally expirable and revocable; public shares are single-active, expirable, revocable, and automatically revoked when a note is soft-deleted. Raw secrets are returned only at creation time; browser share secrets stay in URL fragments, and the unauthenticated API resolver accepts them only in POST bodies, never query strings or logs.
 
-Set `QNOTES_ALLOWED_ORIGIN` to an exact comma-separated allow-list and keep Realtime “Allow public access” disabled. Keep `QNOTES_TOKEN_PEPPER`, `QNOTES_INTERNAL_WORKER_SECRET`, and `SUPABASE_SERVICE_ROLE_KEY` server-side. Keep attachment and export limits aligned with the desired deployment; the local defaults are 20 MiB per attachment and 50 MiB per workspace ZIP.
+Set `QNOTES_ALLOWED_ORIGIN` to an exact comma-separated allow-list and keep Realtime “Allow public access” disabled. Keep `QNOTES_TOKEN_PEPPER`, `QNOTES_INTERNAL_WORKER_SECRET`, `QNOTES_VAULT_TOKEN_PEPPER`, and `SUPABASE_SERVICE_ROLE_KEY` server-side. Keep attachment and export limits aligned with the desired deployment; the local defaults are 20 MiB per attachment and 50 MiB per workspace ZIP.
 
 Autosave-level synchronization deliberately stops short of character-level collaboration. Shared cursors, CRDTs, operational transformation, team workspaces, public multi-note publishing, native apps, image OCR, and a large offline write queue are outside the current product boundary. Public sharing is limited to one explicitly shared note at a time and never includes attachments.
 
@@ -234,6 +234,19 @@ uses `qvt_` tokens, Supabase Vault-backed encrypted values, scoped grants,
 service-only RPCs, committed reveal audits, expected-version writes, and
 replay-safe mutation IDs. Vault values are never part of Notes search,
 embeddings, logs, browser persistence, public shares, or workspace backups.
+
+Production readiness is checked separately from application health. After the
+Vault migrations are applied, run `pnpm run verify:vault` with
+`SUPABASE_PROJECT_ID` and the existing Supabase CLI authentication. The check
+safely captures the secrets-list JSON, examines only each entry's `name` to
+confirm that `QNOTES_VAULT_TOKEN_PEPPER` exists, ignores any `value` field, and
+never logs secret values. It then uses a linked read-only database query whose
+result contains booleans only for
+the extension, schema, metadata tables, current service-only RPCs, and
+`anon`/`authenticated` denial plus `service_role` execute privileges. It fails
+on a missing pepper, unavailable command, malformed output, or any false
+check. It does not reveal, create, rotate, or mutate credentials and is not a
+public health route.
 
 Native MCP callers opt in with `QVAULT_TOKEN` and
 `QVAULT_MCP_PROFILE=metadata|reveal|write`; the Integrations page can add
