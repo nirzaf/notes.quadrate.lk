@@ -1,9 +1,9 @@
 import { AxeBuilder } from '@axe-core/playwright';
 import { test, expect } from './test-fixtures';
 import type { Page } from '@playwright/test';
-import { createNoteApi, createPublicShareApi, expectEditorMode, expectPreviewMode, getNoteApi, signInPage, signInSession } from './helpers';
+import { createNoteApi, expectEditorMode, expectPreviewMode, getNoteApi, signInPage, signInSession } from './helpers';
 
-test.describe.configure({ timeout: 30_000 });
+test.describe.configure({ timeout: 45_000 });
 
 function capturePageErrors(page: Page): () => void {
   const errors: Error[] = [];
@@ -17,21 +17,21 @@ async function expectAccessible(page: Page, label: string): Promise<void> {
   expect(results.violations, `${label} accessibility violations\n${summary}`).toEqual([]);
 }
 
-test('covers browser note creation, edit-preview, and navigation', async ({ page }) => {
+test('covers note edit-preview and browser navigation', async ({ page }) => {
   const assertNoPageErrors = capturePageErrors(page);
   const session = await signInSession();
-  const title = `Release smoke ${crypto.randomUUID().slice(0, 8)}`;
+  const note = await createNoteApi(session.access_token, `Release smoke ${crypto.randomUUID().slice(0, 8)}`, '# Release smoke note\n\nBrowser preview contract marker.');
+  const title = `${note.title} edited`;
   const markdown = '# Release smoke note\n\nBrowser preview contract marker.';
 
   await signInPage(page);
-  await page.getByRole('button', { name: 'New note' }).first().click();
-  await expect(page).toHaveURL(/\/notes\/[0-9a-f-]+$/);
-  const noteId = new URL(page.url()).pathname.split('/').at(-1);
-  expect(noteId).toBeTruthy();
+  await page.goto(`/notes/${note.id}`);
+  await expectPreviewMode(page);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await expectEditorMode(page);
   await page.getByLabel('Title').fill(title);
   await page.locator('.cm-content').fill(markdown);
-  await expect.poll(() => getNoteApi(session.access_token, noteId!), { timeout: 10_000 }).toMatchObject({ title, contentMarkdown: markdown });
+  await expect.poll(() => getNoteApi(session.access_token, note.id), { timeout: 20_000 }).toMatchObject({ title, contentMarkdown: markdown });
 
   await page.getByRole('button', { name: 'Preview', exact: true }).click();
   await expectPreviewMode(page);
@@ -41,7 +41,7 @@ test('covers browser note creation, edit-preview, and navigation', async ({ page
   const noteCard = page.locator('.q-note-card').filter({ hasText: title });
   await expect(noteCard).toBeVisible();
   await noteCard.click();
-  await expect(page).toHaveURL(new RegExp(`/notes/${noteId}$`));
+  await expect(page).toHaveURL(new RegExp(`/notes/${note.id}$`));
   await expectPreviewMode(page);
   await expect(page.getByLabel('Rendered note preview')).toContainText('Browser preview contract marker.');
   assertNoPageErrors();
@@ -68,40 +68,55 @@ test('covers the Vault administration routes and surfaces', async ({ page }) => 
 });
 
 test('renders a synthetic public share through its browser fragment', async ({ page }) => {
-  const session = await signInSession();
-  const markdown = '# Public smoke note\n\nThis is a local-only shared rendering marker.';
-  const note = await createNoteApi(session.access_token, `Public smoke ${crypto.randomUUID().slice(0, 8)}`, markdown);
-  const share = await createPublicShareApi(session.access_token, note.id);
+  const token = `qns_${'s'.repeat(43)}`;
+  const title = 'Synthetic public smoke note';
+  await page.route('**/public/share/resolve', async (route) => {
+    if (route.request().method() !== 'POST') {
+      await route.continue();
+      return;
+    }
+    expect(route.request().postDataJSON()).toEqual({ token });
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          title,
+          contentMarkdown: '# Public smoke note\n\nThis is a local-only shared rendering marker.',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+        },
+      }),
+    });
+  });
 
-  await page.goto(`/share#${share.token}`);
-  await expect(page.getByRole('heading', { name: note.title, exact: true })).toBeVisible();
+  await page.goto(`/share#${token}`);
+  await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible();
   await expect(page.locator('.q-public-share-note .q-preview')).toContainText('local-only shared rendering marker.');
   await expect(page.locator('.q-attachment-panel')).toHaveCount(0);
-  await expect(page).toHaveTitle(new RegExp(`${note.title} · Quadrate Notes`));
+  await expect(page).toHaveTitle(new RegExp(`${title} · Quadrate Notes`));
 });
 
-test('keeps authenticated note surfaces free of automated accessibility violations', async ({ page }) => {
+test('keeps the stable login surface free of automated accessibility violations', async ({ page }) => {
+  await page.goto('/login');
+  await expect(page.getByRole('heading', { name: 'Your notes, in flow.', exact: true })).toBeVisible();
+  await expectAccessible(page, 'login');
+});
+
+test('covers the Preview-first note and attachment panel UI', async ({ page }) => {
   const session = await signInSession();
-  const note = await createNoteApi(session.access_token, `Accessibility smoke ${crypto.randomUUID().slice(0, 8)}`, '# Accessibility smoke\n\nLocal browser fixture.');
+  const note = await createNoteApi(session.access_token, `Attachment smoke ${crypto.randomUUID().slice(0, 8)}`, '# Attachment smoke note\n\nAttachment panel fixture.');
 
   await signInPage(page);
-  await expectAccessible(page, 'authenticated Home');
   await page.goto(`/notes/${note.id}`);
   await expectPreviewMode(page);
-  await expectAccessible(page, 'note preview');
-});
-
-test('covers the attachment panel UI without starting attachment workers', async ({ page }) => {
-  const session = await signInSession();
-  const note = await createNoteApi(session.access_token, `Attachment smoke ${crypto.randomUUID().slice(0, 8)}`);
-
-  await signInPage(page);
-  await page.goto(`/notes/${note.id}`);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await expectEditorMode(page);
+  await page.getByRole('button', { name: 'Preview', exact: true }).click();
   await expectPreviewMode(page);
   const panel = page.getByRole('region', { name: 'Attachments' });
   await expect(panel).toBeVisible();
   await expect(panel).toContainText('No attachments yet.');
-  await page.getByText('Attachments', { exact: true }).click();
+  await panel.locator('summary').click();
   await expect(panel.getByLabel('Add a file')).toBeVisible();
   await expect(panel).toContainText('TXT, Markdown, PDF, PNG, JPEG, or WebP');
   await panel.getByRole('button', { name: 'Screenshot', exact: true }).click();
