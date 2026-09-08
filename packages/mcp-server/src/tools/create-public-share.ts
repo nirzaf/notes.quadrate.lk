@@ -25,6 +25,7 @@ const SENSITIVE_CONTENT_PATTERNS = [
   /\bxox[baprs]-[A-Za-z0-9-]{12,}\b/i,
   /\bqnt_[A-Za-z0-9_-]{20,}\b/,
   /\bqns_[A-Za-z0-9_-]{20,}\b/,
+  /(?:^|[^A-Za-z0-9_-])qvt_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/,
   /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/,
 ];
 

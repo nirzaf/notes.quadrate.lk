@@ -103,6 +103,36 @@ test('MCP create_public_share rejects sensitive notes before calling the share A
   assert.equal(shareCalls, 0);
 });
 
+test('MCP create_public_share rejects qvt credentials in note Markdown before calling the share API', async () => {
+  const qvtToken = `qvt_${'A'.repeat(43)}`;
+  let shareCalls = 0;
+  await assert.rejects(() => createPublicShareTool({
+    async getNote() {
+      return { title: 'Deployment', contentMarkdown: `Use this credential: ${qvtToken}`, id: '550e8400-e29b-41d4-a716-446655440000' };
+    },
+    async createPublicShare() {
+      shareCalls += 1;
+      throw new Error('must not be called');
+    },
+  }, { noteId: '550e8400-e29b-41d4-a716-446655440000' }), /sensitive credential material/);
+  assert.equal(shareCalls, 0);
+});
+
+test('MCP create_public_share rejects qvt credentials in the note title before calling the share API', async () => {
+  const qvtToken = `qvt_${'B'.repeat(43)}`;
+  let shareCalls = 0;
+  await assert.rejects(() => createPublicShareTool({
+    async getNote() {
+      return { title: `Vault token ${qvtToken}`, contentMarkdown: '# Safe', id: '550e8400-e29b-41d4-a716-446655440000' };
+    },
+    async createPublicShare() {
+      shareCalls += 1;
+      throw new Error('must not be called');
+    },
+  }, { noteId: '550e8400-e29b-41d4-a716-446655440000' }), /sensitive credential material/);
+  assert.equal(shareCalls, 0);
+});
+
 test('MCP create_public_share rejects malformed note IDs before reading or publishing', async () => {
   let calls = 0;
   await assert.rejects(() => createPublicShareTool({
