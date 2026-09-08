@@ -138,6 +138,29 @@ The raw qvt token is returned only in the successful creation response. Keep
 the token in the native agent's secret environment and rotate/revoke it when
 its purpose ends.
 
+## Production readiness
+
+Production deployment runs a separate read-only readiness gate after the Vault
+migrations and before dependent Edge Functions:
+
+```bash
+SUPABASE_PROJECT_ID=ciyoandzjezgqxjpcrin pnpm run verify:vault
+```
+
+The gate uses the repository-pinned Supabase CLI. It safely captures the
+`supabase secrets list` JSON and examines only each entry's `name` to confirm
+the presence of `QNOTES_VAULT_TOKEN_PEPPER`; any `value` field is ignored and
+secret values are never logged. A linked `supabase db query` returns
+boolean-only checks for the `supabase_vault` extension, `vault`
+schema, all seven Agent Vault metadata tables, all current service-only Vault
+RPCs including batch reveal, and each RPC's denied `anon` and `authenticated`
+execute privileges plus allowed `service_role` execute privilege.
+
+The command captures CLI stdout and stderr without logging them, rejects
+malformed output, and prints only safe check names on failure. It does not
+create, reveal, rotate, or mutate production credentials, and no
+`QNOTES_VAULT_TOKEN_PEPPER` GitHub secret or public health route is required.
+
 ## Local verification
 
 The focused Vault contract tests are included in the shared, API client,

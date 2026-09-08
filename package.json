@@ -15,6 +15,7 @@
     "benchmark:seed": "node scripts/seed-search-benchmark.mjs",
     "benchmark:search": "node scripts/search-benchmark.mjs",
     "verify:search": "node scripts/verify-search-regression.mjs",
+    "verify:vault": "node scripts/verify-vault-readiness.mjs",
     "test:e2e": "playwright test",
     "test:e2e:smoke": "QNOTES_E2E_SERVE_WORKERS=0 playwright test --config=playwright.smoke.config.ts --project=chromium --workers=1",
     "local:env": "node scripts/write-local-env.mjs",

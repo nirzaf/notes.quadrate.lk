@@ -16,8 +16,9 @@ suite remains a local/manual command (`pnpm run test:e2e`) and is not run by
 CI/CD. The login smoke checks only an explicit structural axe rule allowlist;
 full axe coverage remains in the complete local/manual suite and Issue #22. A
 push to `master` runs the release gate only when the browser smoke and all other
-enabled checks pass, then deploys the production Supabase functions, migrations,
-frontend, and Cloudflare Pages site.
+enabled checks pass, then applies production migrations, runs the read-only
+Vault readiness gate, deploys the production Supabase functions, publishes the
+frontend, and deploys the Cloudflare Pages site.
 
 ## Production environment
 
@@ -33,6 +34,13 @@ the repository or a workflow file. Configure these environment secrets:
 The workflow also accepts the compatibility fallback `CLOUDFLARE_API_KEY` and
 `CLOUDFLARE_EMAIL`, but a scoped Cloudflare API token is preferred. GitHub
 automatically masks configured secret values in Actions logs.
+
+Do not add `QNOTES_VAULT_TOKEN_PEPPER` to this environment. The deploy job
+safely captures the `supabase secrets list` JSON and checks that server-only
+Supabase secret by examining only each entry's `name`; any `value` field is
+ignored and secret values are never logged. The same job then runs a linked
+boolean-only database query through `pnpm run verify:vault`; it must pass after
+migrations and before dependent Edge Function deployment.
 
 The `deploy` job is restricted to pushes to `master`, uses the `production`
 environment, and is not part of pull-request execution. Keep production
@@ -72,4 +80,11 @@ To reproduce the browser smoke directly after the setup above, run:
 
 ```bash
 pnpm run test:e2e:smoke
+```
+
+The production-only readiness check must use an authenticated linked project;
+it is not a local Supabase startup/reset step:
+
+```bash
+SUPABASE_PROJECT_ID=ciyoandzjezgqxjpcrin pnpm run verify:vault
 ```
