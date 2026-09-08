@@ -4,8 +4,8 @@ import { apiJson, signInPage, signInSession } from './helpers';
 const FAKE_SECRET = 'local-e2e-vault-value';
 const SECRET_NAME = 'CLOUDFLARE_API_TOKEN';
 
-type VaultProject = { id: string; slug: string };
-type VaultEnvironment = { id: string; projectId: string; slug: string };
+type VaultProject = { id: string; slug: string; name: string };
+type VaultEnvironment = { id: string; projectId: string; slug: string; name: string };
 type VaultSecret = { id: string; projectId: string; environmentId: string; name: string; version: number };
 
 function data<T>(body: unknown): T {
@@ -138,9 +138,10 @@ test('lists effective multiple grants and replaces them without plaintext or raw
   const listedToken = data<Array<{ id: string; grants: Array<Record<string, unknown>> }>>(listed.body).find((token) => token.id === createdData.metadata.id);
   expect(listedToken?.grants).toHaveLength(2);
   expect(listedToken?.grants).toEqual(expect.arrayContaining([
-    expect.objectContaining({ projectId: fixture.project.id, environmentId: null, secretId: null, action: 'metadata:read' }),
-    expect.objectContaining({ projectId: fixture.project.id, environmentId: fixture.environment.id, secretId: fixture.secret.id, action: 'secret:reveal' }),
+    expect.objectContaining({ projectId: fixture.project.id, projectName: fixture.project.name, environmentId: null, secretId: null, action: 'metadata:read' }),
+    expect.objectContaining({ projectId: fixture.project.id, projectName: fixture.project.name, environmentId: fixture.environment.id, environmentName: fixture.environment.name, secretId: fixture.secret.id, secretName: fixture.secret.name, action: 'secret:reveal' }),
   ]));
+  expect(listedToken?.grants.every((grant) => !('value' in grant))).toBe(true);
   expect(JSON.stringify(listed.body)).not.toContain(createdData.token);
   expect(JSON.stringify(listed.body)).not.toContain(FAKE_SECRET);
 

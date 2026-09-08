@@ -47,6 +47,10 @@ function secretMetadata(row: Record<string, unknown>) {
 type VaultGrantResourceNames = Pick<VaultAgentGrant, 'projectName' | 'environmentName' | 'secretName'>;
 type VaultGrantMetadataTable = 'vault_projects' | 'vault_environments' | 'vault_secrets';
 
+function firstString(...values: unknown[]): string | undefined {
+  return values.find((value): value is string => typeof value === 'string');
+}
+
 function grantMetadata(row: Record<string, unknown>, names: VaultGrantResourceNames = {}): VaultAgentGrant {
   const grant: VaultAgentGrant = {
     id: row.id ? String(row.id) : undefined,
@@ -56,9 +60,12 @@ function grantMetadata(row: Record<string, unknown>, names: VaultGrantResourceNa
     action: String(row.action) as VaultAction,
     createdAt: row.created_at ? String(row.created_at) : row.createdAt ? String(row.createdAt) : undefined,
   };
-  if (names.projectName !== undefined) grant.projectName = names.projectName;
-  if (names.environmentName !== undefined) grant.environmentName = names.environmentName;
-  if (names.secretName !== undefined) grant.secretName = names.secretName;
+  const projectName = firstString(names.projectName, row.projectName, row.project_name);
+  const environmentName = firstString(names.environmentName, row.environmentName, row.environment_name);
+  const secretName = firstString(names.secretName, row.secretName, row.secret_name);
+  if (projectName !== undefined) grant.projectName = projectName;
+  if (environmentName !== undefined) grant.environmentName = environmentName;
+  if (secretName !== undefined) grant.secretName = secretName;
   return grant;
 }
 
