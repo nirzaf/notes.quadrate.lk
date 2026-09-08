@@ -55,6 +55,15 @@ The hosted HTTP MCP endpoint remains Notes-only. Vault tools are available only
 when the native adapter receives both `QVAULT_TOKEN` and an explicit Vault
 profile.
 
+The Integrations page exposes the same four choices (`none`, `metadata`,
+`reveal`, and `write`) alongside the Notes profile. It generates one combined
+Hermes server entry and displays only `QVAULT_TOKEN: "${QVAULT_TOKEN}"` plus
+the selected `QVAULT_MCP_PROFILE`; the raw qvt token must be created separately
+in Agent Vault and supplied through Hermes’ secret environment. It never adds
+`QVAULT_URL`. The combined server supports parallel tool calls only for Notes
+`read` with Vault `none` or `metadata`; Notes `share`/`write` and Vault
+`reveal`/`write` serialize calls.
+
 ## REST routes
 
 Vault routes are fixed under `/vault/*` and accept either a Supabase user JWT
