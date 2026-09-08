@@ -288,7 +288,7 @@ test('MCP protocol advertises the exact read and write tool profiles', async () 
   const write = await connectedProtocol('write', protocolClient());
   const writeTools = await write.client.listTools();
   assert.deepEqual(writeTools.tools.map((tool) => tool.name), WRITE_PROFILE_TOOL_NAMES);
-  assert.equal(writeTools.tools.some((tool) => tool.name === 'create_public_share'), true);
+  assert.equal(writeTools.tools.some((tool) => tool.name === 'create_public_share'), false);
   assert.deepEqual(WRITE_TOOL_NAMES, ['capture_note', 'append_note', 'update_note', 'delete_note', 'restore_note', 'move_note_to_notebook']);
   const deleteTool = writeTools.tools.find((tool) => tool.name === 'delete_note');
   assert.match(JSON.stringify(deleteTool.inputSchema), /confirm/);
@@ -301,6 +301,14 @@ test('MCP protocol advertises the exact read and write tool profiles', async () 
   assert.equal(readToolNames.includes('create_notebook'), false);
   await readAgain.client.close();
   await write.client.close();
+});
+
+test('MCP write profile registers create_public_share only with the explicit capability', async () => {
+  const { client } = await connectedProtocol('write', protocolClient(), { allowPublicShare: true });
+  const tools = await client.listTools();
+  assert.deepEqual(tools.tools.map((tool) => tool.name), [...READ_TOOL_NAMES, ...SHARE_TOOL_NAMES, ...WRITE_TOOL_NAMES]);
+  assert.equal(tools.tools.some((tool) => tool.name === 'create_public_share'), true);
+  await client.close();
 });
 
 test('MCP move_note_to_notebook uses the API client and preserves transactional identities', async () => {

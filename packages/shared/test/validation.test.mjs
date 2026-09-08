@@ -86,7 +86,7 @@ test('validates optional append versions and generates a parseable Hermes config
   assert.deepEqual(config.mcp_servers.quadrate_notes_write.env, {
     QNOTES_URL: '${QNOTES_URL}', QNOTES_MCP_PROFILE: 'write', QNOTES_WRITE_TOKEN: '${QNOTES_WRITE_TOKEN}', QNOTES_MCP_DEVICE_ID: deviceId,
   });
-  assert.deepEqual(config.mcp_servers.quadrate_notes_write.tools.include, ['search_notes', 'read_note_context', 'get_block', 'list_notebooks', 'resolve_public_share', 'create_public_share', 'capture_note', 'append_note', 'update_note', 'delete_note', 'restore_note', 'move_note_to_notebook']);
+  assert.deepEqual(config.mcp_servers.quadrate_notes_write.tools.include, ['search_notes', 'read_note_context', 'get_block', 'list_notebooks', 'resolve_public_share', 'capture_note', 'append_note', 'update_note', 'delete_note', 'restore_note', 'move_note_to_notebook']);
   assert.throws(() => buildHermesMcpConfig({ profile: 'write', serverPath: '/repo/server.js' }), /stable UUID/);
 });
 

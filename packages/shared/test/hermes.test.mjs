@@ -29,7 +29,7 @@ test('read, share, and write profiles use the hardened Hermes runtime policy', (
   const profiles = [
     { name: 'read', parallel: true, tools: READ_TOOLS, env: { QNOTES_URL: '${QNOTES_URL}', QNOTES_TOKEN: '${QNOTES_READ_TOKEN}' } },
     { name: 'share', parallel: false, tools: [...READ_TOOLS, ...SHARE_TOOLS], env: { QNOTES_URL: '${QNOTES_URL}', QNOTES_TOKEN: '${QNOTES_TOKEN}' } },
-    { name: 'write', parallel: false, tools: [...READ_TOOLS, ...SHARE_TOOLS, ...WRITE_TOOLS], env: { QNOTES_URL: '${QNOTES_URL}', QNOTES_MCP_PROFILE: 'write', QNOTES_WRITE_TOKEN: '${QNOTES_WRITE_TOKEN}', QNOTES_MCP_DEVICE_ID: deviceId } },
+    { name: 'write', parallel: false, tools: [...READ_TOOLS, ...WRITE_TOOLS], env: { QNOTES_URL: '${QNOTES_URL}', QNOTES_MCP_PROFILE: 'write', QNOTES_WRITE_TOKEN: '${QNOTES_WRITE_TOKEN}', QNOTES_MCP_DEVICE_ID: deviceId } },
   ];
 
   for (const profile of profiles) {
@@ -49,6 +49,16 @@ test('write profile requires a stable UUID device ID', () => {
   assert.throws(() => buildHermesMcpConfig({ profile: 'write', serverPath }), /stable UUID/);
   assert.throws(() => buildHermesMcpConfig({ profile: 'write', serverPath, deviceId: 'not-a-uuid' }), /stable UUID/);
   assert.equal(generatedConfig('write').env.QNOTES_MCP_DEVICE_ID, deviceId);
+});
+
+test('write profile omits public sharing by default and includes it only with explicit opt-in', () => {
+  const defaultConfig = generatedConfig('write');
+  assert.equal(defaultConfig.tools.include.includes('create_public_share'), false);
+  assert.equal('QNOTES_MCP_ENABLE_PUBLIC_SHARE' in defaultConfig.env, false);
+
+  const optInConfig = JSON.parse(buildHermesMcpConfig({ profile: 'write', serverPath, deviceId, includePublicShare: true })).mcp_servers.quadrate_notes_write;
+  assert.equal(optInConfig.env.QNOTES_MCP_ENABLE_PUBLIC_SHARE, 'true');
+  assert.deepEqual(optInConfig.tools.include, [...READ_TOOLS, ...SHARE_TOOLS, ...WRITE_TOOLS]);
 });
 
 test('combines every Vault profile with every Notes profile without exposing raw secrets', () => {
@@ -73,7 +83,7 @@ test('combines every Vault profile with every Notes profile without exposing raw
   const notesProfiles = {
     read: { parallel: true, tools: READ_TOOLS, env: { QNOTES_URL: '${QNOTES_URL}', QNOTES_TOKEN: '${QNOTES_READ_TOKEN}' } },
     share: { parallel: false, tools: [...READ_TOOLS, ...SHARE_TOOLS], env: { QNOTES_URL: '${QNOTES_URL}', QNOTES_TOKEN: '${QNOTES_TOKEN}' } },
-    write: { parallel: false, tools: [...READ_TOOLS, ...SHARE_TOOLS, ...WRITE_TOOLS], env: { QNOTES_URL: '${QNOTES_URL}', QNOTES_MCP_PROFILE: 'write', QNOTES_WRITE_TOKEN: '${QNOTES_WRITE_TOKEN}', QNOTES_MCP_DEVICE_ID: deviceId } },
+    write: { parallel: false, tools: [...READ_TOOLS, ...WRITE_TOOLS], env: { QNOTES_URL: '${QNOTES_URL}', QNOTES_MCP_PROFILE: 'write', QNOTES_WRITE_TOKEN: '${QNOTES_WRITE_TOKEN}', QNOTES_MCP_DEVICE_ID: deviceId } },
   };
 
   for (const [notesProfile, notes] of Object.entries(notesProfiles)) {
