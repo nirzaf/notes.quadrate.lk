@@ -1,5 +1,6 @@
 import { QNotesClient, QVaultClient } from '@qnotes/api-client';
 import { isUUID } from '@qnotes/shared';
+import { resolveVaultBaseUrl } from './runtime-config.ts';
 import { runQNotesMcpServer, type McpProfile, type VaultMcpProfile } from './server.ts';
 
 function requiredEnvironment(name: string): string {
@@ -14,6 +15,7 @@ const profile: McpProfile = process.env.QNOTES_MCP_PROFILE === 'write'
     ? 'share'
     : 'read';
 const baseUrl = requiredEnvironment('QNOTES_URL');
+const vaultBaseUrl = resolveVaultBaseUrl(baseUrl, process.env.QVAULT_URL);
 const token = profile === 'write'
   ? requiredEnvironment('QNOTES_WRITE_TOKEN')
   : (process.env.QNOTES_TOKEN ?? requiredEnvironment('QNOTES_READ_TOKEN'));
@@ -28,7 +30,7 @@ const vaultProfile: VaultMcpProfile | undefined = vaultToken
   ? (process.env.QVAULT_MCP_PROFILE === 'write' ? 'write' : process.env.QVAULT_MCP_PROFILE === 'reveal' ? 'reveal' : 'metadata')
   : undefined;
 const vaultClient = vaultToken
-  ? new QVaultClient({ baseUrl: process.env.QVAULT_URL?.trim() || baseUrl, getAccessToken: () => vaultToken })
+  ? new QVaultClient({ baseUrl: vaultBaseUrl, getAccessToken: () => vaultToken })
   : undefined;
 await runQNotesMcpServer(client, profile, {
   ...(configuredDeviceId ? { deviceId: configuredDeviceId } : {}),

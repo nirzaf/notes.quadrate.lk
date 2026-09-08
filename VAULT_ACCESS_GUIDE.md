@@ -28,11 +28,13 @@ Notes credential and cannot call `/api/*` routes.
 ## Native MCP profiles
 
 The native MCP adapter keeps Notes and Vault clients separate. Existing Notes
-profiles are unchanged. Configure Vault explicitly in the process environment:
+profiles are unchanged. Vault requests always use the required `QNOTES_URL`;
+there is no independent Vault endpoint configuration. A non-empty
+`QVAULT_URL` is rejected during startup so a Vault token cannot be sent to an
+unintended origin. Configure Vault explicitly in the process environment:
 
 ```bash
 export QNOTES_URL=http://127.0.0.1:54321/functions/v1/qnotes-api
-export QVAULT_URL="$QNOTES_URL" # optional; must remain the same API origin
 export QVAULT_TOKEN=qvt_replace-with-a-vault-agent-token
 export QVAULT_MCP_PROFILE=metadata # metadata | reveal | write
 ```

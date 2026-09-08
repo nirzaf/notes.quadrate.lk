@@ -787,5 +787,6 @@ write no plaintext to metadata or audit, and return `Cache-Control: no-store`.
 
 The complete route table, limits, MCP profiles, and data-boundary rules are in
 [VAULT_ACCESS_GUIDE.md](VAULT_ACCESS_GUIDE.md). For the native adapter, set
-`QVAULT_TOKEN` and `QVAULT_MCP_PROFILE` explicitly. `QVAULT_URL` defaults to
-`QNOTES_URL`; do not place either token in browser code or a committed env file.
+`QVAULT_TOKEN` and `QVAULT_MCP_PROFILE` explicitly. Vault requests use the
+required `QNOTES_URL`; a non-empty `QVAULT_URL` is rejected. Do not place
+either token in browser code or a committed env file.
