@@ -65,6 +65,8 @@ jobs:
           fi
       - name: Start the local Supabase stack
         run: pnpm exec supabase start
+      - run: pnpm run local:env
+      - run: pnpm run seed:test-users
       - run: pnpm exec supabase test db
       - name: Stop the local Supabase stack
         if: always()
