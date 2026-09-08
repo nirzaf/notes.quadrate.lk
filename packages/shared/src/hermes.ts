@@ -36,7 +36,7 @@ export function buildHermesMcpConfig({ profile, serverPath, deviceId }: HermesMc
     args: [serverPath],
     env: environment,
     connect_timeout: 10,
-    timeout: 20,
+    timeout: 45,
     supports_parallel_tool_calls: profile === 'read',
     tools: { include: profile === 'write' ? [...READ_TOOLS, ...SHARE_TOOLS, ...WRITE_TOOLS] : profile === 'share' ? [...READ_TOOLS, ...SHARE_TOOLS] : READ_TOOLS },
     prompts: false,

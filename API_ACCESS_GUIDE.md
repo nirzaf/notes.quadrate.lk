@@ -621,12 +621,12 @@ mcp_servers:
   quadrate_notes_read:
     command: "node"
     args:
-      - "/absolute/path/notes.quadrate.lk/packages/mcp-server/dist/index.js"
+      - "/absolute/local/path/notes.quadrate.lk/packages/mcp-server/dist/index.js"
     env:
       QNOTES_URL: "${QNOTES_URL}"
       QNOTES_TOKEN: "${QNOTES_READ_TOKEN}"
     connect_timeout: 10
-    timeout: 20
+    timeout: 45
     supports_parallel_tool_calls: true
     tools:
       include:
@@ -640,17 +640,22 @@ mcp_servers:
   quadrate_notes_write:
     command: "node"
     args:
-      - "/absolute/path/notes.quadrate.lk/packages/mcp-server/dist/index.js"
+      - "/absolute/local/path/notes.quadrate.lk/packages/mcp-server/dist/index.js"
     env:
       QNOTES_URL: "${QNOTES_URL}"
       QNOTES_MCP_PROFILE: "write"
       QNOTES_WRITE_TOKEN: "${QNOTES_WRITE_TOKEN}"
       QNOTES_MCP_DEVICE_ID: "replace-with-the-stable-uuid-from-Integrations"
     connect_timeout: 10
-    timeout: 20
+    timeout: 45
     supports_parallel_tool_calls: false
     tools:
       include:
+        - search_notes
+        - read_note_context
+        - get_block
+        - list_notebooks
+        - resolve_public_share
         - create_public_share
         - capture_note
         - append_note
@@ -663,13 +668,13 @@ mcp_servers:
   quadrate_notes_share:
     command: "node"
     args:
-      - "/absolute/path/notes.quadrate.lk/packages/mcp-server/dist/index.js"
+      - "/absolute/local/path/notes.quadrate.lk/packages/mcp-server/dist/index.js"
     env:
       QNOTES_URL: "${QNOTES_URL}"
       QNOTES_MCP_PROFILE: "share"
       QNOTES_TOKEN: "${QNOTES_TOKEN}"
     connect_timeout: 10
-    timeout: 20
+    timeout: 45
     supports_parallel_tool_calls: false
     tools:
       include:
@@ -681,6 +686,8 @@ mcp_servers:
         - create_public_share
       prompts: false
 ```
+
+The `connect_timeout` covers local Node MCP startup and initialization. The per-tool `timeout` covers each remote-backed MCP operation, so the generated configuration allows up to 45 seconds for an individual call. Read-only profiles support parallel tool calls; share and write profiles intentionally serialize them. Each `args` value must remain the literal local filesystem path to `packages/mcp-server/dist/index.js`, not a Markdown link or HTTP URL.
 
 Keep tokens in the MCP server process environment. Do not put them in tool arguments, URLs, or returned resource content. Browser search selection telemetry is stored locally as query/document IDs and timestamps; plaintext queries are not logged or transmitted as telemetry.
 

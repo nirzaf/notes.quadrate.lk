@@ -34,7 +34,7 @@ const expiryChoices: Array<{ value: ExpiryChoice; label: string; days?: number }
   { value: '1y', label: '1 year', days: 365 },
   { value: 'never', label: 'Does not expire' },
 ];
-const mcpServerPath = '/absolute/path/to/notes.quadrate.lk/packages/mcp-server/dist/index.js';
+const mcpServerPath = '/absolute/local/path/to/notes.quadrate.lk/packages/mcp-server/dist/index.js';
 
 interface IssuedToken {
   token: string;
