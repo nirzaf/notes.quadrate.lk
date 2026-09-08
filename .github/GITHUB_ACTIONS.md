@@ -47,13 +47,28 @@ Use the pinned toolchain and run the same critical checks locally when needed:
 corepack enable
 corepack install --global pnpm@12.1.0
 pnpm install --frozen-lockfile
-pnpm run verify:local
 ```
 
 The GitHub-hosted runner provides Docker for the local Supabase integration and
 search regression and browser smoke jobs; no host-local `.env.local` file is
-required by CI/CD. To reproduce the browser smoke locally after the one-time
-setup, run:
+required by CI/CD. Before running the complete local gate or the browser smoke,
+ensure Docker is running and complete the local Supabase/test-user/browser
+setup:
+
+```bash
+pnpm exec supabase start
+pnpm run local:env
+pnpm run seed:test-users
+pnpm exec playwright install chromium
+```
+
+For the complete local gate, run:
+
+```bash
+pnpm run verify:local
+```
+
+To reproduce the browser smoke directly after the setup above, run:
 
 ```bash
 pnpm run test:e2e:smoke

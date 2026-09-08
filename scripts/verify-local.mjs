@@ -221,12 +221,25 @@ async function checkSupabase(localTargets) {
 
 async function checkPlaywrightConfig() {
   const config = await readFile(join(root, 'playwright.config.ts'), 'utf8');
+  const smokeConfig = await readFile(join(root, 'playwright.smoke.config.ts'), 'utf8');
   const projectNames = [...config.matchAll(/name:\s*['"]([^'"]+)['"]/g)].map((match) => match[1]);
   if (!projectNames.includes('chromium')) throw new Error('playwright.config.ts does not define the required chromium project.');
   if (!config.includes("devices['Desktop Chrome']")) throw new Error('playwright.config.ts no longer selects the verified Desktop Chrome device for chromium.');
   if (!config.includes('reuseExistingServer: true')) throw new Error('playwright.config.ts must retain its verified reusable server lifecycle.');
   if (!config.includes('supabase/functions/.env.test')) throw new Error('playwright.config.ts must serve local functions with supabase/functions/.env.test.');
-  for (const url of config.match(/https?:\/\/[^'"\s]+/g) ?? []) assertLocalUrl(url, 'playwright.config.ts URL');
+  const extendsBaseConfig = /^\s*\.\.\.baseConfig\s*,\s*$/m.test(smokeConfig);
+  if (!/import\s+baseConfig\s+from\s+['"]\.\/playwright\.config(?:\.ts)?['"]/.test(smokeConfig) || !extendsBaseConfig) {
+    throw new Error('playwright.smoke.config.ts must extend the verified base Playwright config.');
+  }
+  if (/^\s*(?:projects|webServer)\s*:/m.test(smokeConfig)) {
+    throw new Error('playwright.smoke.config.ts must retain the chromium project and reusable web servers from playwright.config.ts.');
+  }
+  for (const [path, source] of [['playwright.config.ts', config], ['playwright.smoke.config.ts', smokeConfig]]) {
+    for (const url of source.match(/https?:\/\/[^'"\s]+/g) ?? []) assertLocalUrl(url, `${path} URL`);
+  }
+  if (!extendsBaseConfig || !config.includes('supabase/functions/.env.test')) {
+    throw new Error('The effective smoke config must retain the local supabase/functions/.env.test serving path from playwright.config.ts.');
+  }
   const { chromium } = await import('@playwright/test');
   try {
     await access(chromium.executablePath());

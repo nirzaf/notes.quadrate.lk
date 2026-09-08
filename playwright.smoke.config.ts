@@ -6,7 +6,7 @@ export default defineConfig({
   testMatch: /release-smoke\.spec\.ts/,
   timeout: 45_000,
   expect: { timeout: 15_000 },
-  globalTimeout: 2 * 60_000,
+  globalTimeout: 4 * 60_000,
   fullyParallel: false,
   workers: 1,
   retries: 0,

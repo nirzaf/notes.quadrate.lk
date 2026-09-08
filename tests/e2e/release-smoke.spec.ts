@@ -1,6 +1,6 @@
 import { AxeBuilder } from '@axe-core/playwright';
 import { test, expect } from './test-fixtures';
-import type { Note, NoteSummary } from '@qnotes/shared';
+import type { Note } from '@qnotes/shared';
 import type { Page, Route } from '@playwright/test';
 import { createNoteApi, expectEditorMode, expectPreviewMode, getNoteApi, signInPage, signInSession } from './helpers';
 
@@ -59,23 +59,7 @@ async function expectAccessible(page: Page, label: string): Promise<void> {
   expect(results.violations, `${label} accessibility violations\n${summary}`).toEqual([]);
 }
 
-function fixtureSummary(note: Note): NoteSummary {
-  return {
-    id: note.id,
-    slug: note.slug,
-    title: note.title,
-    excerpt: note.contentPlain.slice(0, 240),
-    tags: note.tags,
-    notebookId: note.notebookId,
-    version: note.version,
-    createdAt: note.createdAt,
-    updatedAt: note.updatedAt,
-    deletedAt: note.deletedAt,
-  };
-}
-
-async function interceptSyntheticNoteReads(page: Page, seededNote: Note): Promise<(note: Note) => void> {
-  let note = seededNote;
+async function interceptSecondaryMetadataReads(page: Page, seededNote: Note): Promise<void> {
   const notePath = `/api/notes/${encodeURIComponent(seededNote.id)}`;
 
   await page.route('**/functions/v1/qnotes-api/**', async (route: Route) => {
@@ -95,9 +79,7 @@ async function interceptSyntheticNoteReads(page: Page, seededNote: Note): Promis
 
     const path = url.pathname.slice(functionPrefix.length);
     let data: unknown;
-    if (path === notePath) data = note;
-    else if (path === '/api/notes') data = { items: [fixtureSummary(note)], nextCursor: null };
-    else if (path === '/api/notebooks') data = { items: [] };
+    if (path === '/api/notebooks') data = { items: [] };
     else if (path === `${notePath}/attachments`) data = [];
     else if (path === `${notePath}/share`) data = null;
     else {
@@ -111,15 +93,13 @@ async function interceptSyntheticNoteReads(page: Page, seededNote: Note): Promis
       body: JSON.stringify({ data }),
     });
   });
-
-  return (updatedNote) => { note = updatedNote; };
 }
 
 test('covers note edit-preview and browser navigation', async ({ page }) => {
   const assertNoPageErrors = capturePageErrors(page);
   const session = await signInSession();
   const note = await createNoteApi(session.access_token, `Release smoke ${crypto.randomUUID().slice(0, 8)}`, '# Release smoke note\n\nBrowser preview contract marker.');
-  const updateFixture = await interceptSyntheticNoteReads(page, note);
+  await interceptSecondaryMetadataReads(page, note);
   const title = `${note.title} edited`;
   const markdown = '# Release smoke note\n\nBrowser preview contract marker.';
 
@@ -132,7 +112,6 @@ test('covers note edit-preview and browser navigation', async ({ page }) => {
   await page.getByLabel('Title').fill(title);
   await page.locator('.cm-content').fill(markdown);
   await expect.poll(() => getNoteApi(session.access_token, note.id), { timeout: 20_000 }).toMatchObject({ title, contentMarkdown: markdown });
-  updateFixture(await getNoteApi(session.access_token, note.id));
 
   await page.getByRole('button', { name: 'Preview', exact: true }).click();
   await expectPreviewMode(page);
@@ -206,7 +185,7 @@ test('keeps the stable login surface free of automated accessibility violations'
 test('covers the Preview-first note and attachment panel UI', async ({ page }) => {
   const session = await signInSession();
   const note = await createNoteApi(session.access_token, `Attachment smoke ${crypto.randomUUID().slice(0, 8)}`, '# Attachment smoke note\n\nAttachment panel fixture.');
-  await interceptSyntheticNoteReads(page, note);
+  await interceptSecondaryMetadataReads(page, note);
 
   await signInPage(page);
   await page.goto(`/notes/${note.id}`);
@@ -218,8 +197,8 @@ test('covers the Preview-first note and attachment panel UI', async ({ page }) =
   await expectPreviewMode(page);
   const panel = page.getByRole('region', { name: 'Attachments' });
   await expect(panel).toBeVisible();
-  await expect(panel).toContainText('No attachments yet.');
   await panel.locator('summary').click();
+  await expect(panel).toContainText('No attachments yet.');
   await expect(panel.getByLabel('Add a file')).toBeVisible();
   await expect(panel).toContainText('TXT, Markdown, PDF, PNG, JPEG, or WebP');
   await panel.getByRole('button', { name: 'Screenshot', exact: true }).click();
