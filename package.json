@@ -16,6 +16,7 @@
     "benchmark:search": "node scripts/search-benchmark.mjs",
     "verify:search": "node scripts/verify-search-regression.mjs",
     "test:e2e": "playwright test",
+    "test:e2e:smoke": "QNOTES_E2E_SERVE_WORKERS=0 playwright test --config=playwright.smoke.config.ts --project=chromium --workers=1",
     "local:env": "node scripts/write-local-env.mjs",
     "seed:test-users": "node scripts/seed-test-users.mjs",
     "db:types": "pnpm exec supabase gen types typescript --local --schema notesdb,public > packages/shared/src/database.types.ts",

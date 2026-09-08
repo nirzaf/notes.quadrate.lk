@@ -2,11 +2,16 @@
 
 The workflow in [`workflows/ci.yml`](workflows/ci.yml) uses GitHub-hosted
 `ubuntu-latest` runners. Pull requests run the core checks, local Supabase
-SQL/database integration tests, and the search regression job. The complete
-Playwright E2E suite remains a local/manual command (`pnpm run test:e2e`) and
-is not run by CI/CD. Search evaluation remains path-gated after the job starts.
-A push to `master` runs the release gate and then deploys the production
-Supabase functions, migrations, frontend, and Cloudflare Pages site.
+SQL/database integration tests, the search regression job, and the short
+Chromium browser smoke job. The smoke job installs bundled Chromium, starts
+local Supabase, writes local environment files, seeds only the dedicated test
+users, serves only `qnotes-api`, and runs the focused release smoke config with
+one worker and explicit deadlines. Search evaluation remains path-gated after
+the job starts. The complete Playwright E2E suite remains a local/manual
+command (`pnpm run test:e2e`) and is not run by CI/CD. A push to `master` runs
+the release gate only when the browser smoke and all other enabled checks pass,
+then deploys the production Supabase functions, migrations, frontend, and
+Cloudflare Pages site.
 
 ## Production environment
 
@@ -40,4 +45,10 @@ pnpm run verify:local
 ```
 
 The GitHub-hosted runner provides Docker for the local Supabase integration and
-search regression jobs; no host-local `.env.local` file is required by CI/CD.
+search regression and browser smoke jobs; no host-local `.env.local` file is
+required by CI/CD. To reproduce the browser smoke locally after the one-time
+setup, run:
+
+```bash
+pnpm run test:e2e:smoke
+```

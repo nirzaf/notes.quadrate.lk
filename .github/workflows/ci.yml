@@ -154,17 +154,59 @@ jobs:
           fi
           pnpm exec supabase stop
 
+  browser_smoke:
+    name: browser smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      QNOTES_E2E_SERVE_WORKERS: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: ${{ env.DENO_VERSION }}
+      - name: Enable the pinned package manager
+        run: |
+          corepack enable
+          corepack install --global "pnpm@${PNPM_VERSION}"
+          pnpm --version
+      - run: pnpm install --frozen-lockfile
+      - name: Install the bundled Chromium browser
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Validate Docker runtime prerequisites
+        shell: bash
+        run: |
+          if ! docker info >/dev/null 2>&1; then
+            echo 'Docker daemon is unavailable on the GitHub-hosted runner.'
+            exit 1
+          fi
+      - name: Start the local Supabase stack
+        run: pnpm exec supabase start
+      - run: pnpm run local:env
+      - run: pnpm run seed:test-users
+      - name: Run the bounded browser release smoke suite
+        run: pnpm run test:e2e:smoke
+      - name: Stop the local Supabase stack
+        if: always()
+        run: pnpm exec supabase stop
+
   release_gate:
     name: release gate
-    needs: [core, integration, search_regression]
+    needs: [core, integration, search_regression, browser_smoke]
     if: >-
       ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/master' &&
       needs.core.result == 'success' &&
       (needs.integration.result == 'success' || needs.integration.result == 'skipped') &&
-      (needs.search_regression.result == 'success' || needs.search_regression.result == 'skipped') }}
+      (needs.search_regression.result == 'success' || needs.search_regression.result == 'skipped') &&
+      needs.browser_smoke.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
-      - run: echo 'Core verification passed; all enabled release checks passed.'
+      - run: echo 'Core, integration, search, and browser smoke verification passed.'
 
   deploy:
     name: deploy production

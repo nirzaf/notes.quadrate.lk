@@ -6,6 +6,7 @@ const webServers = [
     command: 'pnpm --filter @qnotes/web dev --host 127.0.0.1',
     url: 'http://127.0.0.1:5173',
     reuseExistingServer: true,
+    timeout: 120_000,
   },
   ...(process.env.QNOTES_E2E_EXTERNAL_API === '1'
     ? []
