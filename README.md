@@ -235,7 +235,8 @@ service-only RPCs, committed reveal audits, expected-version writes, and
 replay-safe mutation IDs. Vault values are never part of Notes search,
 embeddings, logs, browser persistence, public shares, or workspace backups.
 
-Native MCP callers opt in with `QVAULT_TOKEN`, optional `QVAULT_URL`, and
-`QVAULT_MCP_PROFILE=metadata|reveal|write`; the hosted HTTP MCP endpoint stays
-Notes-only. See [VAULT_ACCESS_GUIDE.md](VAULT_ACCESS_GUIDE.md) for the route,
-grant, and secret-handling contract.
+Native MCP callers opt in with `QVAULT_TOKEN` and
+`QVAULT_MCP_PROFILE=metadata|reveal|write`; Vault requests use the required
+`QNOTES_URL` and a non-empty `QVAULT_URL` is rejected. The hosted HTTP MCP
+endpoint stays Notes-only. See [VAULT_ACCESS_GUIDE.md](VAULT_ACCESS_GUIDE.md)
+for the route, grant, and secret-handling contract.
