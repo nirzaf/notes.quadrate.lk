@@ -1,5 +1,5 @@
 import { test, expect } from './test-fixtures';
-import { apiJson, createDevice, createNoteApi, getNoteApi, poll, signInSession, updateNoteApi } from './helpers';
+import { apiJson, createDevice, createNoteApi, expectEditorMode, expectPreviewMode, getNoteApi, poll, signInSession, updateNoteApi } from './helpers';
 
 const apiPath = '**/functions/v1/qnotes-api/api/notes/**';
 
@@ -30,8 +30,12 @@ test('surfaces overlapping edits and supports every conflict resolution action',
   try {
     await deviceA.page.goto(noteUrl(note.id));
     await deviceB.page.goto(noteUrl(note.id));
-    await expect(deviceA.page.locator('.cm-content')).toBeVisible();
-    await expect(deviceB.page.locator('.cm-content')).toBeVisible();
+    await expectPreviewMode(deviceA.page);
+    await expectPreviewMode(deviceB.page);
+    await deviceA.page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await expectEditorMode(deviceA.page);
+    await deviceB.page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await expectEditorMode(deviceB.page);
 
     await blockPatchRequests(deviceA.page);
     await blockPatchRequests(deviceB.page);
@@ -83,6 +87,9 @@ test('surfaces overlapping edits and supports every conflict resolution action',
     await expect(deviceB.page.locator('.cm-content')).toContainText('local draft retained');
 
     await deviceB.page.reload();
+    await expectPreviewMode(deviceB.page);
+    await deviceB.page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await expectEditorMode(deviceB.page);
     await expect(deviceB.page.locator('.cm-content')).toContainText('local draft retained', { timeout: 15_000 });
   } finally {
     await deviceA.context.close();
@@ -96,7 +103,9 @@ test('preserves a dirty draft and can recover it after remote deletion', async (
   const device = await createDevice(browser);
   try {
     await device.page.goto(noteUrl(note.id));
-    await expect(device.page.locator('.cm-content')).toBeVisible();
+    await expectPreviewMode(device.page);
+    await device.page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await expectEditorMode(device.page);
     await blockPatchRequests(device.page);
     await device.page.locator('.cm-content').fill('local draft before remote deletion\n');
     await expect(device.page.locator('.cm-content')).toContainText('local draft before remote deletion');

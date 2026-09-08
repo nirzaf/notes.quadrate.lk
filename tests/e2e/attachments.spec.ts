@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { test, expect } from './test-fixtures';
 import { createClient } from '@supabase/supabase-js';
-import { apiJson, createNoteApi, getNoteApi, invokeWorker, listAttachmentsApi, localEnv, OTHER, poll, searchItems, signInPage, signInSession } from './helpers';
+import { apiJson, createNoteApi, expectPreviewMode, getNoteApi, invokeWorker, listAttachmentsApi, localEnv, OTHER, poll, searchItems, signInPage, signInSession } from './helpers';
 
 const marker = 'Quadrate attachment search marker 8241';
 
@@ -99,6 +99,7 @@ test('refreshes attachment processing stages in the open note without a reload',
   const note = await createNoteApi(session.access_token, `Attachment UI ${crypto.randomUUID()}`);
   await signInPage(page);
   await page.goto(`/notes/${note.id}`);
+  await expectPreviewMode(page);
   await page.getByText('Attachments', { exact: true }).click();
   await page.locator(`#attachment-upload-${note.id}`).setInputFiles('tests/e2e/fixtures/sample.txt');
   const row = page.locator('.q-attachment-row').first();
@@ -116,6 +117,7 @@ test('previews a private text attachment in the open note', async ({ page }) => 
   await uploadAndFinalize(session.access_token, note.id, 'preview.txt', 'text/plain', bytes);
   await signInPage(page);
   await page.goto(`/notes/${note.id}`);
+  await expectPreviewMode(page);
   await page.getByText('Attachments', { exact: true }).click();
   const row = page.locator('.q-attachment-row').first();
   await expect(row).toContainText('preview.txt');
@@ -136,6 +138,7 @@ test('offers the screenshot modes and leaves attachments unchanged when capture 
   });
   await signInPage(page);
   await page.goto(`/notes/${note.id}`);
+  await expectPreviewMode(page);
   await page.getByText('Attachments', { exact: true }).click();
   await page.getByRole('button', { name: 'Screenshot' }).click();
   await expect(page.getByRole('menuitem', { name: /Visible Area/ })).toBeVisible();
@@ -153,12 +156,13 @@ test('captures the current note page through the ordinary private attachment flo
   const before = await getNoteApi(session.access_token, note.id);
   await signInPage(page);
   await page.goto(`/notes/${note.id}`);
-  await expect(page.locator('.cm-content')).toContainText('Long section 1');
+  await expectPreviewMode(page);
+  await expect(page.getByLabel('Rendered note preview')).toContainText('Long section 1');
   await page.getByText('Attachments', { exact: true }).click();
   await page.getByRole('button', { name: 'Screenshot' }).click();
   await page.getByRole('menuitem', { name: /Entire Page/ }).click();
   await expect(page.getByText('Screenshot attached securely.', { exact: true })).toBeVisible({ timeout: 15_000 });
   await expect.poll(async () => (await listAttachmentsApi(session.access_token, note.id)).filter((item) => item.mimeType === 'image/png' && /^screenshot-page-.*\.png$/.test(item.originalFileName))).not.toHaveLength(0);
   await expect.poll(() => getNoteApi(session.access_token, note.id)).toMatchObject({ contentMarkdown: before.contentMarkdown, title: before.title, tags: before.tags, version: before.version });
-  await expect(page.locator('.cm-content')).toBeVisible();
+  await expectPreviewMode(page);
 });

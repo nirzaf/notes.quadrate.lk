@@ -1,5 +1,5 @@
 import { test, expect } from './test-fixtures';
-import { apiJson, createNoteApi, signInPage, signInSession } from './helpers';
+import { apiJson, createNoteApi, expectPreviewMode, signInPage, signInSession } from './helpers';
 
 test('creates notebooks, moves notes, filters the sidebar, and keeps note actions at the top', async ({ page }) => {
   await signInPage(page);
@@ -18,6 +18,7 @@ test('creates notebooks, moves notes, filters the sidebar, and keeps note action
   expect(notebook).toBeTruthy();
 
   await page.locator('.q-note-items .q-note-item').filter({ hasText: 'Notebook sidebar test' }).click();
+  await expectPreviewMode(page);
   await expect(page.getByRole('button', { name: 'Copy Markdown' })).toBeVisible();
   await expect(page.locator('.q-editor-controls').getByRole('button', { name: 'Copy Markdown' })).toBeVisible();
   await page.getByRole('combobox', { name: 'Notebook' }).selectOption(notebook!.id);

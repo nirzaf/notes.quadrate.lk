@@ -188,6 +188,18 @@ export async function signInPage(page: Page, user: TestUser = OWNER): Promise<vo
   await expect(page.locator('.q-working-header h2')).toBeVisible();
 }
 
+export async function expectPreviewMode(page: Page): Promise<void> {
+  await expect(page.getByLabel('Rendered note preview')).toBeVisible();
+  await expect(page.locator('.cm-content')).toHaveCount(0);
+}
+
+export async function expectEditorMode(page: Page): Promise<void> {
+  await expect(page.getByRole('button', { name: 'Edit', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  const editor = page.locator('.cm-content');
+  await expect(editor).toBeVisible();
+  await expect(editor).toBeFocused();
+}
+
 export async function createDevice(browser: Browser, user: TestUser = OWNER): Promise<{ context: BrowserContext; page: Page }> {
   const context = await browser.newContext();
   const page = await context.newPage();

@@ -1,7 +1,7 @@
 import { AxeBuilder } from '@axe-core/playwright';
 import { test, expect } from './test-fixtures';
 import type { Page } from '@playwright/test';
-import { apiJson, createNoteApi, createPublicShareApi, signInPage, signInSession } from './helpers';
+import { apiJson, createNoteApi, createPublicShareApi, expectEditorMode, expectPreviewMode, signInPage, signInSession } from './helpers';
 
 async function expectAccessible(page: Page, label: string): Promise<void> {
   const results = await new AxeBuilder({ page }).analyze();
@@ -95,10 +95,13 @@ test('search and note editor remain accessible through edit and preview views', 
   await expectAccessible(page, 'search');
 
   await page.goto(`/notes/${note.id}`);
-  await expect(page.locator('.cm-content')).toBeVisible();
+  await expectPreviewMode(page);
+  await expectAccessible(page, 'note preview');
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await expectEditorMode(page);
   await expectAccessible(page, 'note editor');
   await page.getByRole('button', { name: 'Preview' }).click();
-  await expect(page.getByLabel('Rendered note preview')).toBeVisible();
+  await expectPreviewMode(page);
   await expectAccessible(page, 'note preview');
 });
 

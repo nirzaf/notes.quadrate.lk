@@ -1,5 +1,5 @@
 import { test, expect } from './test-fixtures';
-import { apiJson, createNoteApi, getNoteApi, listNotesApi, OWNER, poll, signInPage, signInSession } from './helpers';
+import { apiJson, createNoteApi, expectEditorMode, expectPreviewMode, getNoteApi, listNotesApi, OWNER, poll, signInPage, signInSession } from './helpers';
 
 const markdownWithBlocks = `# Browser note
 
@@ -25,8 +25,8 @@ test('creates, edits, renders, copies, deletes, restores, and isolates notes', a
   await page.getByRole('button', { name: 'New note' }).first().click();
   await expect(page).toHaveURL(/\/notes\/[0-9a-f-]+$/);
   const noteId = noteIdFromUrl(page.url());
+  await expectEditorMode(page);
   const editor = page.locator('.cm-content');
-  await expect(editor).toBeVisible();
   await editor.fill(markdownWithBlocks);
 
   const session = await signInSession();
@@ -34,10 +34,13 @@ test('creates, edits, renders, copies, deletes, restores, and isolates notes', a
   expect(saved.version).toBeGreaterThan(1);
 
   await page.reload();
-  await expect(page.locator('.cm-content')).toContainText('normal-fence');
-  await page.getByRole('button', { name: 'Preview' }).click();
+  await expectPreviewMode(page);
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await expectEditorMode(page);
+  await expect(editor).toContainText('normal-fence');
+  await page.getByRole('button', { name: 'Preview', exact: true }).click();
+  await expectPreviewMode(page);
   const preview = page.getByLabel('Rendered note preview');
-  await expect(preview).toBeVisible();
   await expect(preview.locator('button[data-qnotes-block-key]')).toHaveCount(2);
 
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://127.0.0.1:5173' });
@@ -52,6 +55,7 @@ test('creates, edits, renders, copies, deletes, restores, and isolates notes', a
   const current = await getNoteApi(session.access_token, noteId);
   const duplicate = '# Invalid\n\n:::copy{id="duplicate"}\none\n:::\n\n:::copy{id="duplicate"}\ntwo\n:::\n';
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await expectEditorMode(page);
   await page.locator('.cm-content').fill(duplicate);
   await expect(page.getByRole('status')).toContainText('Save failed', { timeout: 10_000 });
   await expect.poll(async () => (await getNoteApi(session.access_token, noteId)).version).toBe(current.version);
@@ -81,6 +85,7 @@ test('flushes a just-typed edit before leaving the note', async ({ page }) => {
   await page.getByRole('button', { name: 'New note' }).first().click();
   await expect(page).toHaveURL(/\/notes\/[0-9a-f-]+$/);
   const noteId = noteIdFromUrl(page.url());
+  await expectEditorMode(page);
   await page.locator('.cm-content').fill('Typed immediately before navigation.\n');
   await page.getByRole('link', { name: 'Quadrate Notes home' }).click();
   await expect(page).toHaveURL(/\/$/);
@@ -95,6 +100,7 @@ test('keeps newer typing when an earlier autosave response is delayed', async ({
   await page.getByRole('button', { name: 'New note' }).first().click();
   await expect(page).toHaveURL(/\/notes\/[0-9a-f-]+$/);
   const noteId = noteIdFromUrl(page.url());
+  await expectEditorMode(page);
   const firstPatchStarted = page.waitForRequest((request) => request.url().includes(`/api/notes/${noteId}`) && request.method() === 'PATCH');
   let releaseFirstPatch!: () => void;
   const firstPatchReleased = new Promise<void>((resolve) => { releaseFirstPatch = resolve; });
@@ -143,6 +149,7 @@ test('saves editable metadata and copies the exact current draft before autosave
   await page.getByRole('button', { name: 'New note' }).first().click();
   await expect(page).toHaveURL(/\/notes\/[0-9a-f-]+$/);
   const noteId = noteIdFromUrl(page.url());
+  await expectEditorMode(page);
   await page.getByLabel('Title').fill('Renamed workflow note');
   await page.getByLabel('Add a tag').fill('Operations');
   await page.getByLabel('Add a tag').press('Enter');
@@ -163,6 +170,7 @@ test('opens a deleted note from Trash and restores it without a duplicate active
   await page.getByRole('button', { name: 'New note' }).first().click();
   await expect(page).toHaveURL(/\/notes\/[0-9a-f-]+$/);
   const noteId = noteIdFromUrl(page.url());
+  await expectEditorMode(page);
   await page.getByRole('button', { name: 'More note actions' }).click();
   await page.getByRole('menuitem', { name: 'Move to Trash' }).click();
   await expect(page.getByText('Note moved to the trash.')).toBeVisible();

@@ -1,5 +1,5 @@
 import { test, expect } from './test-fixtures';
-import { apiJson, createNoteApi, signInPage, signInSession } from './helpers';
+import { apiJson, createNoteApi, expectEditorMode, signInPage, signInSession } from './helpers';
 
 test('mobile Home keeps the branded shell, URL-backed filters, and note actions usable', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
@@ -48,9 +48,11 @@ test('mobile Home keeps the branded shell, URL-backed filters, and note actions 
 
   await page.locator('.q-home-hero').getByRole('button', { name: 'New note' }).click();
   await expect(page).toHaveURL(/\/notes\/[0-9a-f-]+$/);
+  await expectEditorMode(page);
   await page.locator('.q-mobile-nav-item').filter({ hasText: 'Notes' }).click();
   await page.locator('.q-floating-new').click();
   await expect(page).toHaveURL(/\/notes\/[0-9a-f-]+$/);
+  await expectEditorMode(page);
 
   await page.locator('.q-mobile-nav-item').filter({ hasText: 'Notes' }).click();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
