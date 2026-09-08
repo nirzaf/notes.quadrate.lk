@@ -5,13 +5,18 @@ The workflow in [`workflows/ci.yml`](workflows/ci.yml) uses GitHub-hosted
 SQL/database integration tests, the search regression job, and the short
 Chromium browser smoke job. The smoke job installs bundled Chromium, starts
 local Supabase, writes local environment files, seeds only the dedicated test
-users, serves only `qnotes-api`, and runs the focused release smoke config with
-one worker and explicit deadlines. Search evaluation remains path-gated after
-the job starts. The complete Playwright E2E suite remains a local/manual
-command (`pnpm run test:e2e`) and is not run by CI/CD. A push to `master` runs
-the release gate only when the browser smoke and all other enabled checks pass,
-then deploys the production Supabase functions, migrations, frontend, and
-Cloudflare Pages site.
+users, and starts only `qnotes-api` in a bounded workflow-managed process. The
+workflow records its PID and log under `.tmp`, probes the local health endpoint
+before running the smoke command with `QNOTES_E2E_EXTERNAL_API=1`, and stops the
+API before stopping Supabase. Playwright keeps Vite as its web server and uses
+the focused release smoke config with one worker and explicit deadlines. Search
+evaluation remains path-gated after the job starts. The complete Playwright E2E
+suite remains a local/manual command (`pnpm run test:e2e`) and is not run by
+CI/CD. The login smoke checks only an explicit structural axe rule allowlist;
+full axe coverage remains in the complete local/manual suite and Issue #22. A
+push to `master` runs the release gate only when the browser smoke and all other
+enabled checks pass, then deploys the production Supabase functions, migrations,
+frontend, and Cloudflare Pages site.
 
 ## Production environment
 

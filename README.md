@@ -106,7 +106,7 @@ The gate validates Node, pnpm, Deno, installed dependencies, the local Supabase 
 6. `pnpm exec supabase test db`
 7. `pnpm run test:e2e:smoke`
 
-The `test:e2e:smoke` command sets `QNOTES_E2E_SERVE_WORKERS=0`, starts Vite and only the local `qnotes-api` function through the smoke config’s bounded `playwright.config.ts` lifecycle, and uses one Chromium worker. Playwright reuses an already running server only when it verifies its configured URL. `tests/e2e/global-setup.ts` and the E2E fixture clear application data only for the dedicated local users `owner@qnotes.local` and `other@qnotes.local`; this bounded cleanup is an intentional side effect of E2E setup. The guard does not stop processes it did not start.
+With external mode unset, the local `test:e2e:smoke` command sets `QNOTES_E2E_SERVE_WORKERS=0`, starts Vite and only the local `qnotes-api` function through the smoke config’s bounded `playwright.config.ts` lifecycle, and uses one Chromium worker. CI starts `qnotes-api` in the workflow, sets `QNOTES_E2E_EXTERNAL_API=1`, and lets Playwright manage only Vite. Playwright reuses an already running server only when it verifies its configured URL. `tests/e2e/global-setup.ts` and the E2E fixture clear application data only for the dedicated local users `owner@qnotes.local` and `other@qnotes.local`; this bounded cleanup is an intentional side effect of E2E setup. The guard does not stop processes it did not start.
 
 If preflight fails, fix the reported local prerequisite manually: install the pinned tools, start Docker/Supabase, run `pnpm run local:env`, seed the dedicated users with `pnpm run seed:test-users`, or install bundled Chromium with `pnpm exec playwright install chromium`. It will reject HTTPS, URL credentials, localhost lookalikes, mismatched local targets, and any inherited remote URL before the database or browser stages. A stage failure is reported with its elapsed time and prevents all later stages from running. This gate is a local correctness and regression check, not a production deployment check or a security audit; production validation remains covered by the deployment and security procedures below.
 
@@ -127,7 +127,7 @@ pnpm exec supabase functions serve qnotes-api embedding-worker attachment-worker
   --env-file supabase/functions/.env.test --no-verify-jwt
 ```
 
-Open `http://127.0.0.1:5173`. The local API health check is `http://127.0.0.1:54321/functions/v1/qnotes-api/api/health`.
+Open `http://127.0.0.1:5173`. The local API health check is `http://127.0.0.1:54321/functions/v1/qnotes-api/api/health`. Local Playwright runs manage the API through `playwright.config.ts`; CI starts it as a bounded workflow-managed process and sets `QNOTES_E2E_EXTERNAL_API=1` so Playwright manages only Vite.
 
 `db:types` must run against the final local schema. After changing shared contracts or generated database types, run `pnpm run sync:edge` so the Deno functions receive the copies under `supabase/functions/_shared/generated`.
 
@@ -154,7 +154,7 @@ The full E2E suite remains available locally/manual with the single-worker, zero
 pnpm run test:e2e
 ```
 
-For the short release-oriented browser check, use the dedicated smoke command. It starts Vite and only the local `qnotes-api` function, applies tighter test/action/navigation/global deadlines, and its global setup plus per-test fixture clears application data for the two dedicated local test users:
+For the short release-oriented browser check, use the dedicated smoke command. Locally it starts Vite and only the local `qnotes-api` function; CI starts that API in the workflow and lets Playwright manage only Vite. Both paths apply tighter test/action/navigation/global deadlines, and the global setup plus per-test fixture clears application data for the two dedicated local test users:
 
 ```bash
 pnpm exec playwright install chromium

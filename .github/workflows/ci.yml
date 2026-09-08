@@ -158,8 +158,6 @@ jobs:
     name: browser smoke
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      QNOTES_E2E_SERVE_WORKERS: '0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -191,8 +189,50 @@ jobs:
         run: pnpm exec supabase start
       - run: pnpm run local:env
       - run: pnpm run seed:test-users
+      - name: Start local qnotes-api for browser smoke
+        shell: bash
+        run: |
+          mkdir -p .tmp
+          nohup pnpm exec supabase functions serve qnotes-api \
+            --env-file supabase/functions/.env.test --no-verify-jwt \
+            > .tmp/qnotes-api.log 2>&1 &
+          echo $! > .tmp/qnotes-api.pid
+          for attempt in {1..60}; do
+            : "$attempt"
+            if curl --fail --silent --show-error \
+              http://127.0.0.1:54321/functions/v1/qnotes-api/api/health >/dev/null; then
+              exit 0
+            fi
+            if ! kill -0 "$(cat .tmp/qnotes-api.pid)" 2>/dev/null; then
+              cat .tmp/qnotes-api.log
+              exit 1
+            fi
+            sleep 1
+          done
+          cat .tmp/qnotes-api.log
+          exit 1
       - name: Run the bounded browser release smoke suite
+        env:
+          QNOTES_E2E_EXTERNAL_API: '1'
         run: pnpm run test:e2e:smoke
+      - name: Stop local qnotes-api
+        if: always()
+        shell: bash
+        run: |
+          if [ -s .tmp/qnotes-api.pid ]; then
+            qnotes_api_pid="$(cat .tmp/qnotes-api.pid)"
+            if kill -0 "$qnotes_api_pid" 2>/dev/null; then
+              kill "$qnotes_api_pid" 2>/dev/null || true
+              for attempt in {1..10}; do
+                : "$attempt"
+                if ! kill -0 "$qnotes_api_pid" 2>/dev/null; then
+                  break
+                fi
+                sleep 1
+              done
+              kill -KILL "$qnotes_api_pid" 2>/dev/null || true
+            fi
+          fi
       - name: Stop the local Supabase stack
         if: always()
         run: pnpm exec supabase stop
