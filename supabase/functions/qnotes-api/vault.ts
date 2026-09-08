@@ -334,7 +334,7 @@ export async function revealVaultSecret(context: Context): Promise<Response> {
 export async function revealVaultSecrets(context: Context): Promise<Response> {
   const auth = vaultAuthFromContext(context);
   const input = validateRevealVaultSecretsInput(await context.req.json());
-  const resolved: Array<{ secret: Record<string, unknown>; selector: typeof input.secrets[number] }> = [];
+  const resolved: Array<{ secret: Record<string, unknown> }> = [];
   for (const selector of input.secrets) {
     const project = await findProject(auth.userId, selector.project);
     const environment = await findEnvironment(auth.userId, String(project.id), selector.environment);
@@ -342,17 +342,26 @@ export async function revealVaultSecrets(context: Context): Promise<Response> {
     if (error || !data) throw new ApiError(404, 'VAULT_SECRET_NOT_FOUND', 'The Vault secret was not found.');
     const secret = record(data);
     await requireVaultAccess(auth, 'secret:reveal', { ownerId: auth.userId, projectId: String(project.id), environmentId: String(environment.id), secretId: String(secret.id) }, { requestId: context.get('requestId'), purpose: input.purpose });
-    resolved.push({ secret, selector });
+    resolved.push({ secret });
   }
-  const items: Record<string, unknown>[] = [];
-  let totalBytes = 0;
-  for (const { secret } of resolved) {
-    const revealed = await revealById(context, auth, secret, input.purpose);
-    totalBytes += new TextEncoder().encode(String(revealed.value ?? '')).byteLength;
-    if (totalBytes > 262_144) throw new ApiError(413, 'VAULT_SECRET_TOO_LARGE', 'The combined Vault reveal is too large.');
-    items.push(revealed);
+
+  const result = assertSupabase(await serviceClient.rpc('qnotes_vault_reveal_secrets', {
+    p_owner_id: auth.userId,
+    p_selectors: resolved.map(({ secret }) => ({ projectId: String(secret.project_id), environmentId: String(secret.environment_id), secretId: String(secret.id) })),
+    p_actor_token_id: actorTokenId(auth),
+    p_purpose: input.purpose,
+    p_request_id: context.get('requestId'),
+    p_actor_kind: actorKind(auth),
+  }));
+  const payload = record(result);
+  if (payload.status !== 'ok' || !Array.isArray(payload.items)) {
+    if (payload.status === 'not_found') throw new ApiError(404, 'VAULT_SECRET_NOT_FOUND', 'The Vault secret was not found.');
+    if (payload.status === 'vault_missing') throw new ApiError(500, 'INTERNAL_ERROR', 'The Vault value is unavailable.');
+    if (payload.status === 'batch_too_large') throw new ApiError(413, 'VAULT_SECRET_TOO_LARGE', 'The combined Vault reveal is too large.');
+    if (payload.status === 'invalid_selectors') throw new ApiError(422, 'VALIDATION_ERROR', 'The Vault selectors are invalid.');
+    throw new ApiError(500, 'INTERNAL_ERROR', 'The Vault reveal failed.');
   }
-  return noStore(dataBody(context, { items }));
+  return noStore(dataBody(context, { items: payload.items }));
 }
 
 export async function listVaultAgentTokens(context: Context): Promise<Response> {
