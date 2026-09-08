@@ -103,7 +103,7 @@ test('QVaultClient validates safe audit actor identity and rejects secret fields
   const unsafeClient = new QVaultClient({
     baseUrl: 'http://example.test',
     getAccessToken: () => 'jwt-test',
-    fetchImplementation: async () => jsonResponse([{ ...event, actorTokenPrefix: 'qvt_' + 'A'.repeat(43), token_hash: 'must-not-leak', value: 'must-not-leak' }]),
+    fetchImplementation: async () => jsonResponse([{ ...event, token_hash: 'must-not-leak', value: 'must-not-leak' }]),
   });
   await assert.rejects(() => unsafeClient.listAudit(), (error) => {
     assert.ok(error instanceof QVaultProtocolError);

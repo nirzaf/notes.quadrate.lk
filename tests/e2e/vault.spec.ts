@@ -105,7 +105,7 @@ test('enforces qvt grants and isolates qnt and qns credentials', async ({ page }
   const auditResponse = await apiJson('/vault/audit', session.access_token);
   expect(auditResponse.response.status).toBe(200);
   const auditEvents = data<Array<{ actorKind: string; actorTokenName: string | null; actorTokenPrefix: string | null; action: string; success: boolean; resultCode: string | null }>>(auditResponse.body);
-  const deniedAudit = auditEvents.find((event) => event.action === 'secret:reveal' && event.resultCode === 'access_denied' && !event.success);
+  const deniedAudit = auditEvents.find((event) => event.actorTokenPrefix === tokenData.metadata.tokenPrefix && event.action === 'secret:reveal' && event.resultCode === 'access_denied' && !event.success);
   expect(deniedAudit).toEqual(expect.objectContaining({ actorKind: 'vault_agent', actorTokenName: 'Local E2E reveal agent', actorTokenPrefix: tokenData.metadata.tokenPrefix, success: false, resultCode: 'access_denied' }));
   expect(JSON.stringify(auditResponse.body)).not.toContain(tokenData.token);
   expect(JSON.stringify(auditResponse.body)).not.toContain(FAKE_SECRET);
