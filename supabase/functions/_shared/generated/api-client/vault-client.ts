@@ -36,6 +36,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isString(value: unknown): value is string { return typeof value === 'string'; }
 function isNullableString(value: unknown): value is string | null { return value === null || isString(value); }
 function isInteger(value: unknown): value is number { return typeof value === 'number' && Number.isSafeInteger(value); }
+function isNullableUuid(value: unknown): value is string | null {
+  return value === null || (isString(value) && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value));
+}
 
 function isProject(value: unknown): value is VaultProject {
   return isRecord(value) && isString(value.id) && isString(value.slug) && isString(value.name) && isNullableString(value.description)
@@ -72,10 +75,14 @@ function isGrant(value: unknown): value is VaultAgentGrant {
 }
 
 function isAuditEvent(value: unknown): value is VaultAuditEvent {
-  return isRecord(value) && isString(value.id) && ['user_jwt', 'vault_agent'].includes(String(value.actorKind)) && isString(value.action)
+  return isRecord(value) && isString(value.id) && ['user_jwt', 'vault_agent'].includes(String(value.actorKind))
+    && isNullableUuid(value.actorTokenId) && isNullableString(value.actorTokenName)
+    && (value.actorTokenPrefix === null || (isString(value.actorTokenPrefix) && /^qvt_[A-Za-z0-9_-]{8}$/.test(value.actorTokenPrefix)))
+    && ['metadata:read', 'secret:reveal', 'secret:write', 'secret:delete'].includes(String(value.action))
     && isNullableString(value.projectId) && isNullableString(value.environmentId) && isNullableString(value.secretId)
     && isNullableString(value.purpose) && typeof value.success === 'boolean' && isNullableString(value.resultCode)
-    && isNullableString(value.requestId) && isString(value.occurredAt) && !Object.hasOwn(value, 'value');
+    && isNullableString(value.requestId) && isString(value.occurredAt) && !Object.hasOwn(value, 'value')
+    && Object.keys(value).every((key) => ['id', 'actorKind', 'actorTokenId', 'actorTokenName', 'actorTokenPrefix', 'action', 'projectId', 'environmentId', 'secretId', 'purpose', 'success', 'resultCode', 'requestId', 'occurredAt'].includes(key));
 }
 
 function listPayload<T>(value: unknown, validator: (item: unknown) => item is T, resource: string): T[] {

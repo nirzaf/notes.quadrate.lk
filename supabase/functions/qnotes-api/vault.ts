@@ -4,6 +4,7 @@ import { assertSupabase, appDbClient, serviceClient } from '../_shared/database.
 import { ApiError } from '../_shared/errors.ts';
 import { vaultAuthFromContext, requireVaultUserJwt } from '../_shared/vault-auth.ts';
 import { grantAllows, requireVaultAccess, vaultGrants } from '../_shared/vault-authorization.ts';
+import { recordVaultAuditFailure } from '../_shared/vault-audit.ts';
 import { hashVaultMutation } from '../_shared/vault-token.ts';
 import { generateVaultAgentToken, hashVaultAgentToken } from '../_shared/vault-token.ts';
 import { fetchAllRangePages } from './vault-agent-pagination.ts';
@@ -144,14 +145,26 @@ async function findSecret(ownerId: string, secretId: string, includeDeleted = fa
   return record(data);
 }
 
-function mapVaultMutation(value: unknown, action: 'create' | 'rotate' | 'delete') {
+async function mapVaultMutation(
+  context: Context,
+  auth: ReturnType<typeof vaultAuthFromContext>,
+  value: unknown,
+  action: 'create' | 'rotate' | 'delete',
+  resource: { ownerId: string; projectId: string; environmentId: string | null; secretId: string | null },
+) {
   const result = record(value);
   const status = result.status;
+  const auditAction: VaultAction = action === 'delete' ? 'secret:delete' : 'secret:write';
+  const failureCode = typeof status === 'string' ? status : 'rpc_failure';
   if (status === 'ok' || status === 'idempotent') {
     const secret = record(result.secret);
-    if (!secret.id) throw new ApiError(500, 'INTERNAL_ERROR', 'The Vault mutation returned an invalid result.');
+    if (!secret.id) {
+      await recordVaultAuditFailure(auth, auditAction, resource, 'invalid_response', { requestId: context.get('requestId') });
+      throw new ApiError(500, 'INTERNAL_ERROR', 'The Vault mutation returned an invalid result.');
+    }
     return secretMetadata({ id: secret.id, project_id: secret.projectId, environment_id: secret.environmentId, name: secret.name, description: secret.description, version: secret.version, created_at: secret.createdAt, updated_at: secret.updatedAt, rotated_at: secret.rotatedAt, deleted_at: secret.deletedAt });
   }
+  await recordVaultAuditFailure(auth, auditAction, resource, failureCode, { requestId: context.get('requestId') });
   if (status === 'project_not_found') throw new ApiError(404, 'VAULT_PROJECT_NOT_FOUND', 'The Vault project was not found.');
   if (status === 'environment_not_found') throw new ApiError(404, 'VAULT_ENVIRONMENT_NOT_FOUND', 'The Vault environment was not found.');
   if (status === 'not_found') throw new ApiError(404, 'VAULT_SECRET_NOT_FOUND', 'The Vault secret was not found.');
@@ -164,6 +177,7 @@ function mapVaultMutation(value: unknown, action: 'create' | 'rotate' | 'delete'
 }
 
 async function revealById(context: Context, auth: ReturnType<typeof vaultAuthFromContext>, secret: Record<string, unknown>, purpose: string): Promise<Record<string, unknown>> {
+  const resource = { ownerId: auth.userId, projectId: String(secret.project_id), environmentId: String(secret.environment_id), secretId: String(secret.id) };
   const result = assertSupabase(await serviceClient.rpc('qnotes_vault_reveal_secret', {
     p_owner_id: auth.userId,
     p_secret_id: String(secret.id),
@@ -173,9 +187,12 @@ async function revealById(context: Context, auth: ReturnType<typeof vaultAuthFro
     p_actor_kind: actorKind(auth),
   }));
   const payload = record(result);
-  if (payload.status === 'not_found') throw new ApiError(404, 'VAULT_SECRET_NOT_FOUND', 'The Vault secret was not found.');
-  if (payload.status === 'vault_missing') throw new ApiError(500, 'INTERNAL_ERROR', 'The Vault value is unavailable.');
-  if (payload.status !== 'ok' || !record(payload.secret)) throw new ApiError(500, 'INTERNAL_ERROR', 'The Vault reveal failed.');
+  if (payload.status !== 'ok' || !record(payload.secret)) {
+    await recordVaultAuditFailure(auth, 'secret:reveal', resource, typeof payload.status === 'string' ? payload.status : 'invalid_response', { requestId: context.get('requestId'), purpose });
+    if (payload.status === 'not_found') throw new ApiError(404, 'VAULT_SECRET_NOT_FOUND', 'The Vault secret was not found.');
+    if (payload.status === 'vault_missing') throw new ApiError(500, 'INTERNAL_ERROR', 'The Vault value is unavailable.');
+    throw new ApiError(500, 'INTERNAL_ERROR', 'The Vault reveal failed.');
+  }
   return record(payload.secret);
 }
 
@@ -251,10 +268,10 @@ export async function listVaultSecretsBySelector(context: Context): Promise<Resp
 async function createVaultSecretForEnvironment(context: Context, project: Record<string, unknown>, environment: Record<string, unknown>): Promise<Response> {
   const auth = vaultAuthFromContext(context);
   const input = validateCreateVaultSecretInput({ ...(await context.req.json()), projectId: project.id, environmentId: environment.id });
-  await requireVaultAccess(auth, 'secret:write', { ownerId: auth.userId, projectId: String(project.id), environmentId: String(environment.id), secretId: null });
+  await requireVaultAccess(auth, 'secret:write', { ownerId: auth.userId, projectId: String(project.id), environmentId: String(environment.id), secretId: null }, { requestId: context.get('requestId') });
   const requestHash = await hashVaultMutation({ operation: 'created', projectId: project.id, environmentId: environment.id, name: input.name, description: input.description ?? null, value: input.value });
   const result = assertSupabase(await serviceClient.rpc('qnotes_vault_create_secret', { p_owner_id: auth.userId, p_project_id: project.id, p_environment_id: environment.id, p_name: input.name, p_description: input.description ?? null, p_value: input.value, p_mutation_id: input.mutationId, p_request_hash: requestHash, p_actor_token_id: actorTokenId(auth), p_request_id: context.get('requestId'), p_actor_kind: actorKind(auth) }));
-  return dataBody(context, mapVaultMutation(result, 'create'), record(result).status === 'idempotent' ? 200 : 201);
+  return dataBody(context, await mapVaultMutation(context, auth, result, 'create', { ownerId: auth.userId, projectId: String(project.id), environmentId: String(environment.id), secretId: null }), record(result).status === 'idempotent' ? 200 : 201);
 }
 
 export async function createVaultSecret(context: Context): Promise<Response> {
@@ -274,7 +291,7 @@ export async function createVaultSecretBySelector(context: Context): Promise<Res
 export async function getVaultSecret(context: Context): Promise<Response> {
   const auth = vaultAuthFromContext(context);
   const secret = await findSecret(auth.userId, context.req.param('secretId') ?? '');
-  await requireVaultAccess(auth, 'metadata:read', { ownerId: auth.userId, projectId: String(secret.project_id), environmentId: String(secret.environment_id), secretId: String(secret.id) });
+  await requireVaultAccess(auth, 'metadata:read', { ownerId: auth.userId, projectId: String(secret.project_id), environmentId: String(secret.environment_id), secretId: String(secret.id) }, { requestId: context.get('requestId') });
   return dataBody(context, secretMetadata(secret));
 }
 
@@ -284,10 +301,10 @@ export async function rotateVaultSecret(context: Context): Promise<Response> {
   if (!isUUID(secretId)) throw new ApiError(422, 'VALIDATION_ERROR', 'secretId must be a valid UUID.');
   const secret = await findSecret(auth.userId, secretId);
   const input = validateRotateVaultSecretInput(await context.req.json());
-  await requireVaultAccess(auth, 'secret:write', { ownerId: auth.userId, projectId: String(secret.project_id), environmentId: String(secret.environment_id), secretId });
+  await requireVaultAccess(auth, 'secret:write', { ownerId: auth.userId, projectId: String(secret.project_id), environmentId: String(secret.environment_id), secretId }, { requestId: context.get('requestId') });
   const requestHash = await hashVaultMutation({ operation: 'rotated', secretId, value: input.value, description: input.description ?? null });
   const result = assertSupabase(await serviceClient.rpc('qnotes_vault_rotate_secret', { p_owner_id: auth.userId, p_secret_id: secretId, p_value: input.value, p_description: input.description ?? null, p_expected_version: input.expectedVersion, p_mutation_id: input.mutationId, p_request_hash: requestHash, p_actor_token_id: actorTokenId(auth), p_request_id: context.get('requestId'), p_actor_kind: actorKind(auth) }));
-  return dataBody(context, mapVaultMutation(result, 'rotate'));
+  return dataBody(context, await mapVaultMutation(context, auth, result, 'rotate', { ownerId: auth.userId, projectId: String(secret.project_id), environmentId: String(secret.environment_id), secretId }));
 }
 
 export async function deleteVaultSecret(context: Context): Promise<Response> {
@@ -296,10 +313,10 @@ export async function deleteVaultSecret(context: Context): Promise<Response> {
   if (!isUUID(secretId)) throw new ApiError(422, 'VALIDATION_ERROR', 'secretId must be a valid UUID.');
   const secret = await findSecret(auth.userId, secretId);
   const input = validateDeleteVaultSecretInput(await context.req.json());
-  await requireVaultAccess(auth, 'secret:delete', { ownerId: auth.userId, projectId: String(secret.project_id), environmentId: String(secret.environment_id), secretId });
+  await requireVaultAccess(auth, 'secret:delete', { ownerId: auth.userId, projectId: String(secret.project_id), environmentId: String(secret.environment_id), secretId }, { requestId: context.get('requestId') });
   const requestHash = await hashVaultMutation({ operation: 'deleted', secretId, expectedVersion: input.expectedVersion });
   const result = assertSupabase(await serviceClient.rpc('qnotes_vault_delete_secret', { p_owner_id: auth.userId, p_secret_id: secretId, p_expected_version: input.expectedVersion, p_mutation_id: input.mutationId, p_request_hash: requestHash, p_actor_token_id: actorTokenId(auth), p_request_id: context.get('requestId'), p_actor_kind: actorKind(auth) }));
-  return dataBody(context, mapVaultMutation(result, 'delete'));
+  return dataBody(context, await mapVaultMutation(context, auth, result, 'delete', { ownerId: auth.userId, projectId: String(secret.project_id), environmentId: String(secret.environment_id), secretId }));
 }
 
 export async function revealVaultSecret(context: Context): Promise<Response> {
@@ -310,7 +327,7 @@ export async function revealVaultSecret(context: Context): Promise<Response> {
   const { data, error } = await appDbClient.from('vault_secrets').select('*').eq('owner_id', auth.userId).eq('project_id', project.id).eq('environment_id', environment.id).eq('name', input.name).is('deleted_at', null).maybeSingle();
   if (error || !data) throw new ApiError(404, 'VAULT_SECRET_NOT_FOUND', 'The Vault secret was not found.');
   const secret = record(data);
-  await requireVaultAccess(auth, 'secret:reveal', { ownerId: auth.userId, projectId: String(project.id), environmentId: String(environment.id), secretId: String(secret.id) });
+  await requireVaultAccess(auth, 'secret:reveal', { ownerId: auth.userId, projectId: String(project.id), environmentId: String(environment.id), secretId: String(secret.id) }, { requestId: context.get('requestId'), purpose: input.purpose });
   return noStore(dataBody(context, await revealById(context, auth, secret, input.purpose)));
 }
 
@@ -324,7 +341,7 @@ export async function revealVaultSecrets(context: Context): Promise<Response> {
     const { data, error } = await appDbClient.from('vault_secrets').select('*').eq('owner_id', auth.userId).eq('project_id', project.id).eq('environment_id', environment.id).eq('name', selector.name).is('deleted_at', null).maybeSingle();
     if (error || !data) throw new ApiError(404, 'VAULT_SECRET_NOT_FOUND', 'The Vault secret was not found.');
     const secret = record(data);
-    await requireVaultAccess(auth, 'secret:reveal', { ownerId: auth.userId, projectId: String(project.id), environmentId: String(environment.id), secretId: String(secret.id) });
+    await requireVaultAccess(auth, 'secret:reveal', { ownerId: auth.userId, projectId: String(project.id), environmentId: String(environment.id), secretId: String(secret.id) }, { requestId: context.get('requestId'), purpose: input.purpose });
     resolved.push({ secret, selector });
   }
   const items: Record<string, unknown>[] = [];
@@ -393,9 +410,45 @@ export async function revokeVaultAgentToken(context: Context): Promise<Response>
 export async function listVaultAudit(context: Context): Promise<Response> {
   const auth = vaultAuthFromContext(context);
   requireVaultUserJwt(auth);
-  const { data, error } = await appDbClient.from('vault_audit_events').select('id, actor_kind, action, project_id, environment_id, secret_id, purpose, success, result_code, request_id, occurred_at').eq('owner_id', auth.userId).order('occurred_at', { ascending: false }).limit(200);
+  const { data, error } = await appDbClient.from('vault_audit_events').select('id, actor_kind, actor_token_id, action, project_id, environment_id, secret_id, purpose, success, result_code, request_id, occurred_at').eq('owner_id', auth.userId).order('occurred_at', { ascending: false }).limit(200);
   if (error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to list Vault audit events.');
-  return dataBody(context, (Array.isArray(data) ? data : []).map((row) => { const item = record(row); return { id: String(item.id), actorKind: String(item.actor_kind), action: String(item.action) as VaultAction, projectId: item.project_id ? String(item.project_id) : null, environmentId: item.environment_id ? String(item.environment_id) : null, secretId: item.secret_id ? String(item.secret_id) : null, purpose: item.purpose ? String(item.purpose) : null, success: Boolean(item.success), resultCode: item.result_code ? String(item.result_code) : null, requestId: item.request_id ? String(item.request_id) : null, occurredAt: String(item.occurred_at) }; }));
+  const rows = Array.isArray(data) ? data.map((row) => record(row)) : [];
+  const actorTokenIds = [...new Set(rows
+    .filter((row) => row.actor_kind === 'vault_agent' && typeof row.actor_token_id === 'string')
+    .map((row) => row.actor_token_id as string))];
+  const actorTokens = new Map<string, { name: string; prefix: string | null }>();
+  if (actorTokenIds.length) {
+    const tokenResult = await appDbClient.from('vault_agent_tokens').select('id, name, token_prefix').eq('owner_id', auth.userId).in('id', actorTokenIds);
+    if (tokenResult.error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to list Vault audit actor metadata.');
+    for (const row of Array.isArray(tokenResult.data) ? tokenResult.data : []) {
+      const item = record(row);
+      const id = typeof item.id === 'string' ? item.id : null;
+      const name = typeof item.name === 'string' ? item.name : null;
+      const prefix = typeof item.token_prefix === 'string' && /^qvt_[A-Za-z0-9_-]{8}$/.test(item.token_prefix) ? item.token_prefix : null;
+      if (id && name) actorTokens.set(id, { name, prefix });
+    }
+  }
+  return dataBody(context, rows.map((item) => {
+    const actorKind = String(item.actor_kind) as 'user_jwt' | 'vault_agent';
+    const actorTokenId = actorKind === 'vault_agent' && typeof item.actor_token_id === 'string' ? item.actor_token_id : null;
+    const actorToken = actorTokenId ? actorTokens.get(actorTokenId) : undefined;
+    return {
+      id: String(item.id),
+      actorKind,
+      actorTokenId,
+      actorTokenName: actorToken?.name ?? null,
+      actorTokenPrefix: actorToken?.prefix ?? null,
+      action: String(item.action) as VaultAction,
+      projectId: item.project_id ? String(item.project_id) : null,
+      environmentId: item.environment_id ? String(item.environment_id) : null,
+      secretId: item.secret_id ? String(item.secret_id) : null,
+      purpose: item.purpose ? String(item.purpose) : null,
+      success: Boolean(item.success),
+      resultCode: item.result_code ? String(item.result_code) : null,
+      requestId: item.request_id ? String(item.request_id) : null,
+      occurredAt: String(item.occurred_at),
+    };
+  }));
 }
 
 export async function replaceVaultAgentGrants(context: Context): Promise<Response> {

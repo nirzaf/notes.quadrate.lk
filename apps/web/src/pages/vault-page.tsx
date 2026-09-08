@@ -336,5 +336,10 @@ function AgentsPanel(props: AgentsPanelProps) {
 }
 
 function AuditPanel({ events }: { events: Awaited<ReturnType<typeof vaultApi.listAudit>> }): JSX.Element {
-  return <section className="q-card q-card-pad"><div className="q-section-heading"><div className="q-section-heading-main"><h2>Vault audit history</h2><span className="q-count-badge">{events.length}</span></div></div>{events.length ? <div className="q-vault-audit-list">{events.map((event) => <div className="q-vault-audit" key={event.id}><strong>{event.action}</strong><span>{new Date(event.occurredAt).toLocaleString()} · {event.actorKind} · {event.success ? 'success' : 'failed'}</span><small>{event.projectId ?? 'No project'}{event.secretId ? ` · secret ${event.secretId}` : ''}{event.purpose ? ` · purpose: ${event.purpose}` : ''}</small></div>)}</div> : <p className="q-empty">No Vault events yet. Secret values are never recorded in audit history.</p>}</section>;
+  return <section className="q-card q-card-pad"><div className="q-section-heading"><div className="q-section-heading-main"><h2>Vault audit history</h2><span className="q-count-badge">{events.length}</span></div></div>{events.length ? <div className="q-vault-audit-list">{events.map((event) => {
+    const actor = event.actorKind === 'vault_agent'
+      ? `${event.actorTokenName ?? 'Agent token'}${event.actorTokenPrefix ? ` (${event.actorTokenPrefix})` : ''}`
+      : 'User JWT';
+    return <div className="q-vault-audit" key={event.id}><strong>{event.action}</strong><span>{new Date(event.occurredAt).toLocaleString()} · {actor} · {event.success ? 'success' : 'failed'}</span><small>{event.projectId ?? 'No project'}{event.secretId ? ` · secret ${event.secretId}` : ''}{event.resultCode ? ` · ${event.resultCode}` : ''}{event.purpose ? ` · purpose: ${event.purpose}` : ''}</small></div>;
+  })}</div> : <p className="q-empty">No Vault events yet. Secret values are never recorded in audit history.</p>}</section>;
 }

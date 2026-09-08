@@ -66,7 +66,7 @@ test('keeps Vault values out of metadata, Notes search, and audit responses', as
   expect(JSON.stringify(audit.body)).toContain('secret:reveal');
 });
 
-test('enforces qvt grants and isolates qnt and qns credentials', async () => {
+test('enforces qvt grants and isolates qnt and qns credentials', async ({ page }) => {
   const session = await signInSession();
   const fixture = await createFixture(session.access_token);
   const secondResponse = await apiJson(`/vault/environments/${fixture.environment.id}/secrets`, session.access_token, {
@@ -84,8 +84,9 @@ test('enforces qvt grants and isolates qnt and qns credentials', async () => {
     }),
   });
   expect(tokenResponse.response.status).toBe(201);
-  const tokenData = data<{ token: string }>(tokenResponse.body);
+  const tokenData = data<{ token: string; metadata: { id: string; tokenPrefix: string } }>(tokenResponse.body);
   expect(tokenData.token).toMatch(/^qvt_[A-Za-z0-9_-]{43}$/);
+  expect(tokenData.metadata.tokenPrefix).toMatch(/^qvt_[A-Za-z0-9_-]{8}$/);
 
   const allowed = await apiJson('/vault/secrets/reveal', tokenData.token, {
     method: 'POST',
@@ -100,6 +101,19 @@ test('enforces qvt grants and isolates qnt and qns credentials', async () => {
   });
   expect(denied.response.status).toBe(403);
   expect(JSON.stringify(denied.body)).not.toContain(FAKE_SECRET);
+
+  const auditResponse = await apiJson('/vault/audit', session.access_token);
+  expect(auditResponse.response.status).toBe(200);
+  const auditEvents = data<Array<{ actorKind: string; actorTokenName: string | null; actorTokenPrefix: string | null; action: string; success: boolean; resultCode: string | null }>>(auditResponse.body);
+  const deniedAudit = auditEvents.find((event) => event.actorTokenPrefix === tokenData.metadata.tokenPrefix && event.action === 'secret:reveal' && event.resultCode === 'access_denied' && !event.success);
+  expect(deniedAudit).toEqual(expect.objectContaining({ actorKind: 'vault_agent', actorTokenName: 'Local E2E reveal agent', actorTokenPrefix: tokenData.metadata.tokenPrefix, success: false, resultCode: 'access_denied' }));
+  expect(JSON.stringify(auditResponse.body)).not.toContain(tokenData.token);
+  expect(JSON.stringify(auditResponse.body)).not.toContain(FAKE_SECRET);
+
+  await signInPage(page);
+  await page.goto('/vault/audit');
+  await expect(page.getByText('Local E2E reveal agent', { exact: false })).toBeVisible();
+  await expect(page.getByText(tokenData.metadata.tokenPrefix, { exact: true })).toBeVisible();
 
   const qntResponse = await apiJson('/api/tokens', session.access_token, {
     method: 'POST',
@@ -221,4 +235,13 @@ test('supports replay-safe rotation and explicit bounded batch reveal', async ()
 
   const staleDelete = await apiJson(`/vault/secrets/${fixture.secret.id}`, session.access_token, { method: 'DELETE', body: JSON.stringify({ expectedVersion: fixture.secret.version, mutationId: crypto.randomUUID(), confirm: true }) });
   expect(staleDelete.response.status).toBe(409);
+
+  const auditResponse = await apiJson('/vault/audit', session.access_token);
+  expect(auditResponse.response.status).toBe(200);
+  const auditEvents = data<Array<{ actorKind: string; actorTokenId: string | null; action: string; secretId: string | null; success: boolean; resultCode: string | null }>>(auditResponse.body);
+  expect(auditEvents).toEqual(expect.arrayContaining([
+    expect.objectContaining({ actorKind: 'user_jwt', actorTokenId: null, action: 'secret:write', secretId: fixture.secret.id, success: false, resultCode: 'mutation_reuse_conflict' }),
+    expect.objectContaining({ actorKind: 'user_jwt', actorTokenId: null, action: 'secret:delete', secretId: fixture.secret.id, success: false, resultCode: 'version_conflict' }),
+  ]));
+  expect(JSON.stringify(auditResponse.body)).not.toContain('local-e2e-rotated-value');
 });
