@@ -795,3 +795,11 @@ on the Integrations page to add placeholder-only values to a combined Hermes
 entry. Vault requests use the required `QNOTES_URL`; a non-empty `QVAULT_URL`
 is rejected. Do not place
 either token in browser code or a committed env file.
+
+Vault token administration is JWT-only. `GET /vault/agent-tokens` returns each
+owner-scoped token with its effective project/environment/secret grants and
+actions; it never returns a raw qvt value, token hash, or Vault plaintext.
+Create requests require at least one grant. `PATCH
+/vault/agent-tokens/:tokenId/grants` replaces the complete grant set and accepts
+`{"grants":[]}` when all grants should be removed. The PATCH response contains
+only the resulting grant metadata.

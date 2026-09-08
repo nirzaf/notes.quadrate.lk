@@ -21,6 +21,38 @@ test('QVaultClient sends qvt authorization only to isolated Vault routes', async
   assert.equal(calls[0].url.includes('/api/'), false);
 });
 
+test('QVaultClient lists effective multiple grants and sends replacement payloads', async () => {
+  const calls = [];
+  const grants = [
+    { id: 'grant-1', projectId: project.id, projectName: 'Pearl Blanc', environmentId: null, secretId: null, action: 'metadata:read', createdAt: '2026-01-01' },
+    { id: 'grant-2', projectId: project.id, projectName: 'Pearl Blanc', environmentId: secret.environmentId, environmentName: 'production', secretId: secret.id, secretName: secret.name, action: 'secret:reveal', createdAt: '2026-01-02' },
+  ];
+  const client = new QVaultClient({ baseUrl: 'http://example.test', getAccessToken: () => 'jwt-test', fetchImplementation: async (url, init) => {
+    calls.push({ url, init });
+    if (url.endsWith('/agent-tokens')) return jsonResponse([{ id: 'token-1', name: 'Deploy agent', tokenPrefix: 'qvt_12345678', expiresAt: null, lastUsedAt: null, revokedAt: null, createdAt: '2026-01-01', grants }]);
+    return jsonResponse(grants);
+  } });
+
+  const tokens = await client.listAgentTokens();
+  assert.deepEqual(tokens[0].grants, grants);
+  const replaced = await client.replaceAgentGrants('token-1', [grants[1]]);
+  assert.deepEqual(replaced, [grants[0], grants[1]]);
+  assert.equal(calls[1].url, 'http://example.test/vault/agent-tokens/token-1/grants');
+  assert.equal(calls[1].init.method, 'PATCH');
+  assert.deepEqual(JSON.parse(calls[1].init.body), { grants: [grants[1]] });
+  assert.equal(calls[1].init.headers.get('Authorization'), 'Bearer jwt-test');
+});
+
+test('QVaultClient rejects grant responses that contain plaintext fields', async () => {
+  const client = new QVaultClient({ baseUrl: 'http://example.test', getAccessToken: () => 'jwt-test', fetchImplementation: async () => jsonResponse([{ projectId: project.id, environmentId: null, secretId: null, action: 'metadata:read', value: 'must-not-leak' }]) });
+  await assert.rejects(() => client.replaceAgentGrants('token-1', []), (error) => {
+    assert.ok(error instanceof QVaultProtocolError);
+    assert.match(error.message, /malformed agent grants/);
+    assert.equal(error.message.includes('must-not-leak'), false);
+    return true;
+  });
+});
+
 test('QVaultClient validates metadata and reveal responses without caching plaintext', async () => {
   const calls = [];
   const client = new QVaultClient({ baseUrl: 'http://example.test', getAccessToken: () => 'qvt_test', fetchImplementation: async (url, init) => {

@@ -1,11 +1,12 @@
 import type { Context } from 'hono';
-import { isUUID, validateCreateVaultAgentTokenInput, validateCreateVaultEnvironmentInput, validateCreateVaultProjectInput, validateCreateVaultSecretInput, validateDeleteVaultSecretInput, validateRevealVaultSecretInput, validateRevealVaultSecretsInput, validateRotateVaultSecretInput, type VaultAction } from '@qnotes/shared';
+import { isUUID, validateCreateVaultAgentTokenInput, validateCreateVaultEnvironmentInput, validateCreateVaultProjectInput, validateCreateVaultSecretInput, validateDeleteVaultSecretInput, validateRevealVaultSecretInput, validateRevealVaultSecretsInput, validateReplaceVaultAgentGrantsInput, validateRotateVaultSecretInput, type VaultAction, type VaultAgentGrant } from '@qnotes/shared';
 import { assertSupabase, appDbClient, serviceClient } from '../_shared/database.ts';
 import { ApiError } from '../_shared/errors.ts';
 import { vaultAuthFromContext, requireVaultUserJwt } from '../_shared/vault-auth.ts';
 import { grantAllows, requireVaultAccess, vaultGrants } from '../_shared/vault-authorization.ts';
 import { hashVaultMutation } from '../_shared/vault-token.ts';
 import { generateVaultAgentToken, hashVaultAgentToken } from '../_shared/vault-token.ts';
+import { fetchAllRangePages } from './vault-agent-pagination.ts';
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -43,8 +44,70 @@ function secretMetadata(row: Record<string, unknown>) {
   return { id: String(row.id), projectId: String(row.project_id), environmentId: String(row.environment_id), name: String(row.name), description: row.description ? String(row.description) : null, version: Number(row.version), createdAt: String(row.created_at), updatedAt: String(row.updated_at), rotatedAt: row.rotated_at ? String(row.rotated_at) : null, deletedAt: row.deleted_at ? String(row.deleted_at) : null };
 }
 
+type VaultGrantResourceNames = Pick<VaultAgentGrant, 'projectName' | 'environmentName' | 'secretName'>;
+type VaultGrantMetadataTable = 'vault_projects' | 'vault_environments' | 'vault_secrets';
+
+function firstString(...values: unknown[]): string | undefined {
+  return values.find((value): value is string => typeof value === 'string');
+}
+
+function grantMetadata(row: Record<string, unknown>, names: VaultGrantResourceNames = {}): VaultAgentGrant {
+  const grant: VaultAgentGrant = {
+    id: row.id ? String(row.id) : undefined,
+    projectId: String(row.project_id ?? row.projectId),
+    environmentId: row.environment_id === null || row.environment_id === undefined ? row.environmentId === null || row.environmentId === undefined ? null : String(row.environmentId) : String(row.environment_id),
+    secretId: row.secret_id === null || row.secret_id === undefined ? row.secretId === null || row.secretId === undefined ? null : String(row.secretId) : String(row.secret_id),
+    action: String(row.action) as VaultAction,
+    createdAt: row.created_at ? String(row.created_at) : row.createdAt ? String(row.createdAt) : undefined,
+  };
+  const projectName = firstString(names.projectName, row.projectName, row.project_name);
+  const environmentName = firstString(names.environmentName, row.environmentName, row.environment_name);
+  const secretName = firstString(names.secretName, row.secretName, row.secret_name);
+  if (projectName !== undefined) grant.projectName = projectName;
+  if (environmentName !== undefined) grant.environmentName = environmentName;
+  if (secretName !== undefined) grant.secretName = secretName;
+  return grant;
+}
+
 function tokenMetadata(row: Record<string, unknown>) {
-  return { id: String(row.id), name: String(row.name), tokenPrefix: String(row.token_prefix ?? row.tokenPrefix), expiresAt: row.expires_at ? String(row.expires_at) : row.expiresAt ? String(row.expiresAt) : null, lastUsedAt: row.last_used_at ? String(row.last_used_at) : row.lastUsedAt ? String(row.lastUsedAt) : null, revokedAt: row.revoked_at ? String(row.revoked_at) : row.revokedAt ? String(row.revokedAt) : null, createdAt: String(row.created_at ?? row.createdAt) };
+  return { id: String(row.id), name: String(row.name), tokenPrefix: String(row.token_prefix ?? row.tokenPrefix), expiresAt: row.expires_at ? String(row.expires_at) : row.expiresAt ? String(row.expiresAt) : null, lastUsedAt: row.last_used_at ? String(row.last_used_at) : row.lastUsedAt ? String(row.lastUsedAt) : null, revokedAt: row.revoked_at ? String(row.revoked_at) : row.revokedAt ? String(row.revokedAt) : null, createdAt: String(row.created_at ?? row.createdAt), grants: Array.isArray(row.grants) ? row.grants.map((grant) => grantMetadata(record(grant))) : [] };
+}
+
+function rowId(row: Record<string, unknown>, field: string): string | null {
+  const value = row[field];
+  return typeof value === 'string' && value ? value : null;
+}
+
+async function loadVaultGrantResourceNames(ownerId: string, table: VaultGrantMetadataTable, ids: string[]): Promise<Map<string, string>> {
+  const names = new Map<string, string>();
+  for (let offset = 0; offset < ids.length; offset += 500) {
+    const chunk = ids.slice(offset, offset + 500);
+    const { data, error } = await appDbClient.from(table).select('id, name').eq('owner_id', ownerId).in('id', chunk);
+    if (error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to list Vault agent grant resources.');
+    for (const row of Array.isArray(data) ? data : []) {
+      const item = record(row);
+      const id = rowId(item, 'id');
+      const name = rowId(item, 'name');
+      if (id && name) names.set(id, name);
+    }
+  }
+  return names;
+}
+
+async function vaultGrantResourceNames(ownerId: string, rows: Record<string, unknown>[]): Promise<{
+  projectNames: Map<string, string>;
+  environmentNames: Map<string, string>;
+  secretNames: Map<string, string>;
+}> {
+  const projectIds = [...new Set(rows.map((row) => rowId(row, 'project_id')).filter((id): id is string => Boolean(id)))];
+  const environmentIds = [...new Set(rows.map((row) => rowId(row, 'environment_id')).filter((id): id is string => Boolean(id)))];
+  const secretIds = [...new Set(rows.map((row) => rowId(row, 'secret_id')).filter((id): id is string => Boolean(id)))];
+  const [projectNames, environmentNames, secretNames] = await Promise.all([
+    loadVaultGrantResourceNames(ownerId, 'vault_projects', projectIds),
+    loadVaultGrantResourceNames(ownerId, 'vault_environments', environmentIds),
+    loadVaultGrantResourceNames(ownerId, 'vault_secrets', secretIds),
+  ]);
+  return { projectNames, environmentNames, secretNames };
 }
 
 async function findProject(ownerId: string, reference: string, activeOnly = true): Promise<Record<string, unknown>> {
@@ -280,7 +343,29 @@ export async function listVaultAgentTokens(context: Context): Promise<Response> 
   requireVaultUserJwt(auth);
   const { data, error } = await appDbClient.from('vault_agent_tokens').select('id, name, token_prefix, expires_at, last_used_at, revoked_at, created_at').eq('owner_id', auth.userId).order('created_at', { ascending: false });
   if (error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to list Vault agent tokens.');
-  return dataBody(context, (Array.isArray(data) ? data : []).map((row) => tokenMetadata(record(row))));
+  const tokenRows = Array.isArray(data) ? data.map(record) : [];
+  const tokenIds = tokenRows.map((row) => String(row.id));
+  const grantsByToken = new Map<string, VaultAgentGrant[]>();
+  if (tokenIds.length) {
+    const grantRows = await fetchAllRangePages(async (from, to) => {
+      const grantResult = await appDbClient.from('vault_agent_grants').select('id, token_id, project_id, environment_id, secret_id, action, created_at').eq('owner_id', auth.userId).in('token_id', tokenIds).order('created_at', { ascending: true }).order('id', { ascending: true }).range(from, to);
+      if (grantResult.error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to list Vault agent grants.');
+      return Array.isArray(grantResult.data) ? grantResult.data.map((row) => record(row)) : [];
+    });
+    const names = await vaultGrantResourceNames(auth.userId, grantRows);
+    for (const row of grantRows) {
+      const item = record(row);
+      const tokenId = String(item.token_id);
+      const grants = grantsByToken.get(tokenId) ?? [];
+      grants.push(grantMetadata(item, {
+        projectName: names.projectNames.get(String(item.project_id)),
+        environmentName: names.environmentNames.get(String(item.environment_id)),
+        secretName: names.secretNames.get(String(item.secret_id)),
+      }));
+      grantsByToken.set(tokenId, grants);
+    }
+  }
+  return dataBody(context, tokenRows.map((row) => tokenMetadata({ ...row, grants: grantsByToken.get(String(row.id)) ?? [] })));
 }
 
 export async function createVaultAgentToken(context: Context): Promise<Response> {
@@ -317,10 +402,11 @@ export async function replaceVaultAgentGrants(context: Context): Promise<Respons
   const auth = vaultAuthFromContext(context);
   requireVaultUserJwt(auth);
   const tokenId = context.req.param('tokenId') ?? '';
-  const body = record(await context.req.json());
-  const validation = validateCreateVaultAgentTokenInput({ name: 'placeholder', expiresAt: null, grants: body.grants });
+  const validation = validateReplaceVaultAgentGrantsInput(await context.req.json());
   const result = assertSupabase(await serviceClient.rpc('qnotes_replace_vault_agent_grants', { p_owner_id: auth.userId, p_token_id: tokenId, p_grants: validation.grants }));
   if (record(result).status === 'not_found') throw new ApiError(404, 'VAULT_AGENT_TOKEN_NOT_FOUND', 'The Vault agent token was not found.');
   if (record(result).status !== 'ok') throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to update Vault grants.');
-  return dataBody(context, record(result).grants ?? []);
+  const grants = record(result).grants;
+  if (!Array.isArray(grants)) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to update Vault grants.');
+  return dataBody(context, grants.map((grant) => grantMetadata(record(grant))));
 }

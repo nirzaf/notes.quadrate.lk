@@ -8,6 +8,8 @@ import {
   normalizeVaultSecretName,
   validateCreateVaultProjectInput,
   validateCreateVaultSecretInput,
+  validateCreateVaultAgentTokenInput,
+  validateReplaceVaultAgentGrantsInput,
   validateRevealVaultSecretsInput,
 } from '../dist/index.js';
 
@@ -43,4 +45,11 @@ test('Vault batch reveal requires an explicit bounded selector list and purpose'
   assert.deepEqual(input.secrets[0], { project: 'pearl-blanc', environment: 'production', name: 'CLOUDFLARE_API_TOKEN' });
   assert.throws(() => validateRevealVaultSecretsInput({ secrets: [], purpose: 'x' }), /at least one/);
   assert.throws(() => validateRevealVaultSecretsInput({ secrets: Array.from({ length: 21 }, () => ({ project: 'p', environment: 'e', name: 'K' })), purpose: 'x' }), /at most 20/);
+});
+
+test('Vault token creation requires a grant while replacement can clear every grant', () => {
+  const grant = { projectId, environmentId: null, secretId: null, action: 'metadata:read' };
+  assert.throws(() => validateCreateVaultAgentTokenInput({ name: 'empty', expiresAt: null, grants: [] }), /1 to/);
+  assert.deepEqual(validateReplaceVaultAgentGrantsInput({ grants: [grant] }), { grants: [grant] });
+  assert.deepEqual(validateReplaceVaultAgentGrantsInput({ grants: [] }), { grants: [] });
 });

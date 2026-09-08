@@ -61,13 +61,17 @@ export type VaultAgentTokenMetadata = {
   lastUsedAt: string | null;
   revokedAt: string | null;
   createdAt: string;
+  grants: VaultAgentGrant[];
 };
 
 export type VaultAgentGrant = {
   id?: string;
   projectId: string;
+  projectName?: string;
   environmentId: string | null;
+  environmentName?: string;
   secretId: string | null;
+  secretName?: string;
   action: VaultAction;
   createdAt?: string;
 };
@@ -98,6 +102,7 @@ export type RevealVaultSecretResult = { secretId: string; project: string; envir
 export type RevealVaultSecretsResult = { items: RevealVaultSecretResult[] };
 export type CreateVaultAgentTokenInput = { name: string; expiresAt: string | null; grants: VaultAgentGrant[] };
 export type CreateVaultAgentTokenResult = { token: string; metadata: VaultAgentTokenMetadata; grants: VaultAgentGrant[] };
+export type ReplaceVaultAgentGrantsInput = { grants: VaultAgentGrant[] };
 
 export function isVaultAgentToken(value: unknown): value is string {
   return typeof value === 'string' && VAULT_AGENT_TOKEN_PATTERN.test(value);
@@ -233,6 +238,11 @@ export function validateCreateVaultAgentTokenInput(value: unknown): CreateVaultA
   if (expiresAt !== null && (typeof expiresAt !== 'string' || !ISO_DATE_TIME_PATTERN.test(expiresAt) || Number.isNaN(Date.parse(expiresAt)) || Date.parse(expiresAt) <= Date.now())) throw new QNotesValidationError('expiresAt must be a future ISO date or null.');
   if (!Array.isArray(value.grants) || value.grants.length < 1 || value.grants.length > MAX_VAULT_AGENT_GRANTS) throw new QNotesValidationError(`grants must contain 1 to ${MAX_VAULT_AGENT_GRANTS} entries.`);
   return { name, expiresAt: expiresAt as string | null, grants: value.grants.map(validateGrant) };
+}
+
+export function validateReplaceVaultAgentGrantsInput(value: unknown): ReplaceVaultAgentGrantsInput {
+  if (!record(value) || !Array.isArray(value.grants) || value.grants.length > MAX_VAULT_AGENT_GRANTS) throw new QNotesValidationError(`grants must contain 0 to ${MAX_VAULT_AGENT_GRANTS} entries.`);
+  return { grants: value.grants.map(validateGrant) };
 }
 
 export function validateVaultAction(value: unknown): VaultAction {
