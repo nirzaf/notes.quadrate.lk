@@ -6,6 +6,8 @@ const webServers = [
     command: 'pnpm --filter @qnotes/web dev --host 127.0.0.1',
     url: 'http://127.0.0.1:5173',
     reuseExistingServer: true,
+    timeout: 120_000,
+    gracefulShutdown: { signal: 'SIGTERM', timeout: 5_000 },
   },
   ...(process.env.QNOTES_E2E_EXTERNAL_API === '1'
     ? []
@@ -14,6 +16,7 @@ const webServers = [
         url: 'http://127.0.0.1:54321/functions/v1/qnotes-api/api/health',
         reuseExistingServer: true,
         timeout: 120_000,
+        gracefulShutdown: { signal: 'SIGTERM', timeout: 5_000 },
       }]),
 ];
 

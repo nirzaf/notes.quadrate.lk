@@ -154,17 +154,167 @@ jobs:
           fi
           pnpm exec supabase stop
 
+  browser_smoke:
+    name: browser smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          deno-version: ${{ env.DENO_VERSION }}
+      - name: Enable the pinned package manager
+        run: |
+          corepack enable
+          corepack install --global "pnpm@${PNPM_VERSION}"
+          pnpm --version
+      - run: pnpm install --frozen-lockfile
+      - name: Build workspace for browser smoke
+        run: pnpm run build
+      - name: Install the bundled Chromium browser
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Validate Docker runtime prerequisites
+        shell: bash
+        run: |
+          if ! docker info >/dev/null 2>&1; then
+            echo 'Docker daemon is unavailable on the GitHub-hosted runner.'
+            exit 1
+          fi
+      - name: Start the local Supabase stack
+        run: pnpm exec supabase start
+      - run: pnpm run local:env
+      - run: pnpm run seed:test-users
+      - name: Start local Vite for browser smoke
+        shell: bash
+        run: |
+          mkdir -p .tmp
+          nohup pnpm --filter @qnotes/web dev --host 127.0.0.1 \
+            > .tmp/vite.log 2>&1 &
+          echo $! > .tmp/vite.pid
+          for attempt in {1..60}; do
+            : "$attempt"
+            if curl --fail --silent --show-error \
+              http://127.0.0.1:5173/ >/dev/null; then
+              exit 0
+            fi
+            if ! kill -0 "$(cat .tmp/vite.pid)" 2>/dev/null; then
+              echo 'Vite exited before becoming ready.' >&2
+              if [ -f .tmp/vite.log ]; then
+                cat .tmp/vite.log
+              else
+                echo 'Vite log was not created.' >&2
+              fi
+              exit 1
+            fi
+            sleep 1
+          done
+          echo 'Vite did not become ready within 60 seconds.' >&2
+          if [ -f .tmp/vite.log ]; then
+            cat .tmp/vite.log
+          else
+            echo 'Vite log was not created.' >&2
+          fi
+          exit 1
+      - name: Start local qnotes-api for browser smoke
+        shell: bash
+        run: |
+          mkdir -p .tmp
+          nohup pnpm exec supabase functions serve qnotes-api \
+            --env-file supabase/functions/.env.test --no-verify-jwt \
+            > .tmp/qnotes-api.log 2>&1 &
+          echo $! > .tmp/qnotes-api.pid
+          for attempt in {1..60}; do
+            : "$attempt"
+            if curl --fail --silent --show-error \
+              http://127.0.0.1:54321/functions/v1/qnotes-api/api/health >/dev/null; then
+              exit 0
+            fi
+            if ! kill -0 "$(cat .tmp/qnotes-api.pid)" 2>/dev/null; then
+              if [ -f .tmp/qnotes-api.log ]; then
+                cat .tmp/qnotes-api.log
+              else
+                echo 'qnotes-api log was not created.' >&2
+              fi
+              exit 1
+            fi
+            sleep 1
+          done
+          if [ -f .tmp/qnotes-api.log ]; then
+            cat .tmp/qnotes-api.log
+          else
+            echo 'qnotes-api log was not created.' >&2
+          fi
+          exit 1
+      - name: Run the bounded browser release smoke suite
+        env:
+          QNOTES_E2E_EXTERNAL_API: '1'
+        run: pnpm run test:e2e:smoke
+      - name: Print Vite log on failure
+        if: failure()
+        shell: bash
+        run: |
+          if [ -f .tmp/vite.log ]; then
+            cat .tmp/vite.log || true
+          else
+            echo 'Vite log was not created.' >&2
+          fi
+      - name: Stop local Vite
+        if: always()
+        shell: bash
+        run: |
+          if [ -s .tmp/vite.pid ]; then
+            vite_pid="$(cat .tmp/vite.pid)"
+            if kill -0 "$vite_pid" 2>/dev/null; then
+              kill "$vite_pid" 2>/dev/null || true
+              for attempt in {1..10}; do
+                : "$attempt"
+                if ! kill -0 "$vite_pid" 2>/dev/null; then
+                  break
+                fi
+                sleep 1
+              done
+              kill -KILL "$vite_pid" 2>/dev/null || true
+            fi
+          fi
+      - name: Stop local qnotes-api
+        if: always()
+        shell: bash
+        run: |
+          if [ -s .tmp/qnotes-api.pid ]; then
+            qnotes_api_pid="$(cat .tmp/qnotes-api.pid)"
+            if kill -0 "$qnotes_api_pid" 2>/dev/null; then
+              kill "$qnotes_api_pid" 2>/dev/null || true
+              for attempt in {1..10}; do
+                : "$attempt"
+                if ! kill -0 "$qnotes_api_pid" 2>/dev/null; then
+                  break
+                fi
+                sleep 1
+              done
+              kill -KILL "$qnotes_api_pid" 2>/dev/null || true
+            fi
+          fi
+      - name: Stop the local Supabase stack
+        if: always()
+        run: pnpm exec supabase stop
+
   release_gate:
     name: release gate
-    needs: [core, integration, search_regression]
+    needs: [core, integration, search_regression, browser_smoke]
     if: >-
       ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/master' &&
       needs.core.result == 'success' &&
       (needs.integration.result == 'success' || needs.integration.result == 'skipped') &&
-      (needs.search_regression.result == 'success' || needs.search_regression.result == 'skipped') }}
+      (needs.search_regression.result == 'success' || needs.search_regression.result == 'skipped') &&
+      needs.browser_smoke.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
-      - run: echo 'Core verification passed; all enabled release checks passed.'
+      - run: echo 'Core, integration, search, and browser smoke verification passed.'
 
   deploy:
     name: deploy production

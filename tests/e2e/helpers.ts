@@ -9,9 +9,15 @@ export const OWNER = { email: 'owner@qnotes.local', password: 'Qnotes-Test-Owner
 export const OTHER = { email: 'other@qnotes.local', password: 'Qnotes-Test-Other-2026!' } as const;
 const TEST_USERS = [OWNER, OTHER] as const;
 type TestUser = (typeof TEST_USERS)[number];
+const E2E_REQUEST_TIMEOUT_MS = 10_000;
 
 const repoRoot = resolve(process.cwd());
 const localHosts = new Set(['localhost', '127.0.0.1']);
+
+function requestDeadline(signal: AbortSignal | null | undefined): AbortSignal {
+  const timeout = AbortSignal.timeout(E2E_REQUEST_TIMEOUT_MS);
+  return signal ? AbortSignal.any([signal, timeout]) : timeout;
+}
 
 function parseLocalEnv(text: string): Record<string, string> {
   const values: Record<string, string> = {};
@@ -213,7 +219,7 @@ export async function apiJson(path: string, token: string, init: RequestInit = {
   headers.set('Authorization', `Bearer ${token}`);
   headers.set('Accept', 'application/json');
   if (init.body !== undefined && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
-  const response = await fetch(`${env.apiUrl}${path}`, { ...init, headers });
+  const response = await fetch(`${env.apiUrl}${path}`, { ...init, headers, signal: requestDeadline(init.signal) });
   const body = (response.headers.get('content-type') ?? '').includes('json') ? await response.json() : await response.text();
   return { response, body };
 }
@@ -223,7 +229,7 @@ export async function publicApiJson(path: string, init: RequestInit = {}): Promi
   const headers = new Headers(init.headers);
   headers.set('Accept', 'application/json');
   if (init.body !== undefined && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
-  const response = await fetch(`${env.apiUrl}${path}`, { ...init, headers });
+  const response = await fetch(`${env.apiUrl}${path}`, { ...init, headers, signal: requestDeadline(init.signal) });
   const body = (response.headers.get('content-type') ?? '').includes('json') ? await response.json() : await response.text();
   return { response, body };
 }

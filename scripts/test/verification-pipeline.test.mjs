@@ -44,9 +44,9 @@ test('runs verification stages in order and stops at the first failure', async (
     'build',
     'generated Edge parity',
     'database tests',
-    'navigation E2E',
+    'browser release smoke',
   ]);
-  assert.deepEqual(LOCAL_VERIFY_STAGES.at(-1).args, ['exec', 'playwright', 'test', 'tests/e2e/navigation.spec.ts', '--project=chromium']);
+  assert.deepEqual(LOCAL_VERIFY_STAGES.at(-1).args, ['run', 'test:e2e:smoke']);
 
   const calls = [];
   await assert.rejects(

@@ -68,7 +68,7 @@ PostgreSQL full-text and relevance-ranked keyword search is available immediatel
 
 The browser subscribes to the private `user:<user-id>:notes` Realtime channel and receives metadata-only `note.changed` events. IndexedDB stores drafts, a notes sync cursor, and recent authoritative note snapshots. Access tokens are not stored in IndexedDB or the service-worker cache.
 
-CI runs the core typecheck/unit/Edge/build/generated-parity checks, local Supabase SQL/database integration tests, and the path-gated search regression job on GitHub-hosted `ubuntu-latest` runners. The complete Playwright E2E suite remains a local/manual command (`pnpm run test:e2e`) and is not run by CI/CD. A successful push to `master` runs the production CD job after the complete release gate. Deployment applies migrations, deploys Supabase Edge Functions, publishes Cloudflare Pages, and verifies the live health endpoints. See [.github/GITHUB_ACTIONS.md](.github/GITHUB_ACTIONS.md) for the runner setup and production secrets. The available check names are `CI / core`, `CI / integration`, and `CI / search regression`. See [SECURITY.md](SECURITY.md) for the full-history secret-scan and vulnerability-reporting procedure.
+CI runs the core typecheck/unit/Edge/build/generated-parity checks, local Supabase SQL/database integration tests, the path-gated search regression job, and the bounded Chromium browser smoke job on GitHub-hosted `ubuntu-latest` runners. The browser smoke covers note navigation and edit/preview, Vault administration routes, public-share rendering, accessibility, and the attachment UI without starting background workers. The complete Playwright E2E suite remains a local/manual command (`pnpm run test:e2e`) and is not run by CI/CD. A successful push to `master` runs the production CD job only after the browser smoke and other enabled release checks pass. Deployment applies migrations, deploys Supabase Edge Functions, publishes Cloudflare Pages, and verifies the live health endpoints. See [.github/GITHUB_ACTIONS.md](.github/GITHUB_ACTIONS.md) for the runner setup and production secrets. The available check names are `CI / core`, `CI / integration`, `CI / search regression`, and `CI / browser smoke`. See [SECURITY.md](SECURITY.md) for the full-history secret-scan and vulnerability-reporting procedure.
 
 ## Local development
 
@@ -104,9 +104,9 @@ The gate validates Node, pnpm, Deno, installed dependencies, the local Supabase 
 4. `pnpm run build`
 5. `pnpm run verify:edge-shared`
 6. `pnpm exec supabase test db`
-7. `pnpm exec playwright test tests/e2e/navigation.spec.ts --project=chromium`
+7. `pnpm run test:e2e:smoke`
 
-The focused navigation E2E run starts the web server and local Edge Functions through the existing `playwright.config.ts` lifecycle, reusing an already running server only when Playwright verifies its configured URL. `tests/e2e/global-setup.ts` and the E2E fixture clear application data only for the dedicated local users `owner@qnotes.local` and `other@qnotes.local`; this bounded cleanup is an intentional side effect of E2E setup. The guard does not stop processes it did not start.
+With external mode unset, the local `test:e2e:smoke` command sets `QNOTES_E2E_SERVE_WORKERS=0`, starts Vite and only the local `qnotes-api` function through the smoke config’s bounded `playwright.config.ts` lifecycle, and uses one Chromium worker. CI starts Vite and `qnotes-api` in workflow-managed processes, sets `QNOTES_E2E_EXTERNAL_API=1`, and lets Playwright reuse the workflow-managed Vite process. Playwright reuses an already running server only when it verifies its configured URL. `tests/e2e/global-setup.ts` and the E2E fixture clear application data only for the dedicated local users `owner@qnotes.local` and `other@qnotes.local`; this bounded cleanup is an intentional side effect of E2E setup. The guard does not stop processes it did not start.
 
 If preflight fails, fix the reported local prerequisite manually: install the pinned tools, start Docker/Supabase, run `pnpm run local:env`, seed the dedicated users with `pnpm run seed:test-users`, or install bundled Chromium with `pnpm exec playwright install chromium`. It will reject HTTPS, URL credentials, localhost lookalikes, mismatched local targets, and any inherited remote URL before the database or browser stages. A stage failure is reported with its elapsed time and prevents all later stages from running. This gate is a local correctness and regression check, not a production deployment check or a security audit; production validation remains covered by the deployment and security procedures below.
 
@@ -127,7 +127,7 @@ pnpm exec supabase functions serve qnotes-api embedding-worker attachment-worker
   --env-file supabase/functions/.env.test --no-verify-jwt
 ```
 
-Open `http://127.0.0.1:5173`. The local API health check is `http://127.0.0.1:54321/functions/v1/qnotes-api/api/health`.
+Open `http://127.0.0.1:5173`. The local API health check is `http://127.0.0.1:54321/functions/v1/qnotes-api/api/health`. Local Playwright runs manage the API through `playwright.config.ts`; CI starts Vite and the API as bounded workflow-managed processes, sets `QNOTES_E2E_EXTERNAL_API=1`, and lets Playwright reuse Vite.
 
 `db:types` must run against the final local schema. After changing shared contracts or generated database types, run `pnpm run sync:edge` so the Deno functions receive the copies under `supabase/functions/_shared/generated`.
 
@@ -148,11 +148,17 @@ The unit suite covers the Markdown, sync, API-client, CLI, and MCP packages:
 pnpm run test:unit
 ```
 
-The E2E suite uses the single-worker, zero-retry configuration in `playwright.config.ts`. Its web-server configuration starts Vite and the configured local Edge Functions, and its global setup plus per-test fixture clears application data for the two dedicated local test users. The verified focused command is:
+The full E2E suite remains available locally/manual with the single-worker, zero-retry configuration in `playwright.config.ts`:
+
+```bash
+pnpm run test:e2e
+```
+
+For the short release-oriented browser check, use the dedicated smoke command. Locally it starts Vite and only the local `qnotes-api` function; CI starts both processes in the workflow and Playwright reuses Vite. Both paths apply tighter test/action/navigation/global deadlines, and the global setup plus per-test fixture clears application data for the two dedicated local test users:
 
 ```bash
 pnpm exec playwright install chromium
-pnpm exec playwright test tests/e2e/navigation.spec.ts --project=chromium
+pnpm run test:e2e:smoke
 ```
 
 The hosted project is `ciyoandzjezgqxjpcrin`, and the production web site is `https://notes.quadrate.lk`. Before a production deployment, set exact CORS origins and server-only secrets. Do not set `QNOTES_FAKE_EMBEDDINGS=1` in production; hosted workers need the Supabase AI runtime for `gte-small` embeddings.
