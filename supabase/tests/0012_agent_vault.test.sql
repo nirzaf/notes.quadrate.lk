@@ -260,7 +260,7 @@ select public.qnotes_vault_reveal_secret(
   'user_jwt'
 ) as response;
 select is((select response->>'status' from vault_rpc_reveal_success), 'ok', 'reveal returns ok for an active secret');
-select ok((select jsonb_typeof(response->'secret'->'value') = 'string' and octet_length(response->'secret'->>'value') > 0 from vault_rpc_reveal_success), 'reveal returns a non-empty synthetic value');
+select ok((select jsonb_typeof(response->'secret'->'value') = 'string' and response->'secret'->>'value' = (select reveal_value from vault_rpc_test_values) from vault_rpc_reveal_success), 'reveal returns the expected synthetic value');
 select ok((select count(*) = 1 from notesdb.vault_audit_events where owner_id = (select id from auth.users where email = 'owner@qnotes.local') and actor_kind = 'user_jwt' and actor_token_id is null and action = 'secret:reveal' and secret_id = ((select response->'secret'->>'id' from vault_rpc_create_reveal))::uuid and purpose = 'synthetic reveal audit ordering' and success and result_code = 'revealed' and request_id = 'a1000000-0000-4000-8000-000000000043'), 'reveal success is audited before the RPC returns');
 
 create function pg_temp.fail_vault_rpc_audit_insert() returns trigger
@@ -289,7 +289,10 @@ begin
   );
   return true;
 exception when others then
-  return false;
+  if position('synthetic Vault audit failure' in sqlerrm) > 0 then
+    return false;
+  end if;
+  raise;
 end;
 $$;
 select ok(not pg_temp.vault_rpc_reveal_returns(), 'a reveal audit failure prevents a successful return');
