@@ -18,7 +18,7 @@ function readyChecks() {
 function secretsListOutput(secrets) {
   return JSON.stringify({
     secrets,
-    message: 'Secret values are not returned by the CLI response.',
+    message: 'Test-double wrapper for a synthetic CLI response; secret values are not returned by this fixture.',
   });
 }
 

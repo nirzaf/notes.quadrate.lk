@@ -163,6 +163,8 @@ pnpm run test:e2e:smoke
 
 The hosted project is `ciyoandzjezgqxjpcrin`, and the production web site is `https://notes.quadrate.lk`. Before a production deployment, set exact CORS origins and server-only secrets. Do not set `QNOTES_FAKE_EMBEDDINGS=1` in production; hosted workers need the Supabase AI runtime for `gte-small` embeddings.
 
+The hosted database must contain the migrations through `20260908000100_agent_vault_batch_reveal.sql`. The Agent Vault migrations add the isolated metadata plane, Supabase Vault-backed service-only RPCs, qvt grants, audit/replay protections, and bounded batch reveal. The public-sharing migrations add the HMAC-backed, service-only public share table, transactional create/rotate/revoke RPCs, the three-field resolver projection, automatic revocation on soft delete, and the caller-owned `shares:write` personal-token scope; the preceding migrations add the transaction-safe logical append receipt, request-safe search functions, embedding input/version invariants, stale-vector requeueing, attachment page provenance, safe capture deduplication, and the daily embedding recovery schedule. The worker cron jobs read the project URL and internal worker secret from Supabase Vault, so those Vault secrets and the Edge Function secrets must be configured before expecting asynchronous embeddings or attachment extraction. Before deploying Edge Functions, run `SUPABASE_PROJECT_ID=ciyoandzjezgqxjpcrin pnpm run verify:vault`; it checks the server-only `QNOTES_VAULT_TOKEN_PEPPER` by name and validates the database contract without revealing a value or returning database data.
+
 Deploy the API and worker functions with the repository import map:
 
 ```bash
@@ -170,8 +172,6 @@ pnpm exec supabase functions deploy qnotes-api embedding-worker attachment-worke
   --project-ref ciyoandzjezgqxjpcrin --no-verify-jwt --use-api \
   --import-map supabase/functions/deno.json
 ```
-
-The hosted database must contain the migrations through `20260908000100_agent_vault_batch_reveal.sql`. The Agent Vault migrations add the isolated metadata plane, Supabase Vault-backed service-only RPCs, qvt grants, audit/replay protections, and bounded batch reveal. The public-sharing migrations add the HMAC-backed, service-only public share table, transactional create/rotate/revoke RPCs, the three-field resolver projection, automatic revocation on soft delete, and the caller-owned `shares:write` personal-token scope; the preceding migrations add the transaction-safe logical append receipt, request-safe search functions, embedding input/version invariants, stale-vector requeueing, attachment page provenance, safe capture deduplication, and the daily embedding recovery schedule. The worker cron jobs read the project URL and internal worker secret from Supabase Vault, so those Vault secrets and the Edge Function secrets must be configured before expecting asynchronous embeddings or attachment extraction. Before deploying Edge Functions, run `SUPABASE_PROJECT_ID=ciyoandzjezgqxjpcrin pnpm run verify:vault`; it checks the server-only `QNOTES_VAULT_TOKEN_PEPPER` by name and validates the database contract without revealing a value or returning database data.
 
 Build and deploy the web package to Cloudflare Pages with the hosted Supabase values:
 
@@ -188,7 +188,7 @@ npx wrangler pages deploy apps/web/dist --project-name notes-quadrate-lk
 
 Every exposed application table is protected by owner-based RLS. Browser clients receive only the Supabase publishable key and read through owner-scoped grants; writes, private attachment metadata, token operations, public share operations, and search RPCs are mediated by the Edge Function and service role. Personal tokens and public share secrets are scoped to separate formats and domain-separated HMAC-SHA-256 hashes. Personal tokens are optionally expirable and revocable; public shares are single-active, expirable, revocable, and automatically revoked when a note is soft-deleted. Raw secrets are returned only at creation time; browser share secrets stay in URL fragments, and the unauthenticated API resolver accepts them only in POST bodies, never query strings or logs.
 
-Set `QNOTES_ALLOWED_ORIGIN` to an exact comma-separated allow-list and keep Realtime “Allow public access” disabled. Keep `QNOTES_TOKEN_PEPPER`, `QNOTES_INTERNAL_WORKER_SECRET`, and `SUPABASE_SERVICE_ROLE_KEY` server-side. Keep attachment and export limits aligned with the desired deployment; the local defaults are 20 MiB per attachment and 50 MiB per workspace ZIP.
+Set `QNOTES_ALLOWED_ORIGIN` to an exact comma-separated allow-list and keep Realtime “Allow public access” disabled. Keep `QNOTES_TOKEN_PEPPER`, `QNOTES_INTERNAL_WORKER_SECRET`, `QNOTES_VAULT_TOKEN_PEPPER`, and `SUPABASE_SERVICE_ROLE_KEY` server-side. Keep attachment and export limits aligned with the desired deployment; the local defaults are 20 MiB per attachment and 50 MiB per workspace ZIP.
 
 Autosave-level synchronization deliberately stops short of character-level collaboration. Shared cursors, CRDTs, operational transformation, team workspaces, public multi-note publishing, native apps, image OCR, and a large offline write queue are outside the current product boundary. Public sharing is limited to one explicitly shared note at a time and never includes attachments.
 

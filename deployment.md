@@ -89,12 +89,15 @@ Set the server-only Edge Function secrets in Supabase. `SUPABASE_URL` and `SUPAB
 ```bash
 read -rsp 'QNOTES token pepper: ' QNOTES_TOKEN_PEPPER
 printf '\n'
+read -rsp 'QNOTES Vault token pepper: ' QNOTES_VAULT_TOKEN_PEPPER
+printf '\n'
 read -rsp 'QNOTES worker secret: ' QNOTES_INTERNAL_WORKER_SECRET
 printf '\n'
 
 pnpm exec supabase secrets set --project-ref ciyoandzjezgqxjpcrin \
   QNOTES_ALLOWED_ORIGIN="https://notes.quadrate.lk" \
   QNOTES_TOKEN_PEPPER="$QNOTES_TOKEN_PEPPER" \
+  QNOTES_VAULT_TOKEN_PEPPER="$QNOTES_VAULT_TOKEN_PEPPER" \
   QNOTES_INTERNAL_WORKER_SECRET="$QNOTES_INTERNAL_WORKER_SECRET" \
   QNOTES_MAX_ATTACHMENT_BYTES="20971520" \
   QNOTES_EXPORT_MAX_BYTES="52428800"
