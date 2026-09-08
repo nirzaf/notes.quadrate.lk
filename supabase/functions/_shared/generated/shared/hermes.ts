@@ -8,6 +8,7 @@ export interface HermesMcpConfigInput {
   profile: HermesMcpProfile;
   serverPath: string;
   deviceId?: UUID;
+  includePublicShare?: boolean;
   vaultProfile?: HermesVaultMcpProfile;
 }
 
@@ -22,11 +23,13 @@ const VAULT_WRITE_TOOLS = ['vault_create_secret', 'vault_rotate_secret', 'vault_
  * JSON is valid YAML 1.2, so JSON.stringify gives Hermes a safely escaped,
  * copyable config without hand-built YAML interpolation hazards.
  */
-export function buildHermesMcpConfig({ profile, serverPath, deviceId, vaultProfile = 'none' }: HermesMcpConfigInput): string {
+export function buildHermesMcpConfig({ profile, serverPath, deviceId, includePublicShare = false, vaultProfile = 'none' }: HermesMcpConfigInput): string {
   if (!serverPath.trim()) throw new Error('serverPath is required.');
   if (profile === 'write' && (!deviceId || !isUUID(deviceId))) throw new Error('A stable UUID deviceId is required for the write profile.');
   const serverName = profile === 'write' ? 'quadrate_notes_write' : profile === 'share' ? 'quadrate_notes_share' : 'quadrate_notes_read';
-  const notesTools = profile === 'write' ? [...READ_TOOLS, ...SHARE_TOOLS, ...WRITE_TOOLS] : profile === 'share' ? [...READ_TOOLS, ...SHARE_TOOLS] : READ_TOOLS;
+  const notesTools = profile === 'write'
+    ? [...READ_TOOLS, ...(includePublicShare ? SHARE_TOOLS : []), ...WRITE_TOOLS]
+    : profile === 'share' ? [...READ_TOOLS, ...SHARE_TOOLS] : READ_TOOLS;
   const vaultTools = vaultProfile === 'write'
     ? [...VAULT_METADATA_TOOLS, ...VAULT_REVEAL_TOOLS, ...VAULT_WRITE_TOOLS]
     : vaultProfile === 'reveal'
@@ -41,6 +44,7 @@ export function buildHermesMcpConfig({ profile, serverPath, deviceId, vaultProfi
           QNOTES_MCP_PROFILE: 'write',
           QNOTES_WRITE_TOKEN: '${QNOTES_WRITE_TOKEN}',
           QNOTES_MCP_DEVICE_ID: deviceId!,
+          ...(includePublicShare ? { QNOTES_MCP_ENABLE_PUBLIC_SHARE: 'true' } : {}),
         }
       : { QNOTES_TOKEN: profile === 'share' ? '${QNOTES_TOKEN}' : '${QNOTES_READ_TOKEN}' }),
     ...(vaultProfile === 'none' ? {} : { QVAULT_TOKEN: '${QVAULT_TOKEN}', QVAULT_MCP_PROFILE: vaultProfile }),

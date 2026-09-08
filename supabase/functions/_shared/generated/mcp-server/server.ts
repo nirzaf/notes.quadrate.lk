@@ -23,14 +23,14 @@ export const READ_TOOL_NAMES = ['search_notes', 'read_note_context', 'get_block'
 export const SHARE_TOOL_NAMES = ['create_public_share'] as const;
 export const WRITE_TOOL_NAMES = ['capture_note', 'append_note', 'update_note', 'delete_note', 'restore_note', 'move_note_to_notebook'] as const;
 export const SHARE_PROFILE_TOOL_NAMES = [...READ_TOOL_NAMES, ...SHARE_TOOL_NAMES] as const;
-export const WRITE_PROFILE_TOOL_NAMES = [...READ_TOOL_NAMES, ...SHARE_TOOL_NAMES, ...WRITE_TOOL_NAMES] as const;
+export const WRITE_PROFILE_TOOL_NAMES = [...READ_TOOL_NAMES, ...WRITE_TOOL_NAMES] as const;
 export const PROFILE_TOOL_NAMES = {
   read: READ_TOOL_NAMES,
   share: SHARE_PROFILE_TOOL_NAMES,
   write: WRITE_PROFILE_TOOL_NAMES,
 } as const;
 export { VAULT_METADATA_TOOL_NAMES, VAULT_REVEAL_TOOL_NAMES, VAULT_WRITE_TOOL_NAMES };
-export interface QNotesMcpServerOptions extends WriteToolOptions { vaultClient?: QVaultClient; vaultProfile?: VaultMcpProfile }
+export interface QNotesMcpServerOptions extends WriteToolOptions { allowPublicShare?: boolean; vaultClient?: QVaultClient; vaultProfile?: VaultMcpProfile }
 
 const noteAcknowledgmentFields = {
   noteId: z.string().min(1),
@@ -97,7 +97,7 @@ export function createQNotesMcpServer(client: QNotesClient & ReadQNotesClient, p
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, (args: Record<string, unknown>) => resolvePublicShareTool(client, args as Parameters<typeof resolvePublicShareTool>[1]));
   registerNotesResources(server, client);
-  if (profile === 'share' || profile === 'write') {
+  if (profile === 'share' || (profile === 'write' && options.allowPublicShare === true)) {
     server.registerTool('create_public_share', {
       description: 'Create one 24-hour public link for an exact note after checking its title and Markdown for obvious credential material. The note content is never returned or included in errors.',
       inputSchema: {

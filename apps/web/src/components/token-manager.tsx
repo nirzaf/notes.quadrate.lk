@@ -117,7 +117,13 @@ export function TokenManager(): JSX.Element {
   }, [toast, userId]);
 
   const scopes = useMemo(() => [...requiredScopes[profile], ...extraScopes.filter((scope) => !requiredScopes[profile].includes(scope))], [extraScopes, profile]);
-  const config = useMemo(() => issued ? buildHermesMcpConfig({ profile: issued.profile, serverPath: mcpServerPath, vaultProfile: issued.vaultProfile, ...(issued.deviceId ? { deviceId: issued.deviceId } : {}) }) : null, [issued]);
+  const config = useMemo(() => issued ? buildHermesMcpConfig({
+    profile: issued.profile,
+    serverPath: mcpServerPath,
+    vaultProfile: issued.vaultProfile,
+    ...(issued.deviceId ? { deviceId: issued.deviceId } : {}),
+    ...(issued.profile === 'share' || issued.metadata.scopes.includes('shares:write') ? { includePublicShare: true } : {}),
+  }) : null, [issued]);
 
   const chooseProfile = (nextProfile: IntegrationProfile) => {
     setProfile(nextProfile);
