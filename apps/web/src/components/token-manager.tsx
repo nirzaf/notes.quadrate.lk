@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { QNotesClient } from '@qnotes/api-client';
-import type { ApiTokenMetadata, ApiTokenScope } from '@qnotes/shared';
+import type { ApiTokenMetadata, ApiTokenScope, HermesVaultMcpProfile } from '@qnotes/shared';
 import { buildHermesMcpConfig } from '@qnotes/shared';
 import { api } from '../api';
 import { env } from '../env';
@@ -35,11 +35,18 @@ const expiryChoices: Array<{ value: ExpiryChoice; label: string; days?: number }
   { value: 'never', label: 'Does not expire' },
 ];
 const mcpServerPath = '/absolute/local/path/to/notes.quadrate.lk/packages/mcp-server/dist/index.js';
+const vaultProfileChoices: Array<{ value: HermesVaultMcpProfile; label: string; description: string }> = [
+  { value: 'none', label: 'No Vault', description: 'Generate Notes tools only.' },
+  { value: 'metadata', label: 'Vault metadata', description: 'List the Vault metadata allowed by QVAULT_TOKEN without revealing values.' },
+  { value: 'reveal', label: 'Vault reveal', description: 'Add explicit single and bounded batch secret reveal tools.' },
+  { value: 'write', label: 'Vault write', description: 'Add Vault secret create, rotate, and delete tools.' },
+];
 
 interface IssuedToken {
   token: string;
   metadata: ApiTokenMetadata;
   profile: IntegrationProfile;
+  vaultProfile: HermesVaultMcpProfile;
   deviceId?: string;
 }
 
@@ -74,6 +81,7 @@ export function TokenManager(): JSX.Element {
   const [tokens, setTokens] = useState<ApiTokenMetadata[]>([]);
   const [name, setName] = useState('');
   const [profile, setProfile] = useState<IntegrationProfile>('read');
+  const [vaultProfile, setVaultProfile] = useState<HermesVaultMcpProfile>('none');
   const [extraScopes, setExtraScopes] = useState<ApiTokenScope[]>([]);
   const [expiry, setExpiry] = useState<ExpiryChoice>('30d');
   const [issued, setIssued] = useState<IssuedToken | null>(null);
@@ -109,7 +117,7 @@ export function TokenManager(): JSX.Element {
   }, [toast, userId]);
 
   const scopes = useMemo(() => [...requiredScopes[profile], ...extraScopes.filter((scope) => !requiredScopes[profile].includes(scope))], [extraScopes, profile]);
-  const config = useMemo(() => issued ? buildHermesMcpConfig({ profile: issued.profile, serverPath: mcpServerPath, ...(issued.deviceId ? { deviceId: issued.deviceId } : {}) }) : null, [issued]);
+  const config = useMemo(() => issued ? buildHermesMcpConfig({ profile: issued.profile, serverPath: mcpServerPath, vaultProfile: issued.vaultProfile, ...(issued.deviceId ? { deviceId: issued.deviceId } : {}) }) : null, [issued]);
 
   const chooseProfile = (nextProfile: IntegrationProfile) => {
     setProfile(nextProfile);
@@ -128,7 +136,7 @@ export function TokenManager(): JSX.Element {
       const result = await api.createToken({ name: name.trim(), scopes, expiresAt: selectedExpiry(expiry) });
       if (!mountedRef.current || userIdRef.current !== requestUserId) return;
       const deviceId = profile === 'write' ? crypto.randomUUID() : undefined;
-      setIssued({ token: result.token, metadata: result.metadata, profile, ...(deviceId ? { deviceId } : {}) });
+      setIssued({ token: result.token, metadata: result.metadata, profile, vaultProfile, ...(deviceId ? { deviceId } : {}) });
       setTokens((current) => [result.metadata, ...current]);
       setName('');
       toast('Token created. Copy it now; the full value will not be shown again.', 'success');
@@ -175,6 +183,13 @@ export function TokenManager(): JSX.Element {
           </div>
         </fieldset>
         <fieldset className="q-integration-fieldset">
+          <legend className="q-label">Vault profile</legend>
+          <p className="q-field-help">Vault access is additive to the Notes profile. This page does not create or display a Vault secret; supply your separate <code>QVAULT_TOKEN</code> in Hermes’ environment-backed secret file.</p>
+          <div className="q-integration-profiles">
+            {vaultProfileChoices.map((choice) => <label className="q-integration-profile" key={choice.value}><input type="radio" name="hermes-vault-profile" checked={vaultProfile === choice.value} onChange={() => setVaultProfile(choice.value)} /><span><strong>{choice.label}</strong><small>{choice.description}</small></span></label>)}
+          </div>
+        </fieldset>
+        <fieldset className="q-integration-fieldset">
           <legend className="q-label">Granted scopes</legend>
           <div className="q-integration-scopes">
             {[...requiredScopes[profile], ...optionalScopes].filter((scope, index, all) => all.indexOf(scope) === index).map((scope) => {
@@ -193,6 +208,7 @@ export function TokenManager(): JSX.Element {
         {config && <>
           <div className="q-token-issued-heading"><strong>Hermes configuration</strong><span className="q-small">Valid YAML/JSON; replace the path and environment placeholders.</span></div>
           <pre className="q-config-block"><code>{config}</code></pre>
+          {issued.vaultProfile !== 'none' && <p className="q-field-help">This combined configuration contains only the <code>QVAULT_TOKEN</code> placeholder and the selected <code>QVAULT_MCP_PROFILE</code>. Create a qvt Vault agent token separately in Agent Vault and supply it through Hermes’ secret environment; its raw value is never displayed here.</p>}
           <div className="q-dialog-actions"><Button type="button" variant="outline" onClick={() => void copy(config, 'Hermes configuration copied.')}>Copy configuration</Button><Button type="button" variant="ghost" onClick={() => void verifyApi()} disabled={verification === 'verifying'}>{verification === 'verifying' ? 'Verifying API access…' : 'Verify token/API access'}</Button><Button type="button" variant="ghost" onClick={() => { setIssued(null); setVerification('idle'); }}>Hide one-time secret</Button></div>
           <p className={verification === 'failed' ? 'q-error' : 'q-integration-verification'} role={verification === 'failed' ? 'alert' : 'status'}>{verification === 'verified' ? 'Token/API access verified. This browser check does not verify Hermes.' : verification === 'failed' ? 'Token/API access could not be verified. Check the token, expiry, and selected scopes.' : 'Hermes is not connected yet. After saving the configuration, run hermes mcp test in your terminal to verify the real stdio round trip.'}</p>
           {issued.profile === 'write' && issued.deviceId && <p className="q-field-help">Keep QNOTES_MCP_DEVICE_ID <code>{issued.deviceId}</code> unchanged when retrying an ambiguous write or restarting Hermes.</p>}
@@ -200,6 +216,6 @@ export function TokenManager(): JSX.Element {
       </div>}
     </section>
     <section className="q-card q-card-pad q-panel"><h3>Existing tokens</h3><div className="q-token-list">{tokens.length ? tokens.map((token) => <div className="q-token-row" key={token.id}><div><div className="q-token-name">{token.name}</div><div className="q-small">{token.tokenPrefix} · {token.scopes.join(', ')} · {expiryLabel(token.expiresAt)}{token.revokedAt ? ' · revoked' : ''}</div></div>{!token.revokedAt && <Button variant="ghost" size="sm" onClick={() => void revoke(token.id)}>Revoke</Button>}</div>) : <p>No personal tokens yet.</p>}</div></section>
-    <section className="q-card q-card-pad q-panel"><h3>Finish setup in Hermes</h3><p>Build this repository’s MCP server, put the selected token in Hermes’ environment-backed secret file, paste the generated entry into <code>~/.hermes/config.yaml</code>, then run <code>hermes mcp test quadrate_notes_&lt;profile&gt;</code>. The test result is the Hermes verification; an API check in this browser is only token/API verification.</p><p>A share token must retain <code>shares:write</code> and is used as the caller-owned credential for share management. For a writing token, retain the generated <code>QNOTES_MCP_DEVICE_ID</code> value across process restarts. Pass the same <code>mutationId</code> when retrying an ambiguous capture, append, or update. Omitting it remains supported, but each call is treated as a new operation.</p></section>
+    <section className="q-card q-card-pad q-panel"><h3>Finish setup in Hermes</h3><p>Build this repository’s MCP server, put the selected Notes token in Hermes’ environment-backed secret file, paste the generated entry into <code>~/.hermes/config.yaml</code>, then run <code>hermes mcp test quadrate_notes_&lt;profile&gt;</code>. The test result is the Hermes verification; an API check in this browser is only token/API verification.</p><p>If you selected a Vault profile, create a separate qvt Vault agent token in Agent Vault and provide it as <code>QVAULT_TOKEN</code> in the same Hermes secret environment. The generated configuration supplies only the placeholder and profile name; it never contains the raw Vault token. A share token must retain <code>shares:write</code> and is used as the caller-owned credential for share management. For a writing token, retain the generated <code>QNOTES_MCP_DEVICE_ID</code> value across process restarts. Pass the same <code>mutationId</code> when retrying an ambiguous capture, append, or update. Omitting it remains supported, but each call is treated as a new operation.</p></section>
   </div>;
 }

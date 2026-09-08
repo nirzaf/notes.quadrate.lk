@@ -16,6 +16,15 @@ function generatedConfig(profile) {
   })).mcp_servers[`quadrate_notes_${profile}`];
 }
 
+function generatedConfigWithVault(profile, vaultProfile) {
+  return JSON.parse(buildHermesMcpConfig({
+    profile,
+    serverPath,
+    vaultProfile,
+    ...(profile === 'write' ? { deviceId } : {}),
+  })).mcp_servers[`quadrate_notes_${profile}`];
+}
+
 test('read, share, and write profiles use the hardened Hermes runtime policy', () => {
   const profiles = [
     { name: 'read', parallel: true, tools: READ_TOOLS, env: { QNOTES_URL: '${QNOTES_URL}', QNOTES_TOKEN: '${QNOTES_READ_TOKEN}' } },
@@ -40,4 +49,41 @@ test('write profile requires a stable UUID device ID', () => {
   assert.throws(() => buildHermesMcpConfig({ profile: 'write', serverPath }), /stable UUID/);
   assert.throws(() => buildHermesMcpConfig({ profile: 'write', serverPath, deviceId: 'not-a-uuid' }), /stable UUID/);
   assert.equal(generatedConfig('write').env.QNOTES_MCP_DEVICE_ID, deviceId);
+});
+
+test('combines every Vault profile with every Notes profile without exposing raw secrets', () => {
+  const vaultProfiles = {
+    none: { parallelWithRead: true, tools: [], env: {} },
+    metadata: {
+      parallelWithRead: true,
+      tools: ['vault_list_projects', 'vault_list_environments', 'vault_list_secrets'],
+      env: { QVAULT_TOKEN: '${QVAULT_TOKEN}', QVAULT_MCP_PROFILE: 'metadata' },
+    },
+    reveal: {
+      parallelWithRead: false,
+      tools: ['vault_list_projects', 'vault_list_environments', 'vault_list_secrets', 'vault_get_secret', 'vault_get_secrets'],
+      env: { QVAULT_TOKEN: '${QVAULT_TOKEN}', QVAULT_MCP_PROFILE: 'reveal' },
+    },
+    write: {
+      parallelWithRead: false,
+      tools: ['vault_list_projects', 'vault_list_environments', 'vault_list_secrets', 'vault_get_secret', 'vault_get_secrets', 'vault_create_secret', 'vault_rotate_secret', 'vault_delete_secret'],
+      env: { QVAULT_TOKEN: '${QVAULT_TOKEN}', QVAULT_MCP_PROFILE: 'write' },
+    },
+  };
+  const notesProfiles = {
+    read: { parallel: true, tools: READ_TOOLS, env: { QNOTES_URL: '${QNOTES_URL}', QNOTES_TOKEN: '${QNOTES_READ_TOKEN}' } },
+    share: { parallel: false, tools: [...READ_TOOLS, ...SHARE_TOOLS], env: { QNOTES_URL: '${QNOTES_URL}', QNOTES_TOKEN: '${QNOTES_TOKEN}' } },
+    write: { parallel: false, tools: [...READ_TOOLS, ...SHARE_TOOLS, ...WRITE_TOOLS], env: { QNOTES_URL: '${QNOTES_URL}', QNOTES_MCP_PROFILE: 'write', QNOTES_WRITE_TOKEN: '${QNOTES_WRITE_TOKEN}', QNOTES_MCP_DEVICE_ID: deviceId } },
+  };
+
+  for (const [notesProfile, notes] of Object.entries(notesProfiles)) {
+    for (const [vaultProfile, vault] of Object.entries(vaultProfiles)) {
+      const config = generatedConfigWithVault(notesProfile, vaultProfile);
+      assert.deepEqual(config.tools.include, [...notes.tools, ...vault.tools]);
+      assert.equal(config.supports_parallel_tool_calls, notesProfile === 'read' && vault.parallelWithRead);
+      assert.deepEqual(config.env, { ...notes.env, ...vault.env });
+      assert.equal('QVAULT_URL' in config.env, false);
+      assert.doesNotMatch(JSON.stringify(config), /qvt_[A-Za-z0-9_-]+/);
+    }
+  }
 });

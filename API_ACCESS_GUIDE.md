@@ -616,6 +616,8 @@ The default read profile exposes `search_notes`, `read_note_context`, `get_block
 
 The native `share` profile uses the same caller-owned personal token as its QNotes client, via `QNOTES_TOKEN` (or the read-token fallback `QNOTES_READ_TOKEN`), and that token must include `notes:read`, `search:read`, and `shares:write`. It never accepts or configures a shared owner JWT. The `write` profile keeps its existing `QNOTES_WRITE_TOKEN` behavior; its `create_public_share` tool works only when that caller-owned token also has `shares:write`. API scopes still enforce the token boundary for note and share tools. `mutationId` is optional in each write tool for compatibility, but a caller that may retry after an ambiguous transport result must supply the same mutation ID for the same logical operation. Keep the generated `QNOTES_MCP_DEVICE_ID` unchanged across process restarts; the existing owner-scoped `(owner_id, mutation_id)` receipt key plus the device ID in the request hash makes retry behavior durable across MCP processes. Omitted identity fields remain supported and receive fresh values, so those calls are new operations rather than durable retries. All write tools return a compact acknowledgment containing the note ID, title, resulting version, mutation ID, outcome, and note URI—never the full Markdown body. `capture_note` accepts optional `notebookId` and `dedupeKey`; its outcome distinguishes creation, an idempotent retry, and a deduplicated existing note. `append_note` preserves Markdown boundaries and uses the dedicated logical append endpoint, so a lost response can be retried without duplicating the addition. `update_note` preserves tags when `tags` is omitted and still requires the expected note version for a new update. `delete_note`, `restore_note`, and `move_note_to_notebook` require the expected version; deletion and restoration require `confirm: true`, deletion is soft-only, and there is no permanent purge tool. Public share revocation uses the same `shares:write` caller token through REST.
 
+The Integrations page can add an optional Vault profile to the same Hermes server entry. `none` leaves the existing Notes-only configuration unchanged; `metadata` adds `vault_list_projects`, `vault_list_environments`, and `vault_list_secrets`; `reveal` additionally adds `vault_get_secret` and `vault_get_secrets`; and `write` additionally adds `vault_create_secret`, `vault_rotate_secret`, and `vault_delete_secret`. A combined entry uses `QVAULT_TOKEN: "${QVAULT_TOKEN}"` and `QVAULT_MCP_PROFILE: "metadata"` (or the selected `reveal`/`write` value) as environment placeholders. Create the separate `qvt_...` token in Agent Vault and supply it through Hermes’ secret environment; the generated configuration never displays or embeds its raw value and never generates `QVAULT_URL`.
+
 ```yaml
 mcp_servers:
   quadrate_notes_read:
@@ -687,9 +689,9 @@ mcp_servers:
       prompts: false
 ```
 
-The `connect_timeout` covers local Node MCP startup and initialization. The per-tool `timeout` covers each remote-backed MCP operation, so the generated configuration allows up to 45 seconds for an individual call. Read-only profiles support parallel tool calls; share and write profiles intentionally serialize them. Each `args` value must remain the literal local filesystem path to `packages/mcp-server/dist/index.js`, not a Markdown link or HTTP URL.
+The `connect_timeout` covers local Node MCP startup and initialization. The per-tool `timeout` covers each remote-backed MCP operation, so the generated configuration allows up to 45 seconds for an individual call. `supports_parallel_tool_calls` is true only for Notes `read` with Vault `none` or `metadata`; Notes `share`/`write` and Vault `reveal`/`write` intentionally serialize the complete combined tool set. Each `args` value must remain the literal local filesystem path to `packages/mcp-server/dist/index.js`, not a Markdown link or HTTP URL.
 
-Keep tokens in the MCP server process environment. Do not put them in tool arguments, URLs, or returned resource content. Browser search selection telemetry is stored locally as query/document IDs and timestamps; plaintext queries are not logged or transmitted as telemetry.
+Keep Notes and Vault tokens in the MCP server process environment. Do not put them in tool arguments, URLs, or returned resource content. Vault uses the required `QNOTES_URL`; `QVAULT_URL` is unsupported and must not be added to a generated config. Browser search selection telemetry is stored locally as query/document IDs and timestamps; plaintext queries are not logged or transmitted as telemetry.
 
 ## Gemini Spark remote MCP endpoint
 
@@ -787,6 +789,8 @@ write no plaintext to metadata or audit, and return `Cache-Control: no-store`.
 
 The complete route table, limits, MCP profiles, and data-boundary rules are in
 [VAULT_ACCESS_GUIDE.md](VAULT_ACCESS_GUIDE.md). For the native adapter, set
-`QVAULT_TOKEN` and `QVAULT_MCP_PROFILE` explicitly. Vault requests use the
-required `QNOTES_URL`; a non-empty `QVAULT_URL` is rejected. Do not place
+`QVAULT_TOKEN` and `QVAULT_MCP_PROFILE` explicitly, or choose the Vault profile
+on the Integrations page to add placeholder-only values to a combined Hermes
+entry. Vault requests use the required `QNOTES_URL`; a non-empty `QVAULT_URL`
+is rejected. Do not place
 either token in browser code or a committed env file.
