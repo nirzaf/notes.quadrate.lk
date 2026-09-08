@@ -98,7 +98,7 @@ select is((public.qnotes_vault_create_secret(
   'a1000000-0000-4000-8000-000000000015',
   'user_jwt'
 )->>'status'), 'secret_conflict', 'a different create mutation cannot reuse an active secret name');
-select ok((select not exists (select 1 from notesdb.vault_mutations where owner_id = (select id from auth.users where email = 'owner@qnotes.local') and mutation_id = 'a1000000-0000-4000-8000-000000000014'), 'a rejected create does not write a mutation receipt');
+select ok((select not exists (select 1 from notesdb.vault_mutations where owner_id = (select id from auth.users where email = 'owner@qnotes.local') and mutation_id = 'a1000000-0000-4000-8000-000000000014')), 'a rejected create does not write a mutation receipt');
 
 create temporary table vault_rpc_rotate_a on commit drop as
 select public.qnotes_vault_rotate_secret(
@@ -293,7 +293,7 @@ exception when others then
 end;
 $$;
 select ok(not pg_temp.vault_rpc_reveal_returns(), 'a reveal audit failure prevents a successful return');
-select ok((select not exists (select 1 from notesdb.vault_audit_events where request_id = 'a1000000-0000-4000-8000-000000000044'), 'a failed reveal audit insert rolls back the reveal transaction'));
+select ok((select not exists (select 1 from notesdb.vault_audit_events where request_id = 'a1000000-0000-4000-8000-000000000044')), 'a failed reveal audit insert rolls back the reveal transaction');
 
 drop trigger vault_rpc_test_fail_audit on notesdb.vault_audit_events;
 select is((public.qnotes_vault_reveal_secret(
