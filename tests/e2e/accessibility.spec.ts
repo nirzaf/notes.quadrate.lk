@@ -9,6 +9,77 @@ async function expectAccessible(page: Page, label: string): Promise<void> {
   expect(results.violations, `${label} accessibility violations\n${summary}`).toEqual([]);
 }
 
+type VaultAccessibilityFixture = { project: { id: string; name: string }; environment: { id: string; name: string } };
+
+function vaultData<T>(body: unknown): T {
+  if (!body || typeof body !== 'object' || !('data' in body)) throw new Error('Invalid Vault API response envelope.');
+  return (body as { data: T }).data;
+}
+
+async function createVaultAccessibilityFixture(token: string): Promise<VaultAccessibilityFixture> {
+  const suffix = crypto.randomUUID();
+  const projectResponse = await apiJson('/vault/projects', token, {
+    method: 'POST',
+    body: JSON.stringify({ name: `Vault accessibility ${suffix}`, slug: `vault-a11y-${suffix.slice(0, 8)}` }),
+  });
+  expect(projectResponse.response.status).toBe(201);
+  const project = vaultData<{ id: string; name: string }>(projectResponse.body);
+
+  const environmentResponse = await apiJson(`/vault/projects/${project.id}/environments`, token, {
+    method: 'POST',
+    body: JSON.stringify({ name: 'Accessibility staging', slug: `a11y-${suffix.slice(0, 8)}` }),
+  });
+  expect(environmentResponse.response.status).toBe(201);
+  const environment = vaultData<{ id: string; name: string }>(environmentResponse.body);
+
+  const secretResponse = await apiJson(`/vault/environments/${environment.id}/secrets`, token, {
+    method: 'POST',
+    body: JSON.stringify({ projectId: project.id, environmentId: environment.id, name: 'A11Y_SYNTHETIC_SECRET', value: `synthetic-a11y-${suffix}`, mutationId: crypto.randomUUID() }),
+  });
+  expect(secretResponse.response.status).toBe(201);
+  return { project, environment };
+}
+
+test('Vault pages and sensitive states have no automated accessibility violations', async ({ page }) => {
+  const session = await signInSession();
+  const fixture = await createVaultAccessibilityFixture(session.access_token);
+
+  await signInPage(page);
+  await page.goto('/vault');
+  await expect(page.getByRole('heading', { name: fixture.project.name, exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: `${fixture.environment.name} secrets`, exact: true })).toBeVisible();
+  await expectAccessible(page, 'Vault projects');
+
+  const secretRow = page.locator('.q-vault-secret').filter({ hasText: 'A11Y_SYNTHETIC_SECRET' });
+  await secretRow.getByRole('button', { name: 'Reveal', exact: true }).click();
+  await expect(secretRow.locator('code')).toBeVisible();
+  await expectAccessible(page, 'Vault revealed secret');
+  await secretRow.getByRole('button', { name: 'Hide', exact: true }).click();
+
+  await page.getByRole('link', { name: 'Agent tokens', exact: true }).click();
+  await expect(page).toHaveURL(/\/vault\/agents$/);
+  await expect(page.getByRole('heading', { name: 'Agent credentials', exact: true })).toBeVisible();
+  await page.getByLabel('Token name').fill('Accessibility synthetic qvt');
+  await page.getByLabel('Grant scope').selectOption('environment');
+  await page.getByLabel('Environment').selectOption(fixture.environment.id);
+  await page.getByLabel('Action').selectOption('secret:reveal');
+  await page.getByRole('button', { name: 'Add grant', exact: true }).click();
+  await expect(page.getByRole('list', { name: 'New token grants', exact: true })).toHaveCount(1);
+  await expectAccessible(page, 'Vault agent grant draft');
+
+  await page.getByRole('button', { name: 'Create qvt token', exact: true }).click();
+  const issuedToken = page.locator('.q-vault-issued[role="status"]');
+  await expect(issuedToken).toBeVisible();
+  await expect(issuedToken.locator('code')).toHaveText(/^qvt_[A-Za-z0-9_-]{43}$/);
+  await expectAccessible(page, 'Vault one-time qvt display');
+  await issuedToken.getByRole('button', { name: 'Close', exact: true }).click();
+
+  await page.getByRole('link', { name: 'Audit', exact: true }).click();
+  await expect(page).toHaveURL(/\/vault\/audit$/);
+  await expect(page.getByRole('heading', { name: 'Vault audit history', exact: true })).toBeVisible();
+  await expectAccessible(page, 'Vault audit');
+});
+
 test('mobile Home has no automated accessibility violations and its menu is keyboard operable', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const session = await signInSession();

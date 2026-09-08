@@ -14,19 +14,8 @@ function data<T>(body: unknown): T {
 }
 
 async function createFixture(token: string): Promise<{ project: VaultProject; environment: VaultEnvironment; secret: VaultSecret }> {
-  const projectResponse = await apiJson('/vault/projects', token, {
-    method: 'POST',
-    body: JSON.stringify({ name: `Vault E2E ${crypto.randomUUID()}`, slug: `vault-e2e-${crypto.randomUUID().slice(0, 8)}` }),
-  });
-  expect(projectResponse.response.status).toBe(201);
-  const project = data<VaultProject>(projectResponse.body);
-
-  const environmentResponse = await apiJson(`/vault/projects/${project.id}/environments`, token, {
-    method: 'POST',
-    body: JSON.stringify({ name: 'Production', slug: 'production' }),
-  });
-  expect(environmentResponse.response.status).toBe(201);
-  const environment = data<VaultEnvironment>(environmentResponse.body);
+  const suffix = crypto.randomUUID();
+  const { project, environment } = await createProjectEnvironment(token, `Vault E2E ${suffix}`, `vault-e2e-${suffix.slice(0, 8)}`, 'Production', 'production');
 
   const secretResponse = await apiJson(`/vault/environments/${environment.id}/secrets`, token, {
     method: 'POST',
@@ -36,6 +25,116 @@ async function createFixture(token: string): Promise<{ project: VaultProject; en
   const secret = data<VaultSecret>(secretResponse.body);
   return { project, environment, secret };
 }
+
+async function createProjectEnvironment(token: string, projectName: string, projectSlug: string, environmentName: string, environmentSlug: string): Promise<{ project: VaultProject; environment: VaultEnvironment }> {
+  const projectResponse = await apiJson('/vault/projects', token, {
+    method: 'POST',
+    body: JSON.stringify({ name: projectName, slug: projectSlug }),
+  });
+  expect(projectResponse.response.status).toBe(201);
+  const project = data<VaultProject>(projectResponse.body);
+
+  const environmentResponse = await apiJson(`/vault/projects/${project.id}/environments`, token, {
+    method: 'POST',
+    body: JSON.stringify({ name: environmentName, slug: environmentSlug }),
+  });
+  expect(environmentResponse.response.status).toBe(201);
+  const environment = data<VaultEnvironment>(environmentResponse.body);
+  return { project, environment };
+}
+
+test.describe.configure({ timeout: 45_000 });
+
+test('covers Vault project and environment selection and the synthetic secret lifecycle in the browser', async ({ page }) => {
+  const session = await signInSession();
+  const fixture = await createFixture(session.access_token);
+  const alternate = await createProjectEnvironment(
+    session.access_token,
+    `Vault alternate ${crypto.randomUUID()}`,
+    `vault-alt-${crypto.randomUUID().slice(0, 8)}`,
+    'Staging',
+    `staging-${crypto.randomUUID().slice(0, 8)}`,
+  );
+  const secretName = 'UI_SYNTHETIC_SECRET';
+  const secretValue = `synthetic-ui-value-${crypto.randomUUID()}`;
+  const rotatedValue = `synthetic-ui-rotated-${crypto.randomUUID()}`;
+
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://127.0.0.1:5173' });
+  await signInPage(page);
+  await page.goto('/vault');
+  await expect(page).toHaveURL(/\/vault$/);
+
+  const alternateProject = page.locator('.q-vault-list button').filter({ hasText: alternate.project.name });
+  await alternateProject.focus();
+  await expect(alternateProject).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('heading', { name: alternate.project.name, exact: true })).toBeVisible();
+  const alternateEnvironment = page.getByRole('tab', { name: alternate.environment.name, exact: true });
+  await alternateEnvironment.focus();
+  await page.keyboard.press('Space');
+  await expect(alternateEnvironment).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('heading', { name: `${alternate.environment.name} secrets`, exact: true })).toBeVisible();
+
+  const fixtureProject = page.locator('.q-vault-list button').filter({ hasText: fixture.project.name });
+  await fixtureProject.click();
+  await expect(page.getByRole('heading', { name: fixture.project.name, exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: fixture.environment.name, exact: true }).click();
+  await expect(page.getByRole('heading', { name: `${fixture.environment.name} secrets`, exact: true })).toBeVisible();
+
+  const secretForm = page.locator('form.q-vault-secret-form');
+  await secretForm.getByLabel('Secret name').fill(secretName);
+  await secretForm.getByLabel('Value').fill(secretValue);
+  await secretForm.getByLabel('Description').fill('Synthetic browser metadata fixture');
+  await secretForm.getByRole('button', { name: 'Create secret', exact: true }).click();
+
+  const secretRow = page.locator('.q-vault-secret').filter({ hasText: secretName });
+  await expect(secretRow).toBeVisible();
+  await expect(secretRow).toContainText('v1');
+  await expect(secretRow).not.toContainText(secretValue);
+  await expect(page.locator('body')).not.toContainText(secretValue);
+
+  await page.clock.install();
+  await secretRow.getByRole('button', { name: 'Reveal', exact: true }).click();
+  const revealedValue = secretRow.locator('code');
+  await expect(revealedValue).toHaveText(secretValue);
+  await secretRow.getByRole('button', { name: 'Copy', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(secretValue);
+  await secretRow.getByRole('button', { name: 'Hide', exact: true }).click();
+  await expect(secretRow.locator('code')).toHaveCount(0);
+  await expect(secretRow.getByRole('button', { name: 'Reveal', exact: true })).toBeVisible();
+
+  await secretRow.getByRole('button', { name: 'Reveal', exact: true }).click();
+  await expect(secretRow.locator('code')).toHaveText(secretValue);
+  await page.clock.fastForward(30_000);
+  await expect(secretRow.locator('code')).toHaveCount(0);
+  await expect(secretRow.getByRole('button', { name: 'Reveal', exact: true })).toBeVisible();
+
+  await secretRow.getByRole('button', { name: 'Rotate', exact: true }).click();
+  await expect(secretForm.getByRole('heading', { name: 'Rotate secret', exact: true })).toBeVisible();
+  await secretForm.getByLabel('Value').fill(rotatedValue);
+  await secretForm.getByLabel('Description').fill('Synthetic rotated browser metadata fixture');
+  await secretForm.getByRole('button', { name: 'Rotate secret', exact: true }).click();
+  await expect(secretRow).toContainText('v2');
+
+  await secretRow.getByRole('button', { name: 'Reveal', exact: true }).click();
+  await expect(secretRow.locator('code')).toHaveText(rotatedValue);
+  await secretRow.getByRole('button', { name: 'Hide', exact: true }).click();
+
+  const cancelDelete = page.waitForEvent('dialog');
+  await secretRow.getByRole('button', { name: 'Delete', exact: true }).click();
+  const cancelDialog = await cancelDelete;
+  expect(cancelDialog.type()).toBe('confirm');
+  expect(cancelDialog.message()).toContain(secretName);
+  await cancelDialog.dismiss();
+  await expect(secretRow).toBeVisible();
+
+  const confirmDelete = page.waitForEvent('dialog');
+  await secretRow.getByRole('button', { name: 'Delete', exact: true }).click();
+  const confirmDialog = await confirmDelete;
+  expect(confirmDialog.type()).toBe('confirm');
+  await confirmDialog.accept();
+  await expect(secretRow).toHaveCount(0);
+});
 
 test('keeps Vault values out of metadata, Notes search, and audit responses', async () => {
   const session = await signInSession();
@@ -112,8 +211,15 @@ test('enforces qvt grants and isolates qnt and qns credentials', async ({ page }
 
   await signInPage(page);
   await page.goto('/vault/audit');
-  await expect(page.getByText('Local E2E reveal agent', { exact: false })).toBeVisible();
-  await expect(page.getByText(tokenData.metadata.tokenPrefix, { exact: true })).toBeVisible();
+  const auditList = page.locator('.q-vault-audit-list');
+  const agentAudit = auditList.locator('.q-vault-audit').filter({ hasText: 'Local E2E reveal agent' });
+  await expect(agentAudit).toBeVisible();
+  await expect(agentAudit).toContainText(tokenData.metadata.tokenPrefix);
+  await expect(agentAudit).toContainText('secret:reveal');
+  await expect(agentAudit).toContainText('failed');
+  const auditText = await auditList.innerText();
+  expect(auditText).not.toContain(tokenData.token);
+  expect(auditText).not.toContain(FAKE_SECRET);
 
   const qntResponse = await apiJson('/api/tokens', session.access_token, {
     method: 'POST',
@@ -179,6 +285,7 @@ test('lists effective multiple grants and replaces them without plaintext or raw
 test('lets the Vault UI draft multiple grants, remove drafts, and clear an existing token', async ({ page }) => {
   const session = await signInSession();
   const fixture = await createFixture(session.access_token);
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://127.0.0.1:5173' });
   await signInPage(page);
   await page.goto('/vault/agents');
   await expect(page.getByRole('heading', { name: 'Agent credentials', exact: true })).toBeVisible();
@@ -186,30 +293,48 @@ test('lets the Vault UI draft multiple grants, remove drafts, and clear an exist
   await page.getByLabel('Token name').fill('UI multi-grant token');
   await page.getByLabel('Project').selectOption(fixture.project.id);
   await page.getByLabel('Grant scope').selectOption('project');
-  await page.getByRole('button', { name: 'Add grant', exact: true }).click();
+  const addGrant = page.getByRole('button', { name: 'Add grant', exact: true });
+  await addGrant.focus();
+  await expect(addGrant).toBeFocused();
+  await page.keyboard.press('Enter');
   await page.getByLabel('Grant scope').selectOption('environment');
   await page.getByLabel('Environment').selectOption(fixture.environment.id);
   await page.getByLabel('Action').selectOption('secret:reveal');
-  await page.getByRole('button', { name: 'Add grant', exact: true }).click();
+  await addGrant.click();
   await expect(page.locator('#new-token-grants-heading').locator('..')).toContainText('2');
-  await expect(page.getByRole('button', { name: 'Remove', exact: true })).toHaveCount(2);
-  await page.getByRole('button', { name: 'Remove', exact: true }).first().click();
-  await expect(page.getByRole('button', { name: 'Remove', exact: true })).toHaveCount(1);
+  const draftRemoveButtons = page.getByRole('button', { name: 'Remove', exact: true });
+  await expect(draftRemoveButtons).toHaveCount(2);
+  await draftRemoveButtons.first().focus();
+  await page.keyboard.press('Enter');
+  await expect(draftRemoveButtons).toHaveCount(1);
+  await page.getByLabel('Grant scope').selectOption('project');
+  await page.getByLabel('Action').selectOption('metadata:read');
+  await addGrant.click();
+  await expect(draftRemoveButtons).toHaveCount(2);
 
   await page.getByRole('button', { name: 'Create qvt token', exact: true }).click();
-  await expect(page.getByRole('status')).toContainText('Copy this token now');
-  const issued = await page.getByRole('status').locator('code').textContent();
+  const issuedStatus = page.locator('.q-vault-issued[role="status"]');
+  await expect(issuedStatus).toContainText('Copy this token now');
+  const issued = (await issuedStatus.locator('code').textContent()) ?? '';
   expect(issued).toMatch(/^qvt_[A-Za-z0-9_-]{43}$/);
-  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await issuedStatus.getByRole('button', { name: 'Copy token', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(issued);
+  await issuedStatus.getByRole('button', { name: 'Close', exact: true }).click();
   await expect(page.getByRole('status')).toHaveCount(0);
+  expect(await page.evaluate((value) => {
+    const storageValues = [window.localStorage, window.sessionStorage].flatMap((storage) => Array.from({ length: storage.length }, (_, index) => storage.getItem(storage.key(index) ?? '') ?? ''));
+    return document.body.textContent?.includes(value) || storageValues.some((item) => item.includes(value));
+  }, issued)).toBe(false);
 
   const tokenCard = page.getByRole('article').filter({ hasText: 'UI multi-grant token' });
-  await expect(tokenCard).toContainText('Effective grants (1)');
+  await expect(tokenCard).toBeVisible();
+  expect(await tokenCard.textContent()).not.toContain(issued);
+  await expect(tokenCard).toContainText('Effective grants (2)');
   await tokenCard.getByRole('button', { name: 'Edit grants', exact: true }).click();
-  await expect(tokenCard).toContainText('Edit grant set (1)');
+  await expect(tokenCard).toContainText('Edit grant set (2)');
   await tokenCard.getByRole('button', { name: 'Remove', exact: true }).click();
   await tokenCard.getByRole('button', { name: 'Replace grant set', exact: true }).click();
-  await expect(tokenCard).toContainText('No grants. This token cannot access Vault resources.');
+  await expect(tokenCard).toContainText('Effective grants (1)');
 });
 
 test('supports replay-safe rotation and explicit bounded batch reveal', async () => {
