@@ -69,6 +69,21 @@ test('QVaultClient validates metadata and reveal responses without caching plain
   assert.equal(JSON.parse(calls[1].init.body).value, undefined);
 });
 
+test('QVaultClient preserves the explicit bounded batch reveal contract', async () => {
+  const calls = [];
+  const item = { secretId: secret.id, project: project.slug, environment: 'production', name: secret.name, value: 'local-only-batch-secret', version: secret.version, updatedAt: secret.updatedAt };
+  const client = new QVaultClient({ baseUrl: 'http://example.test', getAccessToken: () => 'qvt_test', fetchImplementation: async (url, init) => {
+    calls.push({ url, init });
+    return jsonResponse({ items: [item] }, 200, { 'cache-control': 'no-store' });
+  } });
+  const result = await client.revealSecrets({ secrets: [{ project: project.slug, environment: 'production', name: secret.name }], purpose: 'local batch test' });
+  assert.deepEqual(result, { items: [item] });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, 'http://example.test/vault/secrets/reveal-batch');
+  assert.deepEqual(JSON.parse(calls[0].init.body), { secrets: [{ project: project.slug, environment: 'production', name: secret.name }], purpose: 'local batch test' });
+  assert.equal(calls[0].init.headers.get('Authorization'), 'Bearer qvt_test');
+});
+
 test('QVaultClient rejects malformed reveal payloads without echoing the response', async () => {
   const client = new QVaultClient({ baseUrl: 'http://example.test', getAccessToken: () => 'qvt_test', fetchImplementation: async () => jsonResponse({ value: 'must-not-echo' }) });
   await assert.rejects(() => client.revealSecret({ project: 'p', environment: 'e', name: 'KEY', purpose: 'test' }), (error) => {
