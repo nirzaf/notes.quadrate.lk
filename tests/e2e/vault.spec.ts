@@ -332,7 +332,7 @@ test('lets the Vault UI draft multiple grants, remove drafts, and clear an exist
   await expect(tokenCard).toContainText('Effective grants (2)');
   await tokenCard.getByRole('button', { name: 'Edit grants', exact: true }).click();
   await expect(tokenCard).toContainText('Edit grant set (2)');
-  await tokenCard.getByRole('button', { name: 'Remove', exact: true }).click();
+  await tokenCard.getByRole('button', { name: 'Remove', exact: true }).first().click();
   await tokenCard.getByRole('button', { name: 'Replace grant set', exact: true }).click();
   await expect(tokenCard).toContainText('Effective grants (1)');
 });
