@@ -24,8 +24,8 @@ test('QVaultClient sends qvt authorization only to isolated Vault routes', async
 test('QVaultClient lists effective multiple grants and sends replacement payloads', async () => {
   const calls = [];
   const grants = [
-    { id: 'grant-1', projectId: project.id, environmentId: null, secretId: null, action: 'metadata:read', createdAt: '2026-01-01' },
-    { id: 'grant-2', projectId: project.id, environmentId: secret.environmentId, secretId: secret.id, action: 'secret:reveal', createdAt: '2026-01-02' },
+    { id: 'grant-1', projectId: project.id, projectName: 'Pearl Blanc', environmentId: null, secretId: null, action: 'metadata:read', createdAt: '2026-01-01' },
+    { id: 'grant-2', projectId: project.id, projectName: 'Pearl Blanc', environmentId: secret.environmentId, environmentName: 'production', secretId: secret.id, secretName: secret.name, action: 'secret:reveal', createdAt: '2026-01-02' },
   ];
   const client = new QVaultClient({ baseUrl: 'http://example.test', getAccessToken: () => 'jwt-test', fetchImplementation: async (url, init) => {
     calls.push({ url, init });

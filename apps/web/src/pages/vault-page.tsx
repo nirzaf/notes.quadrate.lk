@@ -51,17 +51,19 @@ function grantScopeLabel(grant: VaultAgentGrant, projects: AgentsPanelProps['pro
   const project = projects.find((item) => item.id === grant.projectId);
   const environment = environments.find((item) => item.id === grant.environmentId);
   const secret = secrets.find((item) => item.id === grant.secretId);
-  if (grantScope(grant) === 'secret') return `Secret · ${secret?.name ?? grant.secretId}`;
-  if (grantScope(grant) === 'environment') return `Environment · ${environment?.name ?? grant.environmentId}`;
-  return `Project · ${project?.name ?? grant.projectId}`;
+  if (grantScope(grant) === 'secret') return `Secret · ${grant.secretName ?? secret?.name ?? grant.secretId}`;
+  if (grantScope(grant) === 'environment') return `Environment · ${grant.environmentName ?? environment?.name ?? grant.environmentId}`;
+  return `Project · ${grant.projectName ?? project?.name ?? grant.projectId}`;
 }
 
 function grantTargetLabel(grant: VaultAgentGrant, projects: AgentsPanelProps['projects'], environments: AgentsPanelProps['environments']): string {
   const project = projects.find((item) => item.id === grant.projectId);
   const environment = environments.find((item) => item.id === grant.environmentId);
+  const projectName = grant.projectName ?? project?.name ?? grant.projectId;
+  const environmentName = grant.environmentName ?? environment?.name ?? grant.environmentId;
   return grantScope(grant) === 'secret'
-    ? `${project?.name ?? grant.projectId} / ${environment?.name ?? grant.environmentId}`
-    : grantScope(grant) === 'environment' ? `Project: ${project?.name ?? grant.projectId}` : 'All environments and secrets in this project';
+    ? `${projectName} / ${environmentName}`
+    : grantScope(grant) === 'environment' ? `Project: ${projectName}` : `All environments and secrets in ${projectName}`;
 }
 
 export function VaultPage(): JSX.Element {

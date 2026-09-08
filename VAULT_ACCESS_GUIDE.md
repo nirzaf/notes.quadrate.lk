@@ -88,11 +88,13 @@ audit metadata.
 | `GET` | `/vault/audit` | Read audit metadata (JWT only) |
 
 `GET /vault/agent-tokens` is a JWT-only administration request. Each token
-metadata item includes its effective `grants` array, with project,
-environment, secret, action, grant ID, and creation timestamp metadata. It
-never includes the token hash, a raw qvt value, secret ciphertext, or a secret
-plaintext value. A token can have several grants at different scopes, for
-example:
+metadata item includes its effective `grants` array, with owner-scoped project,
+environment, and secret names alongside their IDs, action, grant ID, and
+creation timestamp metadata. The name fields are optional when a referenced
+resource is no longer present, and are resolved independently of the currently
+selected UI project/environment. It never includes the token hash, a raw qvt
+value, secret ciphertext, or a secret plaintext value. A token can have several
+grants at different scopes, for example:
 
 ```json
 {
@@ -105,8 +107,8 @@ example:
     "revokedAt": null,
     "createdAt": "2026-09-08T00:00:00.000Z",
     "grants": [
-      { "id": "grant-1", "projectId": "project-id", "environmentId": null, "secretId": null, "action": "metadata:read", "createdAt": "2026-09-08T00:00:00.000Z" },
-      { "id": "grant-2", "projectId": "project-id", "environmentId": "environment-id", "secretId": "secret-id", "action": "secret:reveal", "createdAt": "2026-09-08T00:00:00.000Z" }
+      { "id": "grant-1", "projectId": "project-id", "projectName": "Pearl Blanc", "environmentId": null, "secretId": null, "action": "metadata:read", "createdAt": "2026-09-08T00:00:00.000Z" },
+      { "id": "grant-2", "projectId": "project-id", "projectName": "Pearl Blanc", "environmentId": "environment-id", "environmentName": "production", "secretId": "secret-id", "secretName": "CLOUDFLARE_API_TOKEN", "action": "secret:reveal", "createdAt": "2026-09-08T00:00:00.000Z" }
     ]
   }]
 }

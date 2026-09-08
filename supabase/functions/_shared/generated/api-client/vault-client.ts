@@ -64,8 +64,11 @@ function isGrant(value: unknown): value is VaultAgentGrant {
   return isRecord(value) && isString(value.projectId) && isNullableString(value.environmentId) && isNullableString(value.secretId)
     && ['metadata:read', 'secret:reveal', 'secret:write', 'secret:delete'].includes(String(value.action))
     && (value.id === undefined || isString(value.id)) && (value.createdAt === undefined || isString(value.createdAt))
+    && (value.projectName === undefined || isString(value.projectName))
+    && (value.environmentName === undefined || isString(value.environmentName))
+    && (value.secretName === undefined || isString(value.secretName))
     && !Object.hasOwn(value, 'value')
-    && Object.keys(value).every((key) => ['id', 'projectId', 'environmentId', 'secretId', 'action', 'createdAt'].includes(key));
+    && Object.keys(value).every((key) => ['id', 'projectId', 'projectName', 'environmentId', 'environmentName', 'secretId', 'secretName', 'action', 'createdAt'].includes(key));
 }
 
 function isAuditEvent(value: unknown): value is VaultAuditEvent {

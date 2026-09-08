@@ -67,8 +67,11 @@ export type VaultAgentTokenMetadata = {
 export type VaultAgentGrant = {
   id?: string;
   projectId: string;
+  projectName?: string;
   environmentId: string | null;
+  environmentName?: string;
   secretId: string | null;
+  secretName?: string;
   action: VaultAction;
   createdAt?: string;
 };
