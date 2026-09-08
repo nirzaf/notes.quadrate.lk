@@ -5,12 +5,13 @@ The workflow in [`workflows/ci.yml`](workflows/ci.yml) uses GitHub-hosted
 SQL/database integration tests, the search regression job, and the short
 Chromium browser smoke job. The smoke job installs bundled Chromium, starts
 local Supabase, writes local environment files, seeds only the dedicated test
-users, and starts only `qnotes-api` in a bounded workflow-managed process. The
-workflow records its PID and log under `.tmp`, probes the local health endpoint
-before running the smoke command with `QNOTES_E2E_EXTERNAL_API=1`, and stops the
-API before stopping Supabase. Playwright keeps Vite as its web server and uses
-the focused release smoke config with one worker and explicit deadlines. Search
-evaluation remains path-gated after the job starts. The complete Playwright E2E
+users, and starts Vite and only `qnotes-api` in bounded workflow-managed
+processes. The workflow records each PID and log under `.tmp`, probes the local
+Vite root and API health endpoint before running the smoke command with
+`QNOTES_E2E_EXTERNAL_API=1`, and stops both processes before stopping Supabase.
+Playwright reuses the workflow-managed Vite process and uses the focused release
+smoke config with one worker and explicit deadlines. Search evaluation remains
+path-gated after the job starts. The complete Playwright E2E
 suite remains a local/manual command (`pnpm run test:e2e`) and is not run by
 CI/CD. The login smoke checks only an explicit structural axe rule allowlist;
 full axe coverage remains in the complete local/manual suite and Issue #22. A

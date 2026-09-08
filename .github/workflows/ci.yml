@@ -189,6 +189,37 @@ jobs:
         run: pnpm exec supabase start
       - run: pnpm run local:env
       - run: pnpm run seed:test-users
+      - name: Start local Vite for browser smoke
+        shell: bash
+        run: |
+          mkdir -p .tmp
+          nohup pnpm --filter @qnotes/web dev --host 127.0.0.1 \
+            > .tmp/vite.log 2>&1 &
+          echo $! > .tmp/vite.pid
+          for attempt in {1..60}; do
+            : "$attempt"
+            if curl --fail --silent --show-error \
+              http://127.0.0.1:5173/ >/dev/null; then
+              exit 0
+            fi
+            if ! kill -0 "$(cat .tmp/vite.pid)" 2>/dev/null; then
+              echo 'Vite exited before becoming ready.' >&2
+              if [ -f .tmp/vite.log ]; then
+                cat .tmp/vite.log
+              else
+                echo 'Vite log was not created.' >&2
+              fi
+              exit 1
+            fi
+            sleep 1
+          done
+          echo 'Vite did not become ready within 60 seconds.' >&2
+          if [ -f .tmp/vite.log ]; then
+            cat .tmp/vite.log
+          else
+            echo 'Vite log was not created.' >&2
+          fi
+          exit 1
       - name: Start local qnotes-api for browser smoke
         shell: bash
         run: |
@@ -204,17 +235,52 @@ jobs:
               exit 0
             fi
             if ! kill -0 "$(cat .tmp/qnotes-api.pid)" 2>/dev/null; then
-              cat .tmp/qnotes-api.log
+              if [ -f .tmp/qnotes-api.log ]; then
+                cat .tmp/qnotes-api.log
+              else
+                echo 'qnotes-api log was not created.' >&2
+              fi
               exit 1
             fi
             sleep 1
           done
-          cat .tmp/qnotes-api.log
+          if [ -f .tmp/qnotes-api.log ]; then
+            cat .tmp/qnotes-api.log
+          else
+            echo 'qnotes-api log was not created.' >&2
+          fi
           exit 1
       - name: Run the bounded browser release smoke suite
         env:
           QNOTES_E2E_EXTERNAL_API: '1'
         run: pnpm run test:e2e:smoke
+      - name: Print Vite log on failure
+        if: failure()
+        shell: bash
+        run: |
+          if [ -f .tmp/vite.log ]; then
+            cat .tmp/vite.log || true
+          else
+            echo 'Vite log was not created.' >&2
+          fi
+      - name: Stop local Vite
+        if: always()
+        shell: bash
+        run: |
+          if [ -s .tmp/vite.pid ]; then
+            vite_pid="$(cat .tmp/vite.pid)"
+            if kill -0 "$vite_pid" 2>/dev/null; then
+              kill "$vite_pid" 2>/dev/null || true
+              for attempt in {1..10}; do
+                : "$attempt"
+                if ! kill -0 "$vite_pid" 2>/dev/null; then
+                  break
+                fi
+                sleep 1
+              done
+              kill -KILL "$vite_pid" 2>/dev/null || true
+            fi
+          fi
       - name: Stop local qnotes-api
         if: always()
         shell: bash
