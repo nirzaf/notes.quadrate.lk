@@ -803,3 +803,18 @@ Create requests require at least one grant. `PATCH
 /vault/agent-tokens/:tokenId/grants` replaces the complete grant set and accepts
 `{"grants":[]}` when all grants should be removed. The PATCH response contains
 only the resulting grant metadata.
+
+## QNotes for Hermes companion plugin
+
+The optional external companion plugin lives under
+`integrations/hermes-plugin/`. It adds only native Hermes guidance and a
+sanitized metadata probe; Hermes' MCP client still connects to this existing
+stdio server. Build the workspace first, then run
+`scripts/export-hermes-plugin-config.mjs` to produce a placeholder-only
+fragment using `buildHermesMcpConfig()`. The exporter does not write Hermes
+configuration, read dotenv files, contact the API, or publish/deploy anything.
+Use Plugin Doctor and the real loader/MCP handshake in a disposable
+`HERMES_HOME`; the tested Hermes v0.21 CLI has no `hermes plugins compat`
+subcommand. Re-check `hermes plugins --help` for newer releases. Keep the
+pinned direct MCP configuration path available when the companion commands are
+not wanted.
