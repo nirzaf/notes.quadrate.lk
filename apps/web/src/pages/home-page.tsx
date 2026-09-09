@@ -19,9 +19,9 @@ import { requestEditorFocus } from '../lib/editor-focus';
 import { useAuth } from '../auth-context';
 
 const starterNotePreset = {
-  title: 'Welcome to Quadrate Notes',
+  title: 'Welcome to QNotes',
   slug: 'welcome-to-quadrate-notes',
-  contentMarkdown: '# Welcome to Quadrate Notes\n\nThis is your private Markdown workspace. Edit this note, add tags, and move it into a notebook when you are ready.\n\n## Try these next\n\n- Use **Preview** to see the rendered note.\n- Add a tag such as `getting-started`.\n- Search for this note from the home page.\n- Attach a text file or PDF to make its content searchable.\n\n:::copy{id="quick-start" title="Start the web app" lang="bash" type="command"}\npnpm dev\n:::\n',
+  contentMarkdown: '# Welcome to QNotes\n\nThis is your private Markdown workspace. Edit this note, add tags, and move it into a notebook when you are ready.\n\n## Try these next\n\n- Use **Preview** to see the rendered note.\n- Add a tag such as `getting-started`.\n- Search for this note from the home page.\n- Attach a text file or PDF to make its content searchable.\n\n:::copy{id="quick-start" title="Start the web app" lang="bash" type="command"}\npnpm dev\n:::\n',
   tags: ['getting-started'],
 };
 

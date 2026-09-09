@@ -1,6 +1,6 @@
-# Quadrate Notes deployment
+# QNotes deployment
 
-Quadrate Notes has two production parts:
+QNotes has two production parts:
 
 - Supabase project `ciyoandzjezgqxjpcrin`: PostgreSQL, Auth, Storage, Realtime, and Edge Functions.
 - Cloudflare Pages project `notes-quadrate-lk`: the Vite frontend at [notes.quadrate.lk](https://notes.quadrate.lk/).
@@ -111,13 +111,13 @@ The worker pg_cron jobs created by the migrations use Supabase Vault and invoke 
 select vault.create_secret(
   'https://ciyoandzjezgqxjpcrin.supabase.co',
   'qnotes_project_url',
-  'Quadrate Notes production project URL'
+  'QNotes production project URL'
 );
 
 select vault.create_secret(
   '<same value as QNOTES_INTERNAL_WORKER_SECRET>',
   'qnotes_internal_worker_secret',
-  'Quadrate Notes cron worker authentication'
+  'QNotes cron worker authentication'
 );
 ```
 

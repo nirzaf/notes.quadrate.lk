@@ -116,7 +116,7 @@ test('covers note edit-preview and browser navigation', async ({ page }) => {
   await page.getByRole('button', { name: 'Preview', exact: true }).click();
   await expectPreviewMode(page);
   await expect(page.getByLabel('Rendered note preview')).toContainText('Browser preview contract marker.');
-  await page.getByRole('link', { name: 'Quadrate Notes home' }).click();
+  await page.getByRole('link', { name: 'QNotes home' }).click();
   await expect(page).toHaveURL(/\/$/);
   const noteCard = page.locator('.q-note-card').filter({ hasText: title });
   await expect(noteCard).toBeVisible();
@@ -173,7 +173,7 @@ test('renders a synthetic public share through its browser fragment', async ({ p
   await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible();
   await expect(page.locator('.q-public-share-note .q-preview')).toContainText('local-only shared rendering marker.');
   await expect(page.locator('.q-attachment-panel')).toHaveCount(0);
-  await expect(page).toHaveTitle(new RegExp(`${title} · Quadrate Notes`));
+  await expect(page).toHaveTitle(new RegExp(`${title} · QNotes`));
 });
 
 test('keeps the stable login surface free of automated accessibility violations', async ({ page }) => {

@@ -24,7 +24,7 @@ test('creates notebooks, moves notes, filters the sidebar, and keeps note action
   await page.getByRole('combobox', { name: 'Notebook' }).selectOption(notebook!.id);
   await expect(page.getByText('Note moved to notebook.')).toBeVisible();
 
-  await page.getByRole('link', { name: 'Quadrate Notes home' }).click();
+  await page.getByRole('link', { name: 'QNotes home' }).click();
   const notebookButton = page.locator('.q-notebook-item').filter({ hasText: 'Operations' });
   await notebookButton.click();
   await expect(page.locator('.q-note-items .q-note-item')).toHaveCount(1);

@@ -83,18 +83,18 @@ test('validates optional append versions and generates a parseable Hermes config
   assert.equal(validateAppendNoteInput({ contentMarkdown: 'added', expectedVersion: 3, deviceId, mutationId }).expectedVersion, 3);
   assert.throws(() => validateAppendNoteInput({ contentMarkdown: 'added', expectedVersion: 0, deviceId, mutationId }), /positive integer/);
   const config = JSON.parse(buildHermesMcpConfig({ profile: 'write', serverPath: '/repo/packages/mcp-server/dist/index.js', deviceId }));
-  assert.deepEqual(config.mcp_servers.quadrate_notes_write.env, {
+  assert.deepEqual(config.mcp_servers.qnotes_write.env, {
     QNOTES_URL: '${QNOTES_URL}', QNOTES_MCP_PROFILE: 'write', QNOTES_WRITE_TOKEN: '${QNOTES_WRITE_TOKEN}', QNOTES_MCP_DEVICE_ID: deviceId,
   });
-  assert.deepEqual(config.mcp_servers.quadrate_notes_write.tools.include, ['search_notes', 'read_note_context', 'get_block', 'list_notebooks', 'resolve_public_share', 'capture_note', 'append_note', 'update_note', 'delete_note', 'restore_note', 'move_note_to_notebook']);
+  assert.deepEqual(config.mcp_servers.qnotes_write.tools.include, ['search_notes', 'read_note_context', 'get_block', 'list_notebooks', 'resolve_public_share', 'capture_note', 'append_note', 'update_note', 'delete_note', 'restore_note', 'move_note_to_notebook']);
   assert.throws(() => buildHermesMcpConfig({ profile: 'write', serverPath: '/repo/server.js' }), /stable UUID/);
 });
 
 test('accepts the least-privilege share scope and generates a share MCP profile', () => {
   assert.deepEqual(validateTokenInput({ name: 'Share agent', scopes: ['notes:read', 'search:read', 'shares:write'], expiresAt: null }).scopes, ['notes:read', 'search:read', 'shares:write']);
   const config = JSON.parse(buildHermesMcpConfig({ profile: 'share', serverPath: '/repo/packages/mcp-server/dist/index.js' }));
-  assert.deepEqual(config.mcp_servers.quadrate_notes_share.env, { QNOTES_URL: '${QNOTES_URL}', QNOTES_TOKEN: '${QNOTES_TOKEN}' });
-  assert.deepEqual(config.mcp_servers.quadrate_notes_share.tools.include, ['search_notes', 'read_note_context', 'get_block', 'list_notebooks', 'resolve_public_share', 'create_public_share']);
+  assert.deepEqual(config.mcp_servers.qnotes_share.env, { QNOTES_URL: '${QNOTES_URL}', QNOTES_TOKEN: '${QNOTES_TOKEN}' });
+  assert.deepEqual(config.mcp_servers.qnotes_share.tools.include, ['search_notes', 'read_note_context', 'get_block', 'list_notebooks', 'resolve_public_share', 'create_public_share']);
 });
 
 test('bounds context content without an implicit ellipsis and reports truncation', () => {

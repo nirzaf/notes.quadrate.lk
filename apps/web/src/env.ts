@@ -5,7 +5,7 @@ export interface WebEnv {
 }
 
 function required(name: string, value: string | undefined): string {
-  if (!value?.trim()) throw new Error(`Quadrate Notes configuration is missing ${name}. Create apps/web/.env.local with pnpm run local:env.`);
+  if (!value?.trim()) throw new Error(`QNotes configuration is missing ${name}. Create apps/web/.env.local with pnpm run local:env.`);
   return value.trim();
 }
 

@@ -1,4 +1,4 @@
-# Quadrate Notes
+# QNotes
 
 `notes.quadrate.lk` is a browser-first Markdown notes workspace for keeping canonical private notes, organizing them into notebooks, reusing copyable knowledge blocks, searching across notes and extracted attachments, and optionally sharing one saved note through an explicit read-only link. The workspace is accessible through HTTP, JavaScript, or the `qnotes` CLI.
 
@@ -27,7 +27,7 @@ The home page provides a paginated recent-notes view, a search field, and a note
 
 Use the `+` action in the Notebooks section to create a notebook. Names are trimmed, limited to 80 characters, and unique per owner. Open a note and use its notebook selector to move it to a notebook or back to Unfiled. The selector is disabled while an edit is waiting to be saved.
 
-Inside a note, existing notes open in Preview by default. Choose Edit when you want to change Markdown, title, or tags; newly created notes open directly in Edit mode. Edit opens the CodeMirror Markdown editor and Preview renders sanitized Markdown with copy buttons for fenced code and named copy blocks. The note is saved after 800 ms without changes. Open Attachments to upload a supported file, preview it in-app, or choose Screenshot: Visible Area asks the browser for a display/window capture, Entire Page captures the current Quadrate Notes page, and Cropped Zone opens an accessible keyboard- and pointer-driven crop selection. Attachment previews request a short-lived signed URL only when opened; Open remains available for the original file, and text previews are capped at 1 MB. Screenshot capture requires browser permission and never uploads until the selected image is explicitly attached; image OCR remains unsupported. Delete is a soft delete that moves the note to the trash; the same note view exposes Restore for a deleted note. Export downloads the current note as `<slug>.md`.
+Inside a note, existing notes open in Preview by default. Choose Edit when you want to change Markdown, title, or tags; newly created notes open directly in Edit mode. Edit opens the CodeMirror Markdown editor and Preview renders sanitized Markdown with copy buttons for fenced code and named copy blocks. The note is saved after 800 ms without changes. Open Attachments to upload a supported file, preview it in-app, or choose Screenshot: Visible Area asks the browser for a display/window capture, Entire Page captures the current QNotes page, and Cropped Zone opens an accessible keyboard- and pointer-driven crop selection. Attachment previews request a short-lived signed URL only when opened; Open remains available for the original file, and text previews are capped at 1 MB. Screenshot capture requires browser permission and never uploads until the selected image is explicitly attached; image OCR remains unsupported. Delete is a soft delete that moves the note to the trash; the same note view exposes Restore for a deleted note. Export downloads the current note as `<slug>.md`.
 
 Use Share in an active note to create a read-only public link. Choose a 1-, 7-, 30-, or 90-day lifetime, or no expiry. The raw link is shown once while the dialog is open; close it after copying. Reopening Share shows only a safe prefix and expiry metadata, and lets you rotate or revoke the active link. Creating or rotating a link flushes pending autosave first, so public readers see only saved content. Open `/share#qns_...` to view a link without signing in; the public page renders the same sanitized Markdown preview but never loads attachments, AppShell data, or private note queries.
 
@@ -229,7 +229,7 @@ The CLI uses native `fetch`, never connects directly to PostgreSQL, and does not
 
 ## Agent Vault
 
-Quadrate Agent Vault is an isolated credential plane for agent workflows. It
+QNotes Agent Vault is an isolated credential plane for agent workflows. It
 uses `qvt_` tokens, Supabase Vault-backed encrypted values, scoped grants,
 service-only RPCs, committed reveal audits, expected-version writes, and
 replay-safe mutation IDs. Vault values are never part of Notes search,

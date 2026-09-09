@@ -96,7 +96,7 @@ export function PublicSharePage(): JSX.Element {
   }, []);
 
   useEffect(() => {
-    document.title = note?.title ? `${note.title} · Quadrate Notes` : 'Shared note · Quadrate Notes';
+    document.title = note?.title ? `${note.title} · QNotes` : 'Shared note · QNotes';
     setCopyState('idle');
   }, [note?.title]);
 
@@ -113,7 +113,7 @@ export function PublicSharePage(): JSX.Element {
 
   return <main className="q-public-share-page">
     <section className="q-public-share-shell">
-      <a className="q-public-share-brand" href="/"><span className="q-brand-mark" aria-hidden="true">Qn</span><span>Quadrate Notes</span></a>
+      <a className="q-public-share-brand" href="/"><span className="q-brand-mark" aria-hidden="true">Qn</span><span>QNotes</span></a>
       <p className="q-public-share-badge">Read-only shared note</p>
       {loading ? <div className="q-public-share-note q-card" role="status"><div className="q-empty">Opening shared note…</div></div> : note ? <article className="q-public-share-note q-card">
         <header>
@@ -125,7 +125,7 @@ export function PublicSharePage(): JSX.Element {
         </header>
         <NotePreview markdown={note.contentMarkdown} />
         <footer><p>This is a read-only view. The note owner can revoke this link at any time.</p></footer>
-      </article> : <div className="q-public-share-note q-card" role="alert"><h1>Shared note unavailable</h1><p>{UNAVAILABLE_MESSAGE}</p><a className="q-button q-button-outline" href="/">Go to Quadrate Notes</a></div>}
+      </article> : <div className="q-public-share-note q-card" role="alert"><h1>Shared note unavailable</h1><p>{UNAVAILABLE_MESSAGE}</p><a className="q-button q-button-outline" href="/">Go to QNotes</a></div>}
     </section>
   </main>;
 }

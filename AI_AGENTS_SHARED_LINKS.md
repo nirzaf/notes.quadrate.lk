@@ -1,6 +1,6 @@
-# Fetching Quadrate Notes from Shared Links
+# Fetching QNotes from Shared Links
 
-This guide explains how an AI agent can retrieve a shared Quadrate Notes note. A shared link is read-only, does not require a user JWT, and exposes only the saved note title and Markdown body. Attachments, notebooks, workspace metadata, and other notes are not exposed.
+This guide explains how an AI agent can retrieve a shared QNotes note. A shared link is read-only, does not require a user JWT, and exposes only the saved note title and Markdown body. Attachments, notebooks, workspace metadata, and other notes are not exposed.
 
 ## Identify the link type
 

@@ -87,7 +87,7 @@ test('flushes a just-typed edit before leaving the note', async ({ page }) => {
   const noteId = noteIdFromUrl(page.url());
   await expectEditorMode(page);
   await page.locator('.cm-content').fill('Typed immediately before navigation.\n');
-  await page.getByRole('link', { name: 'Quadrate Notes home' }).click();
+  await page.getByRole('link', { name: 'QNotes home' }).click();
   await expect(page).toHaveURL(/\/$/);
 
   const session = await signInSession();
@@ -125,7 +125,7 @@ test('keeps newer typing when an earlier autosave response is delayed', async ({
   await firstPatchStarted;
   await editor.fill('First revision.\n\nSecond revision typed while saving.\n');
   releaseFirstPatch();
-  await page.getByRole('link', { name: 'Quadrate Notes home' }).click();
+  await page.getByRole('link', { name: 'QNotes home' }).click();
   await expect(page).toHaveURL(/\/$/);
   const session = await signInSession();
   await expect.poll(async () => (await getNoteApi(session.access_token, noteId)).contentMarkdown, { timeout: 10_000 }).toBe('First revision.\n\nSecond revision typed while saving.\n');

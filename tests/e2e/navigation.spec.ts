@@ -109,7 +109,7 @@ test('offers a starter note for an empty workspace and clears search quickly', a
   await expect(page.locator('.cm-content')).toContainText('private Markdown workspace');
   await expect(page.getByRole('status')).toContainText(/Saved/);
 
-  await page.getByRole('link', { name: 'Quadrate Notes home' }).click();
+  await page.getByRole('link', { name: 'QNotes home' }).click();
   const search = page.getByRole('textbox', { name: 'Search notes' }).first();
   await search.fill('private Markdown workspace');
   await expect(page.getByRole('button', { name: 'Clear search' })).toBeVisible();

@@ -1,6 +1,6 @@
-# Quadrate Agent Vault
+# QNotes Agent Vault
 
-Agent Vault is the private credential plane for Quadrate. It is deliberately
+Agent Vault is the private credential plane for QNotes. It is deliberately
 separate from the Notes plane: Notes stores Markdown and searchable context;
 Vault stores encrypted secret values in Supabase Vault and exposes only
 owner- and grant-scoped metadata, reveal, and mutation operations.

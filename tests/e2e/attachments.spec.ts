@@ -3,7 +3,7 @@ import { test, expect } from './test-fixtures';
 import { createClient } from '@supabase/supabase-js';
 import { apiJson, createNoteApi, expectPreviewMode, getNoteApi, invokeWorker, listAttachmentsApi, localEnv, OTHER, poll, searchItems, signInPage, signInSession } from './helpers';
 
-const marker = 'Quadrate attachment search marker 8241';
+const marker = 'QNotes attachment search marker 8241';
 
 interface UploadData {
   attachment: { id: string };

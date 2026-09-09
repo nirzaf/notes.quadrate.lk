@@ -100,5 +100,5 @@ export async function exportWorkspace(context: Context): Promise<Response> {
   const zip = zipSync(files);
   const maxBytes = workspaceMaxBytes();
   if (zip.byteLength > maxBytes) throw new ApiError(413, 'EXPORT_TOO_LARGE', 'The workspace export exceeds the configured size limit.');
-  return binaryResponse(context, zip, 'application/zip', 'attachment; filename="quadrate-notes-backup.zip"');
+  return binaryResponse(context, zip, 'application/zip', 'attachment; filename="qnotes-backup.zip"');
 }

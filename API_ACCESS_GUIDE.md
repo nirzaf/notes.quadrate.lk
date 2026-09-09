@@ -1,6 +1,6 @@
-# Quadrate Notes API, CLI, and MCP Adapter Guide
+# QNotes API, CLI, and MCP Adapter Guide
 
-This guide describes the current Quadrate Notes REST API, the `qnotes` CLI, the `@qnotes/api-client` package, and the native `@qnotes/mcp-server` package.
+This guide describes the current QNotes REST API, the `qnotes` CLI, the `@qnotes/api-client` package, and the native `@qnotes/mcp-server` package.
 
 ## API base URL and authentication
 
@@ -40,7 +40,7 @@ Keep personal tokens in a process environment, password manager, or secret manag
 
 Create a token in the web app:
 
-1. Sign in to [Quadrate Notes](https://notes.quadrate.lk/).
+1. Sign in to [QNotes](https://notes.quadrate.lk/).
 2. Open [Integrations](https://notes.quadrate.lk/settings/integrations) (the legacy `/settings/tokens` route remains available).
 3. Choose the read-only profile unless the client must create public links or write notes, then select the smallest profile and a real expiry. The public-sharing profile requires `notes:read`, `search:read`, and `shares:write`.
 4. Create the token and copy the complete `qnt_...` value immediately.
@@ -491,7 +491,7 @@ Export the active workspace as a ZIP. This requires both `notes:read` and `attac
 curl -fsS \
   -H "Authorization: Bearer $QNOTES_TOKEN" \
   "$QNOTES_URL/api/export/workspace" \
-  -o quadrate-notes-backup.zip
+  -o qnotes-backup.zip
 ```
 
 The ZIP contains `notes/<safe-slug>-<note-id>.md`, `attachments/<safe-slug>/<attachment-id>-<file-name>`, and `manifest.json`. The version-two manifest includes notebooks, note-to-notebook IDs, Markdown paths, and attachment metadata. Deleted notes and deleted attachments are excluded. Before any Storage download, the API checks Markdown bytes, declared attachment bytes, manifest bytes, and the 5,000-entry limit against the default 50 MiB compressed ZIP limit (configurable with `QNOTES_EXPORT_MAX_BYTES`); it retains a final ZIP-size check.
@@ -502,7 +502,7 @@ Validate a workspace backup without writing any data. The dry-run endpoint accep
 curl -fsS -X POST \
   -H "Authorization: Bearer $QNOTES_TOKEN" \
   -H 'Content-Type: application/zip' \
-  --data-binary @quadrate-notes-backup.zip \
+  --data-binary @qnotes-backup.zip \
   "$QNOTES_URL/api/import/workspace?dryRun=true"
 ```
 
@@ -512,7 +512,7 @@ The response reports the manifest format/version, backup ID, compressed and decl
 curl -fsS -X POST \
   -H "Authorization: Bearer $QNOTES_TOKEN" \
   -H 'Content-Type: application/zip' \
-  --data-binary @quadrate-notes-backup.zip \
+  --data-binary @qnotes-backup.zip \
   "$QNOTES_URL/api/import/workspace?confirm=true"
 ```
 
@@ -620,10 +620,10 @@ The Integrations page can add an optional Vault profile to the same Hermes serve
 
 ```yaml
 mcp_servers:
-  quadrate_notes_read:
+  qnotes_read:
     command: "node"
     args:
-      - "/absolute/local/path/notes.quadrate.lk/packages/mcp-server/dist/index.js"
+      - "/absolute/local/path/qnotes/packages/mcp-server/dist/index.js"
     env:
       QNOTES_URL: "${QNOTES_URL}"
       QNOTES_TOKEN: "${QNOTES_READ_TOKEN}"
@@ -639,10 +639,10 @@ mcp_servers:
         - resolve_public_share
       prompts: false
 
-  quadrate_notes_write:
+  qnotes_write:
     command: "node"
     args:
-      - "/absolute/local/path/notes.quadrate.lk/packages/mcp-server/dist/index.js"
+      - "/absolute/local/path/qnotes/packages/mcp-server/dist/index.js"
     env:
       QNOTES_URL: "${QNOTES_URL}"
       QNOTES_MCP_PROFILE: "write"
@@ -666,10 +666,10 @@ mcp_servers:
         - move_note_to_notebook
       prompts: false
 
-  quadrate_notes_share:
+  qnotes_share:
     command: "node"
     args:
-      - "/absolute/local/path/notes.quadrate.lk/packages/mcp-server/dist/index.js"
+      - "/absolute/local/path/qnotes/packages/mcp-server/dist/index.js"
     env:
       QNOTES_URL: "${QNOTES_URL}"
       QNOTES_MCP_PROFILE: "share"
@@ -704,9 +704,9 @@ https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-mcp
 
 By default, the endpoint exposes `search_notes`, `read_note_context`, and `get_block`, plus the read-only `qnotes://...` resources. It accepts a personal `qnt_...` token in the `Authorization: Bearer ...` header; the least-privilege read token profile is `notes:read, search:read`. A deployment explicitly configured with `QNOTES_MCP_PROFILE=share` selects the share profile, and the authenticated caller’s own OAuth-resolved personal token must additionally have `shares:write` to use `create_public_share`; there is no server-side owner or share credential. Write note tools are never exposed by hosted MCP. Absent or unknown `QNOTES_MCP_PROFILE` values remain read-only.
 
-To connect it in Gemini Spark, open Connected Apps, enter the endpoint under **Custom apps for Spark**, and choose **Next**. The endpoint supports Gemini’s standard dynamic OAuth client registration and PKCE flow. When the Quadrate Notes authorization page opens, paste the personal `qnt_...` token created in Integrations and choose **Approve & Connect**. The server issues Gemini an encrypted, opaque read-only OAuth bearer token; the raw personal token is not placed in the authorization URL, and no write profile is available. Google’s current custom-app flow and its security warning are documented in [Gemini Spark’s custom-app instructions](https://support.google.com/gemini/answer/17209137). If Gemini falls back to **Advanced Settings**, use `qnotes-gemini` as the Client ID and leave Client secret empty; the authorization page still requests the personal token. The token is shown in full only once, so revoke it from [Personal API tokens](https://notes.quadrate.lk/settings/tokens) if it is exposed or no longer needed. The hosted endpoint accepts Google’s OAuth redirect hosts only.
+To connect it in Gemini Spark, open Connected Apps, enter the endpoint under **Custom apps for Spark**, and choose **Next**. The endpoint supports Gemini’s standard dynamic OAuth client registration and PKCE flow. When the QNotes authorization page opens, paste the personal `qnt_...` token created in Integrations and choose **Approve & Connect**. The server issues Gemini an encrypted, opaque read-only OAuth bearer token; the raw personal token is not placed in the authorization URL, and no write profile is available. Google’s current custom-app flow and its security warning are documented in [Gemini Spark’s custom-app instructions](https://support.google.com/gemini/answer/17209137). If Gemini falls back to **Advanced Settings**, use `qnotes-gemini` as the Client ID and leave Client secret empty; the authorization page still requests the personal token. The token is shown in full only once, so revoke it from [Personal API tokens](https://notes.quadrate.lk/settings/tokens) if it is exposed or no longer needed. The hosted endpoint accepts Google’s OAuth redirect hosts only.
 
-After building the server and saving the generated config, verify the two layers separately. A browser “Verify token/API access” check only proves that the token can call the API; it does not start Hermes. Run `hermes mcp test quadrate_notes_read` or `hermes mcp test quadrate_notes_write` to exercise Hermes’ real stdio configuration. For an ambiguous write result, repeat the tool call with the same `mutationId`; do not generate a new ID until starting a new logical mutation.
+After building the server and saving the generated config, verify the two layers separately. A browser “Verify token/API access” check only proves that the token can call the API; it does not start Hermes. Run `hermes mcp test qnotes_read` or `hermes mcp test qnotes_write` to exercise Hermes’ real stdio configuration. For an ambiguous write result, repeat the tool call with the same `mutationId`; do not generate a new ID until starting a new logical mutation.
 
 ## Endpoint reference
 
