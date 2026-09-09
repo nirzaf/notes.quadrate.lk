@@ -43,6 +43,7 @@ test('reconciles independent body, title, tag, and notebook changes', () => {
       notebookId: 'notebook-local',
     },
     conflicts: [],
+    metadataConflicts: [],
   });
 });
 
@@ -75,4 +76,10 @@ test('keeps an explicit null notebook change instead of treating it as absent', 
   assert.equal(result.status, 'conflict');
   assert.equal(result.reason, 'notebook');
   assert.equal(result.values.notebookId, null);
+  assert.deepEqual(result.metadataConflicts, [{
+    field: 'notebook',
+    base: 'notebook-old',
+    local: null,
+    remote: 'notebook-remote',
+  }]);
 });

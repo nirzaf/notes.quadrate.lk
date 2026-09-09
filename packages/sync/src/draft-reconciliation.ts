@@ -9,11 +9,20 @@ export interface DraftValues {
   notebookId: UUID | null;
 }
 
+export type DraftMetadataValue = string | string[] | UUID | null;
+
+export interface DraftMetadataConflict {
+  field: 'title' | 'tags' | 'notebook';
+  base: DraftMetadataValue;
+  local: DraftMetadataValue;
+  remote: DraftMetadataValue;
+}
+
 export type DraftReconciliationReason = 'invalid-base' | 'newer-base' | 'base-mismatch' | 'remote-deleted' | 'body' | 'title' | 'tags' | 'notebook';
 
 export type DraftReconciliation =
-  | { status: 'clean'; values: DraftValues; conflicts: [] }
-  | { status: 'conflict'; values: DraftValues; conflicts: MergeConflict[]; reason: DraftReconciliationReason };
+  | { status: 'clean'; values: DraftValues; conflicts: []; metadataConflicts: [] }
+  | { status: 'conflict'; values: DraftValues; conflicts: MergeConflict[]; metadataConflicts: DraftMetadataConflict[]; reason: DraftReconciliationReason };
 
 function equalArray(left: string[], right: string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
@@ -71,13 +80,13 @@ function baseMatchesRemote(draft: NoteDraft, remote: Note): boolean {
 export function reconcileDraft(draft: NoteDraft, remote: Note): DraftReconciliation {
   const local = draftValues(draft, remote);
   if (!Number.isSafeInteger(draft.baseVersion) || draft.baseVersion < 1 || typeof draft.baseMarkdown !== 'string' || typeof draft.localMarkdown !== 'string') {
-    return { status: 'conflict', values: local, conflicts: [], reason: 'invalid-base' };
+    return { status: 'conflict', values: local, conflicts: [], metadataConflicts: [], reason: 'invalid-base' };
   }
-  if (remote.deletedAt) return { status: 'conflict', values: local, conflicts: [], reason: 'remote-deleted' };
-  if (draft.baseVersion > remote.version) return { status: 'conflict', values: local, conflicts: [], reason: 'newer-base' };
+  if (remote.deletedAt) return { status: 'conflict', values: local, conflicts: [], metadataConflicts: [], reason: 'remote-deleted' };
+  if (draft.baseVersion > remote.version) return { status: 'conflict', values: local, conflicts: [], metadataConflicts: [], reason: 'newer-base' };
   if (draft.baseVersion === remote.version) {
-    if (!baseMatchesRemote(draft, remote)) return { status: 'conflict', values: local, conflicts: [], reason: 'base-mismatch' };
-    return { status: 'clean', values: local, conflicts: [] };
+    if (!baseMatchesRemote(draft, remote)) return { status: 'conflict', values: local, conflicts: [], metadataConflicts: [], reason: 'base-mismatch' };
+    return { status: 'clean', values: local, conflicts: [], metadataConflicts: [] };
   }
 
   const body = threeWayMerge(draft.baseMarkdown, draft.localMarkdown, remote.contentMarkdown);
@@ -90,14 +99,20 @@ export function reconcileDraft(draft: NoteDraft, remote: Note): DraftReconciliat
   const notebook = draft.baseNotebookId !== undefined && draft.localNotebookId !== undefined
     ? mergeScalar(draft.baseNotebookId, draft.localNotebookId, remote.notebookId)
     : { value: remote.notebookId, conflict: false };
+  const metadataConflicts: DraftMetadataConflict[] = [
+    ...(title.conflict && draft.baseTitle !== undefined && draft.localTitle !== undefined ? [{ field: 'title' as const, base: draft.baseTitle, local: draft.localTitle, remote: remote.title }] : []),
+    ...(tags.conflict && draft.baseTags !== undefined && draft.localTags !== undefined ? [{ field: 'tags' as const, base: [...draft.baseTags], local: [...draft.localTags], remote: [...remote.tags] }] : []),
+    ...(notebook.conflict && draft.baseNotebookId !== undefined && draft.localNotebookId !== undefined ? [{ field: 'notebook' as const, base: draft.baseNotebookId, local: draft.localNotebookId, remote: remote.notebookId }] : []),
+  ];
   const reason = body.status === 'conflict' ? 'body' : title.conflict ? 'title' : tags.conflict ? 'tags' : notebook.conflict ? 'notebook' : null;
   if (reason) {
     return {
       status: 'conflict',
       values: { ...local, markdown: body.status === 'clean' ? body.merged : local.markdown, title: title.conflict ? local.title : title.value, tags: tags.conflict ? local.tags : tags.value, notebookId: notebook.conflict ? local.notebookId : notebook.value },
       conflicts: body.conflicts,
+      metadataConflicts,
       reason,
     };
   }
-  return { status: 'clean', values: { markdown: body.merged, title: title.value, tags: tags.value, notebookId: notebook.value }, conflicts: [] };
+  return { status: 'clean', values: { markdown: body.merged, title: title.value, tags: tags.value, notebookId: notebook.value }, conflicts: [], metadataConflicts: [] };
 }

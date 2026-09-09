@@ -53,6 +53,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
   const acknowledgedMutationIdRef = useRef<string | null>(null);
   const pendingMutationIdRef = useRef<string | null>(null);
   const pendingNotebookMutationIdRef = useRef<string | null>(null);
+  const reconciliationBlockedRef = useRef(false);
   const saveRevision = useRef(0);
   const editRevision = useRef(0);
   const dirtyRef = useRef(false);
@@ -142,6 +143,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
 
   saveHandler.current = async (payload) => {
     if (!mountedRef.current || readOnlyRef.current || !enabledRef.current || !userIdRef.current) throw new Error('This note session is no longer authenticated.');
+    if (reconciliationBlockedRef.current) return;
     const revision = saveRevision.current;
     let current = authoritative.current;
     if (payload.noteId !== current.id || payload.userId !== userIdRef.current) throw new Error('This note save belongs to an inactive session.');
@@ -283,6 +285,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
       noteIdRef.current = note.id;
       pendingMutationIdRef.current = null;
       pendingNotebookMutationIdRef.current = null;
+      reconciliationBlockedRef.current = false;
       authoritative.current = note;
       draftRef.current = valuesFromNote(note);
       valueRef.current = note.contentMarkdown;
@@ -325,6 +328,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
       if (!active || !enabledRef.current || noteIdRef.current !== requestedNoteId || userIdRef.current !== requestedUserId || dirtyRef.current || !draft) return;
       const restored = reconcileDraft(draft, note);
       const restoredValues = restored.values;
+      reconciliationBlockedRef.current = restored.status === 'conflict';
       pendingMutationIdRef.current = draft.mutationId ?? crypto.randomUUID();
       pendingNotebookMutationIdRef.current = restoredValues.notebookId !== note.notebookId
         ? draft.notebookMutationId ?? crypto.randomUUID()
@@ -349,6 +353,8 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
           currentVersion: note.version,
           currentNote: note,
           conflicts: restored.conflicts,
+          metadataConflicts: restored.metadataConflicts,
+          reconciledValues: restored.values,
           draftBaseVersion: draft.baseVersion,
           baseMarkdown: draft.baseMarkdown,
           draftReason: restored.reason,
@@ -405,7 +411,12 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
     pendingMutationIdRef.current = crypto.randomUUID();
     const nextValues = { ...draftRef.current, markdown: next, tags: [...draftRef.current.tags] };
     const isDirty = markDirty(nextValues);
-    setErrorMessage(null);
+    if (!reconciliationBlockedRef.current) setErrorMessage(null);
+    if (reconciliationBlockedRef.current) {
+      setStatus('conflict');
+      void persistDraft(editRevision.current).catch(() => undefined);
+      return;
+    }
     if (!isDirty) {
       coordinatorRef.current?.cancelPending();
       void deleteDraft(authoritative.current.id).catch(() => undefined);
@@ -431,7 +442,12 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
       tags: next.tags ? [...next.tags] : [...draftRef.current.tags],
     };
     const isDirty = markDirty(nextValues);
-    setErrorMessage(null);
+    if (!reconciliationBlockedRef.current) setErrorMessage(null);
+    if (reconciliationBlockedRef.current) {
+      setStatus('conflict');
+      void persistDraft(editRevision.current).catch(() => undefined);
+      return;
+    }
     if (!isDirty) {
       coordinatorRef.current?.cancelPending();
       void deleteDraft(authoritative.current.id).catch(() => undefined);
@@ -450,7 +466,12 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
     editRevision.current += 1;
     pendingNotebookMutationIdRef.current = next === authoritative.current.notebookId ? null : crypto.randomUUID();
     const isDirty = markDirty({ ...draftRef.current, notebookId: next, tags: [...draftRef.current.tags] });
-    setErrorMessage(null);
+    if (!reconciliationBlockedRef.current) setErrorMessage(null);
+    if (reconciliationBlockedRef.current) {
+      setStatus('conflict');
+      void persistDraft(editRevision.current).catch(() => undefined);
+      return;
+    }
     if (!isDirty) {
       coordinatorRef.current?.cancelPending();
       void deleteDraft(authoritative.current.id).catch(() => undefined);
@@ -479,7 +500,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
     await persistDraft(editRevision.current);
   }, []);
   const retry = useCallback(() => {
-    if (!dirtyRef.current || readOnlyRef.current) return;
+    if (!dirtyRef.current || readOnlyRef.current || reconciliationBlockedRef.current) return;
     setErrorMessage(null);
     setStatus('pending');
     coordinatorRef.current?.schedule(currentPayload());
@@ -488,6 +509,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
     saveRevision.current += 1;
     pendingMutationIdRef.current = null;
     pendingNotebookMutationIdRef.current = null;
+    reconciliationBlockedRef.current = false;
     coordinatorRef.current?.cancelPending();
     authoritative.current = nextNote;
     draftRef.current = valuesFromNote(nextNote);
@@ -509,10 +531,15 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
     setStatus('saved');
     void deleteDraft(nextNote.id).catch(() => undefined);
   }, [store]);
+  const blockAutosave = useCallback(() => {
+    reconciliationBlockedRef.current = true;
+    coordinatorRef.current?.cancelPending();
+    setStatus('conflict');
+  }, []);
   const acknowledgeMutation = useCallback((mutationId: string) => {
     acknowledgedMutationIdRef.current = mutationId;
     setAcknowledgedMutationId(mutationId);
   }, []);
   const isMutationAcknowledged = useCallback((mutationId: string) => acknowledgedMutationIdRef.current === mutationId, []);
-  return { value, title, tags, notebookId, status, savedAt, dirty, errorMessage, acknowledgedMutationId, change, changeMetadata, changeNotebook, flush, preserveDraft, retry, adoptRemote, acknowledgeMutation, isMutationAcknowledged };
+  return { value, title, tags, notebookId, status, savedAt, dirty, errorMessage, acknowledgedMutationId, change, changeMetadata, changeNotebook, flush, preserveDraft, retry, adoptRemote, blockAutosave, acknowledgeMutation, isMutationAcknowledged };
 }
