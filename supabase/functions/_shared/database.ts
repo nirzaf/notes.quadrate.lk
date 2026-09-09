@@ -37,7 +37,18 @@ export function notebookFromRow(row: Record<string, unknown>): Notebook {
 
 export function summaryFromRow(row: Record<string, unknown>): NoteSummary {
   const note = noteFromRow(row);
-  return { ...note, excerpt: note.contentPlain.slice(0, 180) };
+  return {
+    id: note.id,
+    slug: note.slug,
+    title: note.title,
+    excerpt: note.contentPlain.slice(0, 180),
+    tags: note.tags,
+    notebookId: note.notebookId,
+    version: note.version,
+    createdAt: note.createdAt,
+    updatedAt: note.updatedAt,
+    deletedAt: note.deletedAt,
+  };
 }
 
 export function blockFromRow(row: Record<string, unknown>): NoteBlock {
