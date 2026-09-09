@@ -27,7 +27,7 @@ export const VAULT_RPC_CHECKS = [
   {
     id: 'rotate_secret',
     name: 'qnotes_vault_rotate_secret',
-    signature: 'uuid,uuid,text,text,bigint,uuid,text,uuid,uuid,text',
+    signature: 'uuid,uuid,text,text,bigint,uuid,text,text,uuid,uuid,text',
   },
   {
     id: 'delete_secret',

@@ -46,7 +46,10 @@ export function buildHermesMcpConfig({ profile, serverPath, deviceId, includePub
           QNOTES_MCP_DEVICE_ID: deviceId!,
           ...(includePublicShare ? { QNOTES_MCP_ENABLE_PUBLIC_SHARE: 'true' } : {}),
         }
-      : { QNOTES_TOKEN: profile === 'share' ? '${QNOTES_TOKEN}' : '${QNOTES_READ_TOKEN}' }),
+      : {
+          QNOTES_TOKEN: profile === 'share' ? '${QNOTES_TOKEN}' : '${QNOTES_READ_TOKEN}',
+          ...(profile === 'share' ? { QNOTES_MCP_PROFILE: 'share' } : {}),
+        }),
     ...(vaultProfile === 'none' ? {} : { QVAULT_TOKEN: '${QVAULT_TOKEN}', QVAULT_MCP_PROFILE: vaultProfile }),
   };
   const server = {
