@@ -53,6 +53,7 @@ test('keeps overlapping edits in review state', () => {
 });
 
 test('preserves drafts based on a newer or inconsistent version', () => {
+  assert.equal(reconcileDraft({ ...draft(), baseVersion: 0 }, note()).reason, 'invalid-base');
   assert.equal(reconcileDraft({ ...draft(), baseVersion: 5 }, note()).reason, 'newer-base');
   assert.equal(reconcileDraft({ ...draft(), baseVersion: 4, baseMarkdown: 'unexpected' }, note()).reason, 'base-mismatch');
 });

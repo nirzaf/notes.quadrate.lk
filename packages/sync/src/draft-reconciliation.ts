@@ -70,7 +70,7 @@ function baseMatchesRemote(draft: NoteDraft, remote: Note): boolean {
 
 export function reconcileDraft(draft: NoteDraft, remote: Note): DraftReconciliation {
   const local = draftValues(draft, remote);
-  if (!Number.isSafeInteger(draft.baseVersion) || typeof draft.baseMarkdown !== 'string' || typeof draft.localMarkdown !== 'string') {
+  if (!Number.isSafeInteger(draft.baseVersion) || draft.baseVersion < 1 || typeof draft.baseMarkdown !== 'string' || typeof draft.localMarkdown !== 'string') {
     return { status: 'conflict', values: local, conflicts: [], reason: 'invalid-base' };
   }
   if (remote.deletedAt) return { status: 'conflict', values: local, conflicts: [], reason: 'remote-deleted' };
