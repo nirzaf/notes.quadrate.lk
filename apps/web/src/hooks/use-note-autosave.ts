@@ -12,6 +12,14 @@ interface SavePayload extends DraftValues {
   userId: string;
 }
 
+interface DraftBaseSnapshot {
+  baseVersion: number;
+  baseMarkdown: string;
+  baseTitle?: string;
+  baseTags?: string[];
+  baseNotebookId?: Note['notebookId'];
+}
+
 interface UseNoteAutosaveOptions {
   note: Note;
   onSaved: (note: Note) => void;
@@ -54,6 +62,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
   const pendingMutationIdRef = useRef<string | null>(null);
   const pendingNotebookMutationIdRef = useRef<string | null>(null);
   const reconciliationBlockedRef = useRef(false);
+  const blockedDraftBaseRef = useRef<DraftBaseSnapshot | null>(null);
   const saveRevision = useRef(0);
   const editRevision = useRef(0);
   const dirtyRef = useRef(false);
@@ -96,6 +105,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
 
   const persistDraft = (revision: number): Promise<void> => {
     const base = authoritative.current;
+    const blockedBase = blockedDraftBaseRef.current;
     const local = draftRef.current;
     const mutationId = pendingMutationIdRef.current ?? crypto.randomUUID();
     const notebookMutationId = pendingNotebookMutationIdRef.current;
@@ -104,16 +114,16 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
       if (!store || !userIdRef.current) throw new Error('Local draft storage is unavailable for this account.');
       await store.put({
         noteId: base.id,
-        baseVersion: base.version,
-        baseMarkdown: base.contentMarkdown,
+        baseVersion: blockedBase?.baseVersion ?? base.version,
+        baseMarkdown: blockedBase?.baseMarkdown ?? base.contentMarkdown,
         localMarkdown: local.markdown,
         mutationId,
         ...(notebookMutationId ? { notebookMutationId } : {}),
-        baseTitle: base.title,
+        baseTitle: blockedBase?.baseTitle ?? base.title,
         localTitle: local.title,
-        baseTags: [...base.tags],
+        baseTags: [...(blockedBase?.baseTags ?? base.tags)],
         localTags: [...local.tags],
-        baseNotebookId: base.notebookId,
+        baseNotebookId: blockedBase?.baseNotebookId !== undefined ? blockedBase.baseNotebookId : base.notebookId,
         localNotebookId: local.notebookId,
         updatedAt: new Date().toISOString(),
       });
@@ -286,6 +296,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
       pendingMutationIdRef.current = null;
       pendingNotebookMutationIdRef.current = null;
       reconciliationBlockedRef.current = false;
+      blockedDraftBaseRef.current = null;
       authoritative.current = note;
       draftRef.current = valuesFromNote(note);
       valueRef.current = note.contentMarkdown;
@@ -329,6 +340,13 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
       const restored = reconcileDraft(draft, note);
       const restoredValues = restored.values;
       reconciliationBlockedRef.current = restored.status === 'conflict';
+      blockedDraftBaseRef.current = restored.status === 'conflict' ? {
+        baseVersion: draft.baseVersion,
+        baseMarkdown: draft.baseMarkdown,
+        ...(draft.baseTitle !== undefined ? { baseTitle: draft.baseTitle } : {}),
+        ...(draft.baseTags !== undefined ? { baseTags: [...draft.baseTags] } : {}),
+        ...(draft.baseNotebookId !== undefined ? { baseNotebookId: draft.baseNotebookId } : {}),
+      } : null;
       pendingMutationIdRef.current = draft.mutationId ?? crypto.randomUUID();
       pendingNotebookMutationIdRef.current = restoredValues.notebookId !== note.notebookId
         ? draft.notebookMutationId ?? crypto.randomUUID()
@@ -513,6 +531,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
     pendingMutationIdRef.current = null;
     pendingNotebookMutationIdRef.current = null;
     reconciliationBlockedRef.current = false;
+    blockedDraftBaseRef.current = null;
     coordinatorRef.current?.cancelPending();
     authoritative.current = nextNote;
     draftRef.current = valuesFromNote(nextNote);
@@ -536,6 +555,16 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
   }, [store]);
   const blockAutosave = useCallback(() => {
     saveRevision.current += 1;
+    if (!blockedDraftBaseRef.current) {
+      const current = authoritative.current;
+      blockedDraftBaseRef.current = {
+        baseVersion: current.version,
+        baseMarkdown: current.contentMarkdown,
+        baseTitle: current.title,
+        baseTags: [...current.tags],
+        baseNotebookId: current.notebookId,
+      };
+    }
     reconciliationBlockedRef.current = true;
     coordinatorRef.current?.cancelPending();
     setStatus('conflict');
