@@ -99,6 +99,13 @@ function snapshotIdsToDelete(records: unknown[]): string[] {
 export class IndexedDbDraftStore implements DraftStore {
   private readonly databaseName: string;
   private database: IDBDatabase | null = null;
+  private snapshotMutationChain: Promise<void> = Promise.resolve();
+
+  private enqueueSnapshotMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.snapshotMutationChain.then(operation);
+    this.snapshotMutationChain = result.then(() => undefined, () => undefined);
+    return result;
+  }
 
   constructor(databaseName = 'qnotes') {
     this.databaseName = databaseName;
@@ -224,8 +231,9 @@ export class IndexedDbDraftStore implements DraftStore {
   }
 
   async putRecent(note: { id: UUID } & object): Promise<void> {
-    const record = { ...(note as Record<string, unknown>), noteId: note.id };
-    await this.write('recentNotes', (store) => store.put(record));
+    const suppliedNoteId = (note as { noteId?: unknown }).noteId;
+    const record = { ...(note as Record<string, unknown>), noteId: isString(suppliedNoteId) ? suppliedNoteId : note.id };
+    await this.enqueueSnapshotMutation(() => this.write('recentNotes', (store) => store.put(record)));
   }
 
   async getNoteSnapshot(noteId: UUID): Promise<Note | null> {
@@ -235,15 +243,17 @@ export class IndexedDbDraftStore implements DraftStore {
   }
 
   async putNoteSnapshot(note: Note): Promise<void> {
-    if (!isCompleteNoteSnapshot(note) || note.deletedAt) return;
-    const current = await this.getNoteSnapshot(note.id);
-    if (current && current.version >= note.version) return;
-    await this.putRecent(note);
-    await this.pruneSnapshots();
+    await this.enqueueSnapshotMutation(async () => {
+      if (!isCompleteNoteSnapshot(note) || note.deletedAt) return;
+      const current = await this.getNoteSnapshot(note.id);
+      if (current && current.version >= note.version) return;
+      await this.write('recentNotes', (store) => store.put({ ...note, noteId: note.id }));
+      await this.pruneSnapshots();
+    });
   }
 
   async deleteRecent(noteId: UUID): Promise<void> {
-    await this.write('recentNotes', (store) => store.delete(noteId));
+    await this.enqueueSnapshotMutation(() => this.write('recentNotes', (store) => store.delete(noteId)));
   }
 
   async listRecent(limit = 500): Promise<NoteSummary[]> {
@@ -264,6 +274,13 @@ export class MemoryDraftStore implements DraftStore {
   private readonly drafts = new Map<UUID, NoteDraft>();
   private readonly recent = new Map<UUID, Record<string, unknown>>();
   private readonly selections: SearchSelection[] = [];
+  private snapshotMutationChain: Promise<void> = Promise.resolve();
+
+  private enqueueSnapshotMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.snapshotMutationChain.then(operation);
+    this.snapshotMutationChain = result.then(() => undefined, () => undefined);
+    return result;
+  }
 
   async get(noteId: UUID): Promise<NoteDraft | null> {
     return this.drafts.get(noteId) ?? null;
@@ -278,7 +295,8 @@ export class MemoryDraftStore implements DraftStore {
   }
 
   async putRecent(note: { id: UUID } & object): Promise<void> {
-    this.recent.set(note.id, { ...(note as Record<string, unknown>), noteId: note.id });
+    const suppliedNoteId = (note as { noteId?: unknown }).noteId;
+    this.recent.set(note.id, { ...(note as Record<string, unknown>), noteId: isString(suppliedNoteId) ? suppliedNoteId : note.id });
   }
 
   async getNoteSnapshot(noteId: UUID): Promise<Note | null> {
@@ -288,16 +306,18 @@ export class MemoryDraftStore implements DraftStore {
   }
 
   async putNoteSnapshot(note: Note): Promise<void> {
-    if (!isCompleteNoteSnapshot(note) || note.deletedAt) return;
-    const current = await this.getNoteSnapshot(note.id);
-    if (current && current.version >= note.version) return;
-    this.recent.set(note.id, { ...note, noteId: note.id });
-    const ids = snapshotIdsToDelete([...this.recent.values()]);
-    for (const id of ids) this.recent.delete(id);
+    await this.enqueueSnapshotMutation(async () => {
+      if (!isCompleteNoteSnapshot(note) || note.deletedAt) return;
+      const current = await this.getNoteSnapshot(note.id);
+      if (current && current.version >= note.version) return;
+      this.recent.set(note.id, { ...note, noteId: note.id });
+      const ids = snapshotIdsToDelete([...this.recent.values()]);
+      for (const id of ids) this.recent.delete(id);
+    });
   }
 
   async deleteRecent(noteId: UUID): Promise<void> {
-    this.recent.delete(noteId);
+    await this.enqueueSnapshotMutation(async () => { this.recent.delete(noteId); });
   }
 
   async listRecent(limit = 500): Promise<NoteSummary[]> {

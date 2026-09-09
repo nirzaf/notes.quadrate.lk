@@ -70,7 +70,7 @@ export function NotePage(): JSX.Element {
   const { session } = useAuth();
   const userId = session?.user.id ?? 'unauthenticated';
   const queryKeys = useMemo(() => noteQueryKeys.forUser(userId), [userId]);
-  const [readingCopy, setReadingCopy] = useState<Note | null>(null);
+  const [readingCopy, setReadingCopy] = useState<{ userId: string; noteId: string; note: Note } | null>(null);
   const [readingCopyReady, setReadingCopyReady] = useState(false);
   const noteQuery = useQuery({
     queryKey: queryKeys.note(noteId),
@@ -88,7 +88,7 @@ export function NotePage(): JSX.Element {
     }
     void readRememberedNote(noteId, userId).then((snapshot) => {
       if (!active) return;
-      setReadingCopy(snapshot);
+      setReadingCopy(snapshot ? { userId, noteId, note: snapshot } : null);
       setReadingCopyReady(true);
     }).catch(() => {
       if (active) setReadingCopyReady(true);
@@ -106,12 +106,14 @@ export function NotePage(): JSX.Element {
     void rememberNote(authoritative, userId).catch(() => undefined);
   }, [noteQuery.data, session, userId]);
 
+  const eligibleReadingCopy = readingCopy && readingCopy.userId === userId && readingCopy.noteId === noteId ? readingCopy.note : null;
+
   if (noteQuery.isPending) {
-    if (readingCopy) return <NoteReadingPreview note={readingCopy} checking={!readingCopyReady || noteQuery.isPending} onRetry={() => void noteQuery.refetch()} />;
+    if (eligibleReadingCopy) return <NoteReadingPreview note={eligibleReadingCopy} checking={!readingCopyReady || noteQuery.isPending} onRetry={() => void noteQuery.refetch()} />;
     return <NoteUnavailable />;
   }
   if (noteQuery.error || !noteQuery.data) {
-    if (readingCopy) return <NoteReadingPreview note={readingCopy} checking={false} error onRetry={() => void noteQuery.refetch()} />;
+    if (eligibleReadingCopy) return <NoteReadingPreview note={eligibleReadingCopy} checking={false} error onRetry={() => void noteQuery.refetch()} />;
     return <NoteUnavailable error onRetry={() => void noteQuery.refetch()} />;
   }
   return <LoadedNoteSession key={`${userId}:${noteQuery.data.id}`} note={noteQuery.data} userId={userId} search={search} queryKeys={queryKeys} />;

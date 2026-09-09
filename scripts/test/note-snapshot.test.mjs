@@ -37,13 +37,13 @@ test('only complete same-account non-deleted note records are snapshot cache hit
     { name: 'partial', value: { ...note('note-a'), contentPlain: undefined } },
     { name: 'corrupt', value: { ...note('note-a'), tags: 'test' } },
     { name: 'deleted', value: { ...note('note-a'), deletedAt: '2026-09-09T00:00:01.000Z' } },
-    { name: 'mismatched', value: { ...note('note-b'), noteId: 'note-a' } },
+    { name: 'mismatched', lookup: 'note-b', value: { ...note('note-a'), id: 'note-b', noteId: 'note-a' } },
   ];
 
-  for (const { name, value } of cases) {
+  for (const { name, lookup = 'note-a', value } of cases) {
     const store = new MemoryDraftStore();
     await store.putRecent(value);
-    assert.equal(await store.getNoteSnapshot('note-a'), null, `${name} record must be a cache miss`);
+    assert.equal(await store.getNoteSnapshot(lookup), null, `${name} record must be a cache miss`);
   }
 
   const store = new MemoryDraftStore();
