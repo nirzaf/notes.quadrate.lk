@@ -5,7 +5,7 @@ import { MAX_TITLE_LENGTH, type Note, type RealtimeNoteEvent } from '@qnotes/sha
 import { QNotesHttpError } from '@qnotes/api-client';
 import { threeWayMerge } from '@qnotes/sync';
 import { api } from '../api';
-import { getDeviceId } from '../indexed-db';
+import { getDeviceId, readRememberedNote, rememberNote, removeRememberedNote } from '../indexed-db';
 import { AppShell } from '../components/app-shell';
 import { NotePreview } from '../components/note-preview';
 import { NoteToolbar } from '../components/note-toolbar';
@@ -43,6 +43,10 @@ function NoteUnavailable({ error = false, onRetry }: { error?: boolean; onRetry?
   return <main className="q-auth-page"><section className="q-card q-auth-card" role={error ? 'alert' : undefined}><p className="q-eyebrow">Note</p><h1 className="q-display" style={{ fontSize: '2.8rem' }}>{error ? 'This note could not be opened.' : 'Loading note…'}</h1><p className="q-subtitle">{error ? 'It may have been deleted, moved, or you may no longer have access to it.' : 'Opening the current version of this note.'}</p><div className="q-dialog-actions">{onRetry && <Button type="button" onClick={onRetry}>Retry</Button>}<Link className="q-button q-button-primary" to="/">Go to Notes</Link></div></section></main>;
 }
 
+function NoteReadingPreview({ note, checking, error, onRetry }: { note: Note; checking: boolean; error?: boolean; onRetry: () => void }): JSX.Element {
+  return <main className="q-auth-page" data-note-reading-preview><section className="q-card q-auth-card"><p className="q-eyebrow">Read-only preview</p><h1 className="q-display" style={{ fontSize: '2.8rem' }}>{note.title || 'Untitled note'}</h1><p className="q-subtitle">{checking ? 'Checking the current version before enabling editing.' : error ? 'The current version could not be verified. This preview is not editable.' : 'This previously received copy is being checked against the current version.'}</p><div className="q-note-preview"><NotePreview markdown={note.contentMarkdown} /></div><div className="q-dialog-actions"><Button type="button" onClick={onRetry}>Retry</Button></div></section></main>;
+}
+
 class EditorErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
   state = { failed: false };
 
@@ -66,14 +70,50 @@ export function NotePage(): JSX.Element {
   const { session } = useAuth();
   const userId = session?.user.id ?? 'unauthenticated';
   const queryKeys = useMemo(() => noteQueryKeys.forUser(userId), [userId]);
+  const [readingCopy, setReadingCopy] = useState<Note | null>(null);
+  const [readingCopyReady, setReadingCopyReady] = useState(false);
   const noteQuery = useQuery({
     queryKey: queryKeys.note(noteId),
     queryFn: ({ signal }) => api.getNote(noteId, { includeDeleted: true, signal }),
     enabled: Boolean(session && noteId),
   });
 
-  if (noteQuery.isPending) return <NoteUnavailable />;
-  if (noteQuery.error || !noteQuery.data) return <NoteUnavailable error onRetry={() => void noteQuery.refetch()} />;
+  useEffect(() => {
+    let active = true;
+    setReadingCopy(null);
+    setReadingCopyReady(false);
+    if (!session) {
+      setReadingCopyReady(true);
+      return () => { active = false; };
+    }
+    void readRememberedNote(noteId, userId).then((snapshot) => {
+      if (!active) return;
+      setReadingCopy(snapshot);
+      setReadingCopyReady(true);
+    }).catch(() => {
+      if (active) setReadingCopyReady(true);
+    });
+    return () => { active = false; };
+  }, [noteId, session, userId]);
+
+  useEffect(() => {
+    const authoritative = noteQuery.data;
+    if (!authoritative || !session) return;
+    if (authoritative.deletedAt) {
+      void removeRememberedNote(authoritative.id, userId).catch(() => undefined);
+      return;
+    }
+    void rememberNote(authoritative, userId).catch(() => undefined);
+  }, [noteQuery.data, session, userId]);
+
+  if (noteQuery.isPending) {
+    if (readingCopy) return <NoteReadingPreview note={readingCopy} checking={!readingCopyReady || noteQuery.isPending} onRetry={() => void noteQuery.refetch()} />;
+    return <NoteUnavailable />;
+  }
+  if (noteQuery.error || !noteQuery.data) {
+    if (readingCopy) return <NoteReadingPreview note={readingCopy} checking={false} error onRetry={() => void noteQuery.refetch()} />;
+    return <NoteUnavailable error onRetry={() => void noteQuery.refetch()} />;
+  }
   return <LoadedNoteSession key={`${userId}:${noteQuery.data.id}`} note={noteQuery.data} userId={userId} search={search} queryKeys={queryKeys} />;
 }
 

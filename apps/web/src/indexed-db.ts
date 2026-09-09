@@ -24,7 +24,11 @@ export function getDeviceId(): string {
 }
 
 export async function rememberNote(note: Note, userId: string): Promise<void> {
-  await getAccountDraftStore(userId).putRecent({ ...note, noteId: note.id });
+  await getAccountDraftStore(userId).putNoteSnapshot(note);
+}
+
+export async function readRememberedNote(noteId: string, userId: string): Promise<Note | null> {
+  return getAccountDraftStore(userId).getNoteSnapshot(noteId);
 }
 
 export async function searchRecentNotes(query: string, userId: string): Promise<NoteSummary[]> {
@@ -41,7 +45,6 @@ export async function rememberSearchSelection(selection: SearchSelection, userId
 export async function removeRememberedNote(noteId: string, userId: string): Promise<void> {
   await getAccountDraftStore(userId).deleteRecent(noteId);
 }
-
 
 export async function readSyncCursor(userId: string): Promise<string | null> {
   return getAccountDraftStore(userId).getCursor();

@@ -1,4 +1,4 @@
-import type { ISODateTime, NoteSummary, UUID } from '@qnotes/shared';
+import type { ISODateTime, Note, NoteSummary, UUID } from '@qnotes/shared';
 
 export interface NoteDraft {
   noteId: UUID;
@@ -30,6 +30,71 @@ export interface DraftStore {
 }
 
 type SyncRecord = { key: string; value: string };
+type RecentRecord = { id: UUID; noteId?: UUID; [key: string]: unknown };
+
+const MAX_SNAPSHOT_COUNT = 50;
+const MAX_SNAPSHOT_BYTES = 10 * 1024 * 1024;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === 'string';
+}
+
+function isNullableString(value: unknown): value is string | null {
+  return value === null || isString(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(isString);
+}
+
+export function isCompleteNoteSnapshot(value: unknown): value is Note {
+  if (!isRecord(value)) return false;
+  return isString(value.id)
+    && isString(value.slug)
+    && isString(value.title)
+    && isString(value.contentMarkdown)
+    && isString(value.contentPlain)
+    && isStringArray(value.tags)
+    && isNullableString(value.notebookId)
+    && typeof value.version === 'number'
+    && Number.isSafeInteger(value.version)
+    && isString(value.createdAt)
+    && isString(value.updatedAt)
+    && isNullableString(value.deletedAt);
+}
+
+function snapshotRecord(value: unknown): value is RecentRecord & Note {
+  return isCompleteNoteSnapshot(value)
+    && isString((value as unknown as RecentRecord).noteId)
+    && value.id === (value as unknown as RecentRecord).noteId;
+}
+
+function noteFromSnapshotRecord(value: RecentRecord & Note): Note {
+  const { noteId: _noteId, ...note } = value;
+  return note;
+}
+
+function serializedBytes(value: unknown): number {
+  return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+}
+
+function snapshotIdsToDelete(records: unknown[]): string[] {
+  const snapshots = records.filter((record): record is RecentRecord & Note => snapshotRecord(record) && !record.deletedAt);
+  snapshots.sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
+  const keep = new Set<string>();
+  let totalBytes = 0;
+  for (const snapshot of snapshots) {
+    const bytes = serializedBytes(snapshot);
+    if (keep.size >= MAX_SNAPSHOT_COUNT || totalBytes + bytes > MAX_SNAPSHOT_BYTES) continue;
+    keep.add(snapshot.id);
+    totalBytes += bytes;
+  }
+  return snapshots.filter((snapshot) => !keep.has(snapshot.id)).map((snapshot) => snapshot.id);
+}
 
 export class IndexedDbDraftStore implements DraftStore {
   private readonly databaseName: string;
@@ -71,6 +136,48 @@ export class IndexedDbDraftStore implements DraftStore {
       transaction.oncomplete = () => resolve();
       transaction.onerror = () => reject(transaction.error ?? new Error('Local storage transaction failed.'));
       transaction.onabort = () => reject(transaction.error ?? new Error('Local storage transaction was aborted.'));
+    });
+  }
+
+  private async readRecentRecords(): Promise<unknown[]> {
+    const database = await this.open();
+    if (!database) return [];
+    return new Promise((resolve, reject) => {
+      const transaction = database.transaction('recentNotes', 'readonly');
+      const request = transaction.objectStore('recentNotes').getAll();
+      let value: unknown[] = [];
+      request.onsuccess = () => { value = Array.isArray(request.result) ? request.result : []; };
+      request.onerror = () => reject(request.error ?? new Error('Unable to list cached notes.'));
+      transaction.oncomplete = () => resolve(value);
+      transaction.onerror = () => reject(transaction.error ?? new Error('Unable to list cached notes.'));
+      transaction.onabort = () => reject(transaction.error ?? new Error('Unable to list cached notes.'));
+    });
+  }
+
+  private async pruneSnapshots(): Promise<void> {
+    const records = await this.readRecentRecords();
+    const ids = snapshotIdsToDelete(records);
+    if (ids.length === 0) return;
+    await this.write('recentNotes', (store) => {
+      let request: IDBRequest | null = null;
+      for (const id of ids) request = store.delete(id);
+      if (!request) throw new Error('No snapshot records selected for deletion.');
+      return request;
+    });
+  }
+
+  private async getRecentRecord(noteId: UUID): Promise<unknown | null> {
+    const database = await this.open();
+    if (!database) return null;
+    return new Promise((resolve, reject) => {
+      const transaction = database.transaction('recentNotes', 'readonly');
+      const request = transaction.objectStore('recentNotes').get(noteId);
+      let value: unknown = null;
+      request.onsuccess = () => { value = request.result ?? null; };
+      request.onerror = () => reject(request.error ?? new Error('Unable to read cached note.'));
+      transaction.oncomplete = () => resolve(value);
+      transaction.onerror = () => reject(transaction.error ?? new Error('Unable to read cached note.'));
+      transaction.onabort = () => reject(transaction.error ?? new Error('Unable to read cached note.'));
     });
   }
 
@@ -116,8 +223,23 @@ export class IndexedDbDraftStore implements DraftStore {
     await this.write('sync', (store) => store.put({ key: 'notesCursor', value: value ?? '' }));
   }
 
-  async putRecent(note: { id: UUID } & Record<string, unknown>): Promise<void> {
-    await this.write('recentNotes', (store) => store.put({ ...note, noteId: note.id }));
+  async putRecent(note: { id: UUID } & object): Promise<void> {
+    const record = { ...(note as Record<string, unknown>), noteId: note.id };
+    await this.write('recentNotes', (store) => store.put(record));
+  }
+
+  async getNoteSnapshot(noteId: UUID): Promise<Note | null> {
+    const value = await this.getRecentRecord(noteId);
+    if (!snapshotRecord(value) || value.deletedAt) return null;
+    return noteFromSnapshotRecord(value);
+  }
+
+  async putNoteSnapshot(note: Note): Promise<void> {
+    if (!isCompleteNoteSnapshot(note) || note.deletedAt) return;
+    const current = await this.getNoteSnapshot(note.id);
+    if (current && current.version >= note.version) return;
+    await this.putRecent(note);
+    await this.pruneSnapshots();
   }
 
   async deleteRecent(noteId: UUID): Promise<void> {
@@ -125,18 +247,12 @@ export class IndexedDbDraftStore implements DraftStore {
   }
 
   async listRecent(limit = 500): Promise<NoteSummary[]> {
-    const database = await this.open();
-    if (!database) return [];
-    return new Promise((resolve, reject) => {
-      const transaction = database.transaction('recentNotes', 'readonly');
-      const request = transaction.objectStore('recentNotes').getAll();
-      let value: NoteSummary[] = [];
-      request.onsuccess = () => { value = (request.result as NoteSummary[]).sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)).slice(0, limit); };
-      request.onerror = () => reject(request.error ?? new Error('Unable to list cached notes.'));
-      transaction.oncomplete = () => resolve(value);
-      transaction.onerror = () => reject(transaction.error ?? new Error('Unable to list cached notes.'));
-      transaction.onabort = () => reject(transaction.error ?? new Error('Unable to list cached notes.'));
-    });
+    const records = await this.readRecentRecords();
+    return records
+      .filter((record) => isRecord(record) && isString(record.id) && isString(record.title) && isString(record.updatedAt))
+      .map((record) => record as unknown as NoteSummary)
+      .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
+      .slice(0, limit);
   }
 
   async putSearchSelection(selection: SearchSelection): Promise<void> {
@@ -146,7 +262,7 @@ export class IndexedDbDraftStore implements DraftStore {
 
 export class MemoryDraftStore implements DraftStore {
   private readonly drafts = new Map<UUID, NoteDraft>();
-  private readonly recent = new Map<UUID, NoteSummary>();
+  private readonly recent = new Map<UUID, Record<string, unknown>>();
   private readonly selections: SearchSelection[] = [];
 
   async get(noteId: UUID): Promise<NoteDraft | null> {
@@ -161,8 +277,35 @@ export class MemoryDraftStore implements DraftStore {
     this.drafts.delete(noteId);
   }
 
+  async putRecent(note: { id: UUID } & object): Promise<void> {
+    this.recent.set(note.id, { ...(note as Record<string, unknown>), noteId: note.id });
+  }
+
+  async getNoteSnapshot(noteId: UUID): Promise<Note | null> {
+    const value = this.recent.get(noteId);
+    if (!snapshotRecord(value) || value.deletedAt) return null;
+    return noteFromSnapshotRecord(value);
+  }
+
+  async putNoteSnapshot(note: Note): Promise<void> {
+    if (!isCompleteNoteSnapshot(note) || note.deletedAt) return;
+    const current = await this.getNoteSnapshot(note.id);
+    if (current && current.version >= note.version) return;
+    this.recent.set(note.id, { ...note, noteId: note.id });
+    const ids = snapshotIdsToDelete([...this.recent.values()]);
+    for (const id of ids) this.recent.delete(id);
+  }
+
+  async deleteRecent(noteId: UUID): Promise<void> {
+    this.recent.delete(noteId);
+  }
+
   async listRecent(limit = 500): Promise<NoteSummary[]> {
-    return [...this.recent.values()].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)).slice(0, limit);
+    return [...this.recent.values()]
+      .filter((record) => isRecord(record) && isString(record.id) && isString(record.title) && isString(record.updatedAt))
+      .map((record) => record as unknown as NoteSummary)
+      .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
+      .slice(0, limit);
   }
 
   async putSearchSelection(selection: SearchSelection): Promise<void> {
