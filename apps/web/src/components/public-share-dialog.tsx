@@ -34,12 +34,13 @@ interface PublicShareDialogProps {
   note: Note;
   share: PublicShareMetadata | null;
   loading?: boolean;
+  error?: string | null;
   onOpenChange: (open: boolean) => void;
   onBeforeCreate: () => Promise<Note>;
   onRefresh: () => Promise<unknown> | unknown;
 }
 
-export function PublicShareDialog({ open, note, share, loading = false, onOpenChange, onBeforeCreate, onRefresh }: PublicShareDialogProps): JSX.Element {
+export function PublicShareDialog({ open, note, share, loading = false, error: loadError = null, onOpenChange, onBeforeCreate, onRefresh }: PublicShareDialogProps): JSX.Element {
   const { toast } = useToast();
   const [expiry, setExpiry] = useState<ExpiryChoice>('7');
   const [createdLink, setCreatedLink] = useState<string | null>(null);
@@ -148,7 +149,7 @@ export function PublicShareDialog({ open, note, share, loading = false, onOpenCh
         <DialogTitle>Public sharing</DialogTitle>
         <DialogDescription>Give someone read-only access to this note. Attachments and private workspace data are never included.</DialogDescription>
       </DialogHeader>
-      {loading ? <div className="q-empty">Checking the current link…</div> : visibleShare || link ? <>
+      {loading ? <div className="q-empty" role="status">Checking the current link…</div> : loadError ? <div className="q-error" role="alert"><p>Unable to check the current public link.</p><p>{loadError}</p><Button type="button" variant="outline" onClick={() => void onRefresh()} disabled={busy}>Retry</Button></div> : visibleShare || link ? <>
         {link ? <div className="q-public-share-created">
           <div className="q-public-share-status"><Check size={18} aria-hidden="true" /><strong>Public link created</strong></div>
           <p className="q-small">Copy this link now. For safety, the secret is not retained after you close this dialog.</p>

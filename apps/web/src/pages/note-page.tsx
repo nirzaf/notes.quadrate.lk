@@ -26,7 +26,7 @@ import { shouldSkipAcknowledgedRealtimeEvent } from '../realtime-policy';
 import { formatUpdatedAt } from '../lib/utils';
 import { consumeEditorFocus, requestEditorFocus } from '../lib/editor-focus';
 import { captureFullPageScreenshot, screenshotFile, waitForScreenshotLayout } from '../lib/screenshot';
-import { noteQueryKeys, refreshNoteCollections, refreshNoteViews, type WorkspaceQueryKeys } from '../note-query-keys';
+import { NOTE_DETAIL_STALE_TIME, noteQueryKeys, refreshNoteCollections, refreshNoteViews, type WorkspaceQueryKeys } from '../note-query-keys';
 import { withoutSearchMatch, type AppSearchParams } from '../navigation-context';
 
 const NoteEditor = lazy(() => import('../components/note-editor').then(({ NoteEditor: component }) => ({ default: component })));
@@ -97,6 +97,7 @@ export function NotePage(): JSX.Element {
     queryKey: queryKeys.note(noteId),
     queryFn: ({ signal }) => api.getNote(noteId, { includeDeleted: true, signal }),
     enabled: Boolean(session && noteId),
+    staleTime: NOTE_DETAIL_STALE_TIME,
   });
 
   if (noteQuery.isPending) return <NoteUnavailable />;
@@ -127,7 +128,7 @@ function LoadedNoteSession({ note, userId, search, queryKeys }: LoadedNoteSessio
   const notesQuery = useQuery({ queryKey: queryKeys.sidebar, queryFn: ({ signal }) => api.listNotes({ limit: 50, signal }) });
   const notebooksQuery = useQuery({ queryKey: queryKeys.notebooks, queryFn: ({ signal }) => api.listNotebooks({ signal }) });
   const attachmentsQuery = useQuery({ queryKey: queryKeys.attachments(note.id), queryFn: ({ signal }) => api.listAttachments(note.id, { signal }) });
-  const shareQuery = useQuery({ queryKey: queryKeys.share(note.id), queryFn: ({ signal }) => api.getPublicShare(note.id, { signal }), enabled: !note.deletedAt });
+  const shareQuery = useQuery({ queryKey: queryKeys.share(note.id), queryFn: ({ signal }) => api.getPublicShare(note.id, { signal }), enabled: shareOpen && !note.deletedAt });
   const searchContextQuery = useQuery({ queryKey: search.documentId ? queryKeys.searchContext(search.documentId) : ['qnotes', userId, 'search-context', 'none'], queryFn: ({ signal }) => api.readNoteContext(search.documentId!, { before: 1, after: 1, maxTokens: 1800, signal }), enabled: Boolean(search.documentId), staleTime: 30_000 });
   const onSaved = useCallback((saved: Note) => {
     queryClient.setQueryData(queryKeys.note(saved.id), saved);
@@ -405,6 +406,6 @@ function LoadedNoteSession({ note, userId, search, queryKeys }: LoadedNoteSessio
     <ConflictResolver open={Boolean(conflict && conflictOpen)} busy={resolvingRemote} baseMarkdown={conflict?.baseMarkdown ?? note.contentMarkdown} localMarkdown={autosave.value} remoteNote={conflict?.remote ?? null} metadataConflicts={conflict?.metadataConflicts ?? []} remoteDeleted={conflict?.remoteDeleted ?? false} error={conflict?.error} onUseMine={saveMine} onUseRemote={saveRemote} onSaveMerged={saveMerged} onSaveAsNew={() => void saveAsNew()} onCancel={() => setConflictOpen(false)} />
     <Dialog open={blocker.status === 'blocked'} onOpenChange={(open) => { if (!open) blocker.reset?.(); }}><DialogContent><DialogHeader><DialogTitle>Save is still pending</DialogTitle><DialogDescription>The server did not confirm the latest edit. Your local draft remains available. Retry, stay here, or leave only after the draft is durably stored on this account.</DialogDescription></DialogHeader><div className="q-dialog-actions"><Button variant="outline" onClick={() => blocker.reset?.()}>Stay and edit</Button><Button variant="secondary" onClick={() => { blocker.reset?.(); autosave.retry(); }}>Retry save</Button><Button onClick={() => void leaveWithDraft()}>Leave with draft</Button></div></DialogContent></Dialog>
     <Dialog open={deleteBlocked} onOpenChange={setDeleteBlocked}><DialogContent><DialogHeader><DialogTitle>Save is blocked</DialogTitle><DialogDescription>Your local draft is retained, but the server rejected or could not receive the latest changes. Keep editing and retry, or move the current server version to Trash while keeping this draft for recovery.</DialogDescription></DialogHeader><div className="q-dialog-actions"><Button variant="outline" onClick={() => setDeleteBlocked(false)}>Keep note</Button><Button variant="danger" onClick={() => void updateDeletion('delete', true)}>Delete anyway</Button></div></DialogContent></Dialog>
-    <PublicShareDialog open={shareOpen} note={noteForCopy} share={shareQuery.data ?? null} loading={shareQuery.isPending} onOpenChange={setShareOpen} onBeforeCreate={flushBeforeShare} onRefresh={() => shareQuery.refetch()} />
+    <PublicShareDialog open={shareOpen} note={noteForCopy} share={shareQuery.data ?? null} loading={shareQuery.isPending || shareQuery.isFetching} error={shareQuery.error instanceof Error ? shareQuery.error.message : shareQuery.error ? 'Unable to check the current public link.' : null} onOpenChange={setShareOpen} onBeforeCreate={flushBeforeShare} onRefresh={() => shareQuery.refetch()} />
   </AppShell>;
 }

@@ -16,6 +16,8 @@ export interface WorkspaceQueryKeys {
   searchContext: (documentId: string) => readonly ['qnotes', string, 'search-context', string];
 }
 
+export const NOTE_DETAIL_STALE_TIME = 30_000;
+
 interface QueryForInvalidation {
   queryKey: readonly unknown[];
   state: { data: unknown };
