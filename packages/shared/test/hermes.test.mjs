@@ -5,7 +5,7 @@ import { buildHermesMcpConfig } from '../dist/hermes.js';
 const READ_TOOLS = ['search_notes', 'read_note_context', 'get_block', 'list_notebooks', 'resolve_public_share'];
 const SHARE_TOOLS = ['create_public_share'];
 const WRITE_TOOLS = ['capture_note', 'append_note', 'update_note', 'delete_note', 'restore_note', 'move_note_to_notebook'];
-const serverPath = '/opt/quadrate-notes/packages/mcp-server/dist/index.js';
+const serverPath = '/opt/qnotes/packages/mcp-server/dist/index.js';
 const deviceId = '11111111-1111-4111-8111-111111111111';
 
 function generatedConfig(profile) {
@@ -13,7 +13,7 @@ function generatedConfig(profile) {
     profile,
     serverPath,
     ...(profile === 'write' ? { deviceId } : {}),
-  })).mcp_servers[`quadrate_notes_${profile}`];
+  })).mcp_servers[`qnotes_${profile}`];
 }
 
 function generatedConfigWithVault(profile, vaultProfile) {
@@ -22,7 +22,7 @@ function generatedConfigWithVault(profile, vaultProfile) {
     serverPath,
     vaultProfile,
     ...(profile === 'write' ? { deviceId } : {}),
-  })).mcp_servers[`quadrate_notes_${profile}`];
+  })).mcp_servers[`qnotes_${profile}`];
 }
 
 test('read, share, and write profiles use the hardened Hermes runtime policy', () => {
@@ -56,7 +56,7 @@ test('write profile omits public sharing by default and includes it only with ex
   assert.equal(defaultConfig.tools.include.includes('create_public_share'), false);
   assert.equal('QNOTES_MCP_ENABLE_PUBLIC_SHARE' in defaultConfig.env, false);
 
-  const optInConfig = JSON.parse(buildHermesMcpConfig({ profile: 'write', serverPath, deviceId, includePublicShare: true })).mcp_servers.quadrate_notes_write;
+  const optInConfig = JSON.parse(buildHermesMcpConfig({ profile: 'write', serverPath, deviceId, includePublicShare: true })).mcp_servers.qnotes_write;
   assert.equal(optInConfig.env.QNOTES_MCP_ENABLE_PUBLIC_SHARE, 'true');
   assert.deepEqual(optInConfig.tools.include, [...READ_TOOLS, ...SHARE_TOOLS, ...WRITE_TOOLS]);
 });

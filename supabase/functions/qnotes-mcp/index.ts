@@ -368,7 +368,7 @@ async function handleAuthorize(request: Request): Promise<Response> {
   if (!client || !(await clientAllowsRedirect(client, redirectUri))) return oauthError(request, 'invalid_request', 'The OAuth authorization request is invalid.');
   if (form.get('decision') !== 'approve') return authorizationRedirect(request, redirectUri, { error: 'access_denied', state, iss: mcpBaseUrl(request) });
   const qnotesToken = String(form.get('qnotes_token') ?? '');
-  if (!isPersonalToken(qnotesToken)) return oauthError(request, 'access_denied', 'A valid Quadrate Notes personal token is required.');
+  if (!isPersonalToken(qnotesToken)) return oauthError(request, 'access_denied', 'A valid QNotes personal token is required.');
   const codeChallenge = String(form.get('code_challenge') ?? '');
   if (!state || state.length > 4096 || !codeChallenge || form.get('code_challenge_method') !== 'S256' || codeChallenge.length > 256) return oauthError(request, 'invalid_request', 'PKCE S256 and state are required.');
   const resource = mcpBaseUrl(request);
@@ -455,7 +455,7 @@ async function handle(request: Request): Promise<Response> {
   const token = await resolveBearerToken(request);
   if (!token) {
     return json(request, { error: 'Bearer authentication is required.' }, 401, {
-      'WWW-Authenticate': `Bearer realm="quadrate-notes-mcp", resource_metadata="${mcpBaseUrl(request)}/.well-known/oauth-protected-resource", scope="${OAUTH_SCOPE}"`,
+      'WWW-Authenticate': `Bearer realm="qnotes-mcp", resource_metadata="${mcpBaseUrl(request)}/.well-known/oauth-protected-resource", scope="${OAUTH_SCOPE}"`,
     });
   }
 

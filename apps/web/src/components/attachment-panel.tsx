@@ -259,7 +259,7 @@ export function AttachmentPanel({ noteId, attachments, onRefresh, onCaptureFullP
                 <DropdownMenuTrigger asChild><Button type="button" variant="outline" disabled={busy}><Camera size={16} aria-hidden="true" />Screenshot</Button></DropdownMenuTrigger>
                 <DropdownMenuContent align="start">
                   <DropdownMenuItem className="q-screenshot-menu-item" disabled={!displayCaptureSupported} onSelect={() => { void startScreenshot('visible'); }}><Camera size={16} aria-hidden="true" /><span><strong>Visible Area</strong><small>Capture the screen or window you choose.</small></span></DropdownMenuItem>
-                  <DropdownMenuItem className="q-screenshot-menu-item" onSelect={() => { void startScreenshot('full-page'); }}><Maximize2 size={16} aria-hidden="true" /><span><strong>Entire Page</strong><small>Capture the current Quadrate Notes page.</small></span></DropdownMenuItem>
+                  <DropdownMenuItem className="q-screenshot-menu-item" onSelect={() => { void startScreenshot('full-page'); }}><Maximize2 size={16} aria-hidden="true" /><span><strong>Entire Page</strong><small>Capture the current QNotes page.</small></span></DropdownMenuItem>
                   <DropdownMenuItem className="q-screenshot-menu-item" disabled={!displayCaptureSupported} onSelect={() => { void startScreenshot('crop'); }}><Crop size={16} aria-hidden="true" /><span><strong>Cropped Zone</strong><small>Capture a screen area, then choose the crop.</small></span></DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>

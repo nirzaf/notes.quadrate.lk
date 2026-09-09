@@ -24,7 +24,7 @@ function usage(message?: string): never {
 }
 
 function help(): string {
-  return `qnotes — Markdown notes over the Quadrate API
+  return `qnotes — Markdown notes over the QNotes API
 
 Commands:
   qnotes search "query" [--semantic|--hybrid] [--limit <n>] [--cursor <cursor>] [--json]

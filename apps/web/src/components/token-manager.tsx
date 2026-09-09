@@ -34,7 +34,7 @@ const expiryChoices: Array<{ value: ExpiryChoice; label: string; days?: number }
   { value: '1y', label: '1 year', days: 365 },
   { value: 'never', label: 'Does not expire' },
 ];
-const mcpServerPath = '/absolute/local/path/to/notes.quadrate.lk/packages/mcp-server/dist/index.js';
+const mcpServerPath = '/absolute/local/path/to/qnotes/packages/mcp-server/dist/index.js';
 const vaultProfileChoices: Array<{ value: HermesVaultMcpProfile; label: string; description: string }> = [
   { value: 'none', label: 'No Vault', description: 'Generate Notes tools only.' },
   { value: 'metadata', label: 'Vault metadata', description: 'List the Vault metadata allowed by QVAULT_TOKEN without revealing values.' },
@@ -176,7 +176,7 @@ export function TokenManager(): JSX.Element {
   return <div className="q-panel-stack">
     <section className="q-card q-card-pad q-panel q-integration-setup">
       <p className="q-eyebrow">Hermes integration</p>
-      <h3>Connect Hermes to Quadrate Notes</h3>
+      <h3>Connect Hermes to QNotes</h3>
       <p>Start with a read-only connection. Use the share profile when Hermes should create guarded 24-hour public links, or the writing profile when it should change notes. Token scopes are enforced by the API, and attachment writing is never included by default.</p>
       <form className="q-panel-stack" onSubmit={create}>
         <label className="q-field"><span className="q-label">Token name</span><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Hermes read-only" maxLength={80} /></label>
@@ -222,6 +222,6 @@ export function TokenManager(): JSX.Element {
       </div>}
     </section>
     <section className="q-card q-card-pad q-panel"><h3>Existing tokens</h3><div className="q-token-list">{tokens.length ? tokens.map((token) => <div className="q-token-row" key={token.id}><div><div className="q-token-name">{token.name}</div><div className="q-small">{token.tokenPrefix} · {token.scopes.join(', ')} · {expiryLabel(token.expiresAt)}{token.revokedAt ? ' · revoked' : ''}</div></div>{!token.revokedAt && <Button variant="ghost" size="sm" onClick={() => void revoke(token.id)}>Revoke</Button>}</div>) : <p>No personal tokens yet.</p>}</div></section>
-    <section className="q-card q-card-pad q-panel"><h3>Finish setup in Hermes</h3><p>Build this repository’s MCP server, put the selected Notes token in Hermes’ environment-backed secret file, paste the generated entry into <code>~/.hermes/config.yaml</code>, then run <code>hermes mcp test quadrate_notes_&lt;profile&gt;</code>. The test result is the Hermes verification; an API check in this browser is only token/API verification.</p><p>If you selected a Vault profile, create a separate qvt Vault agent token in Agent Vault and provide it as <code>QVAULT_TOKEN</code> in the same Hermes secret environment. The generated configuration supplies only the placeholder and profile name; it never contains the raw Vault token. A share token must retain <code>shares:write</code> and is used as the caller-owned credential for share management. For a writing token, retain the generated <code>QNOTES_MCP_DEVICE_ID</code> value across process restarts. Pass the same <code>mutationId</code> when retrying an ambiguous capture, append, or update. Omitting it remains supported, but each call is treated as a new operation.</p></section>
+    <section className="q-card q-card-pad q-panel"><h3>Finish setup in Hermes</h3><p>Build this repository’s MCP server, put the selected Notes token in Hermes’ environment-backed secret file, paste the generated entry into <code>~/.hermes/config.yaml</code>, then run <code>hermes mcp test qnotes_&lt;profile&gt;</code>. The test result is the Hermes verification; an API check in this browser is only token/API verification.</p><p>If you selected a Vault profile, create a separate qvt Vault agent token in Agent Vault and provide it as <code>QVAULT_TOKEN</code> in the same Hermes secret environment. The generated configuration supplies only the placeholder and profile name; it never contains the raw Vault token. A share token must retain <code>shares:write</code> and is used as the caller-owned credential for share management. For a writing token, retain the generated <code>QNOTES_MCP_DEVICE_ID</code> value across process restarts. Pass the same <code>mutationId</code> when retrying an ambiguous capture, append, or update. Omitting it remains supported, but each call is treated as a new operation.</p></section>
   </div>;
 }

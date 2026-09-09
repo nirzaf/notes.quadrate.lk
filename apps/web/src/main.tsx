@@ -7,7 +7,7 @@ const queryClient = new QueryClient({ defaultOptions: { queries: { staleTime: 15
 
 function showFatal(error: unknown): void {
   if (!rootElement) return;
-  rootElement.innerHTML = `<main class="q-auth-page"><section class="q-card q-auth-card"><p class="q-eyebrow">Configuration required</p><h1 class="q-display" style="font-size:3rem">Quadrate Notes cannot start.</h1><p class="q-subtitle">${error instanceof Error ? error.message : 'The web environment is incomplete.'}</p></section></main>`;
+  rootElement.innerHTML = `<main class="q-auth-page"><section class="q-card q-auth-card"><p class="q-eyebrow">Configuration required</p><h1 class="q-display" style="font-size:3rem">QNotes cannot start.</h1><p class="q-subtitle">${error instanceof Error ? error.message : 'The web environment is incomplete.'}</p></section></main>`;
 }
 
 async function boot(): Promise<void> {

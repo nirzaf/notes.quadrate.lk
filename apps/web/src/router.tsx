@@ -12,7 +12,7 @@ import { VaultPage } from './pages/vault-page';
 import { currentAppPath, safeInternalPath, validateAppSearch } from './navigation-context';
 
 function RecoveryState({ title, message, onRetry }: { title: string; message: string; onRetry?: () => void }): JSX.Element {
-  return <main className="q-auth-page"><section className="q-card q-auth-card" role="alert"><p className="q-eyebrow">Quadrate Notes</p><h1 className="q-display" style={{ fontSize: '2.8rem' }}>{title}</h1><p className="q-subtitle">{message}</p><div className="q-dialog-actions">{onRetry && <button className="q-button q-button-primary" type="button" onClick={onRetry}>Try again</button>}<Link className="q-button q-button-outline" to="/">Go to Notes</Link></div></section></main>;
+  return <main className="q-auth-page"><section className="q-card q-auth-card" role="alert"><p className="q-eyebrow">QNotes</p><h1 className="q-display" style={{ fontSize: '2.8rem' }}>{title}</h1><p className="q-subtitle">{message}</p><div className="q-dialog-actions">{onRetry && <button className="q-button q-button-primary" type="button" onClick={onRetry}>Try again</button>}<Link className="q-button q-button-outline" to="/">Go to Notes</Link></div></section></main>;
 }
 
 function routeErrorComponent({ reset }: { reset: () => void }): JSX.Element {

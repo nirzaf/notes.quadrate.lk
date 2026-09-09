@@ -243,7 +243,7 @@ export function VaultPage(): JSX.Element {
     revealAttempt.current = attempt;
     setRevealedSecret(null);
     try {
-      const result = await vaultApi.revealSecret({ project: selectedProject.slug, environment: selectedEnvironment.slug, name: secret.name, purpose: 'Manual reveal in the Quadrate Vault administration UI' });
+      const result = await vaultApi.revealSecret({ project: selectedProject.slug, environment: selectedEnvironment.slug, name: secret.name, purpose: 'Manual reveal in the QNotes Vault administration UI' });
       if (attempt !== revealAttempt.current) return;
       setRevealedSecret({ environmentId: selectedEnvironment.id, id: secret.id, value: result.value });
     } catch (error: unknown) {
@@ -310,8 +310,8 @@ export function VaultPage(): JSX.Element {
     finally { setBusy(false); }
   };
 
-  const copyIssuedToken = async () => { if (issuedToken) { await navigator.clipboard?.writeText(issuedToken); toast('Token copied. It will not be read back by Quadrate.', 'success'); } };
-  const copyRevealedSecret = async () => { if (revealedSecret) { await navigator.clipboard?.writeText(revealedSecret.value); toast('Secret copied. Quadrate does not read the clipboard.', 'success'); } };
+  const copyIssuedToken = async () => { if (issuedToken) { await navigator.clipboard?.writeText(issuedToken); toast('Token copied. It will not be read back by QNotes.', 'success'); } };
+  const copyRevealedSecret = async () => { if (revealedSecret) { await navigator.clipboard?.writeText(revealedSecret.value); toast('Secret copied. QNotes does not read the clipboard.', 'success'); } };
 
   const content = section === 'agents' ? <AgentsPanel projectsQuery={projectsQuery} selectedProject={selectedProject} onProjectSelect={selectProject} environmentsQuery={environmentsQuery} selectedEnvironment={selectedEnvironment} onEnvironmentSelect={selectEnvironment} secretsQuery={secretsQuery} tokenSecretId={tokenSecretId} setTokenSecretId={setTokenSecretId} tokenName={tokenName} setTokenName={setTokenName} tokenScope={tokenScope} setTokenScope={setTokenScope} tokenAction={tokenAction} setTokenAction={setTokenAction} tokenExpiry={tokenExpiry} setTokenExpiry={setTokenExpiry} draftGrants={draftGrants} editingTokenId={editingTokenId} editingGrants={editingGrants} onAddGrant={addGrant} onRemoveDraftGrant={(index) => setDraftGrants((items) => items.filter((_, itemIndex) => itemIndex !== index))} onRemoveEditingGrant={(index) => setEditingGrants((items) => items.filter((_, itemIndex) => itemIndex !== index))} onSubmit={createAgentToken} onBeginEdit={beginEditingToken} onCancelEdit={() => { setEditingTokenId(null); setEditingGrants([]); }} onReplace={replaceAgentGrants} busy={busy} tokensQuery={tokensQuery} issuedToken={issuedToken} closeIssuedToken={() => setIssuedToken(null)} copyIssuedToken={() => void copyIssuedToken()} onRevoke={async (id) => { await vaultApi.revokeAgentToken(id); await tokensQuery.refetch(); toast('Vault agent token revoked.', 'success'); }} />
     : section === 'audit' ? <AuditPanel query={auditQuery} />

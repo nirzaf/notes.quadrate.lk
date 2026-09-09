@@ -44,7 +44,7 @@ export function registerNotesResources(server: McpServer, client: ResourceQNotes
   const requestCursors = new Map<RequestId, string | undefined>();
   const responseCursors = new Map<RequestId, string | undefined>();
 
-  server.registerResource('notebooks', 'qnotes://notebooks', { title: 'Quadrate Notes notebooks', mimeType: 'application/json' }, async (uri: URL) => ({
+  server.registerResource('notebooks', 'qnotes://notebooks', { title: 'QNotes notebooks', mimeType: 'application/json' }, async (uri: URL) => ({
     contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(await client.listNotebooks()) }],
   }));
 
@@ -58,7 +58,7 @@ export function registerNotesResources(server: McpServer, client: ResourceQNotes
       ...(nextCursor === undefined ? {} : { nextCursor }),
     };
   } }), {
-    title: 'Recent Quadrate Notes',
+    title: 'Recent QNotes',
     description: 'A recent, partial list of note summaries. Read qnotes://notes/{noteId} for the full note.',
     mimeType: 'application/json',
   }, async (uri: URL, variables: Record<string, string | string[]>) => {
@@ -68,14 +68,14 @@ export function registerNotesResources(server: McpServer, client: ResourceQNotes
     return { contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(note) }] };
   });
 
-  server.registerResource('note-document', new ResourceTemplate('qnotes://notes/{noteId}/documents/{documentId}', { list: undefined }), { title: 'Quadrate Note document context', mimeType: 'application/json' }, async (uri: URL, variables: Record<string, string | string[]>) => {
+  server.registerResource('note-document', new ResourceTemplate('qnotes://notes/{noteId}/documents/{documentId}', { list: undefined }), { title: 'QNotes note document context', mimeType: 'application/json' }, async (uri: URL, variables: Record<string, string | string[]>) => {
     const noteId = String(variables.noteId);
     const context = await client.readNoteContext(String(variables.documentId));
     if (context.noteId !== noteId) throw new Error('Document context note ID does not match the requested URI.');
     return { contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(context) }] };
   });
 
-  server.registerResource('note-block', new ResourceTemplate('qnotes://notes/{noteId}/blocks/{blockKey}', { list: undefined }), { title: 'Quadrate Note block', mimeType: 'application/json' }, async (uri: URL, variables: Record<string, string | string[]>) => {
+  server.registerResource('note-block', new ResourceTemplate('qnotes://notes/{noteId}/blocks/{blockKey}', { list: undefined }), { title: 'QNotes note block', mimeType: 'application/json' }, async (uri: URL, variables: Record<string, string | string[]>) => {
     const noteId = String(variables.noteId);
     const block = await client.getBlock(noteId, String(variables.blockKey));
     if (block.noteId !== noteId) throw new Error('Block note ID does not match the requested URI.');

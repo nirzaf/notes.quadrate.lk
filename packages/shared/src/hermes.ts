@@ -26,7 +26,7 @@ const VAULT_WRITE_TOOLS = ['vault_create_secret', 'vault_rotate_secret', 'vault_
 export function buildHermesMcpConfig({ profile, serverPath, deviceId, includePublicShare = false, vaultProfile = 'none' }: HermesMcpConfigInput): string {
   if (!serverPath.trim()) throw new Error('serverPath is required.');
   if (profile === 'write' && (!deviceId || !isUUID(deviceId))) throw new Error('A stable UUID deviceId is required for the write profile.');
-  const serverName = profile === 'write' ? 'quadrate_notes_write' : profile === 'share' ? 'quadrate_notes_share' : 'quadrate_notes_read';
+  const serverName = profile === 'write' ? 'qnotes_write' : profile === 'share' ? 'qnotes_share' : 'qnotes_read';
   const notesTools = profile === 'write'
     ? [...READ_TOOLS, ...(includePublicShare ? SHARE_TOOLS : []), ...WRITE_TOOLS]
     : profile === 'share' ? [...READ_TOOLS, ...SHARE_TOOLS] : READ_TOOLS;
