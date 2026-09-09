@@ -563,6 +563,8 @@ a { color: inherit; text-decoration: none; }
 .q-vault-tabs a:hover, .q-vault-tabs a[data-active="true"] { color: var(--teal-deep); background: var(--mint); }
 .q-vault-grid { display: grid; grid-template-columns: minmax(220px, 0.72fr) minmax(0, 1.5fr); gap: 18px; }
 .q-vault-stack { display: grid; gap: 18px; }
+.q-vault-state { margin: 14px 0 0; }
+.q-vault-state.q-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .q-vault-list, .q-vault-token-list, .q-vault-audit-list, .q-vault-secret-list { display: grid; gap: 8px; }
 .q-vault-list button, .q-vault-environments > button { display: grid; gap: 2px; border: 1px solid transparent; border-radius: 10px; padding: 10px 12px; color: var(--ink); background: transparent; cursor: pointer; text-align: left; }
 .q-vault-list button:hover, .q-vault-list button[data-active="true"], .q-vault-environments > button:hover, .q-vault-environments > button[data-active="true"] { border-color: #b9d7d1; background: var(--mint); }
