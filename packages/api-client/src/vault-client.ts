@@ -40,53 +40,63 @@ function isNullableUuid(value: unknown): value is string | null {
   return value === null || (isString(value) && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value));
 }
 
+function hasOnlyAllowedKeys(value: Record<string, unknown>, keys: string[]): boolean {
+  return Object.keys(value).every((key) => keys.includes(key));
+}
+
+function hasExactKeys(value: Record<string, unknown>, keys: string[]): boolean {
+  return Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+}
+
 function isProject(value: unknown): value is VaultProject {
-  return isRecord(value) && isString(value.id) && isString(value.slug) && isString(value.name) && isNullableString(value.description)
+  return isRecord(value) && hasExactKeys(value, ['id', 'slug', 'name', 'description', 'createdAt', 'updatedAt', 'archivedAt'])
+    && isString(value.id) && isString(value.slug) && isString(value.name) && isNullableString(value.description)
     && isString(value.createdAt) && isString(value.updatedAt) && isNullableString(value.archivedAt);
 }
 
 function isEnvironment(value: unknown): value is VaultEnvironment {
-  return isRecord(value) && isString(value.id) && isString(value.projectId) && isString(value.slug) && isString(value.name)
+  return isRecord(value) && hasExactKeys(value, ['id', 'projectId', 'slug', 'name', 'description', 'createdAt', 'updatedAt', 'archivedAt'])
+    && isString(value.id) && isString(value.projectId) && isString(value.slug) && isString(value.name)
     && isNullableString(value.description) && isString(value.createdAt) && isString(value.updatedAt) && isNullableString(value.archivedAt);
 }
 
 function isSecretMetadata(value: unknown): value is VaultSecretMetadata {
-  return isRecord(value) && isString(value.id) && isString(value.projectId) && isString(value.environmentId) && isString(value.name)
+  return isRecord(value) && hasExactKeys(value, ['id', 'projectId', 'environmentId', 'name', 'description', 'version', 'createdAt', 'updatedAt', 'rotatedAt', 'deletedAt'])
+    && isString(value.id) && isString(value.projectId) && isString(value.environmentId) && isString(value.name)
     && isNullableString(value.description) && isInteger(value.version) && value.version > 0 && isString(value.createdAt)
-    && isString(value.updatedAt) && isNullableString(value.rotatedAt) && isNullableString(value.deletedAt) && !Object.hasOwn(value, 'value');
+    && isString(value.updatedAt) && isNullableString(value.rotatedAt) && isNullableString(value.deletedAt);
 }
 
 function isAgentTokenMetadata(value: unknown): value is VaultAgentTokenMetadata {
-  return isRecord(value) && isString(value.id) && isString(value.name) && /^qvt_[A-Za-z0-9_-]{8}$/.test(String(value.tokenPrefix))
+  return isRecord(value) && hasExactKeys(value, ['id', 'name', 'tokenPrefix', 'expiresAt', 'lastUsedAt', 'revokedAt', 'createdAt', 'grants'])
+    && isString(value.id) && isString(value.name) && isString(value.tokenPrefix) && /^qvt_[A-Za-z0-9_-]{8}$/.test(value.tokenPrefix)
     && isNullableString(value.expiresAt) && isNullableString(value.lastUsedAt) && isNullableString(value.revokedAt) && isString(value.createdAt)
-    && Array.isArray(value.grants) && value.grants.every(isGrant)
-    && Object.keys(value).every((key) => ['id', 'name', 'tokenPrefix', 'expiresAt', 'lastUsedAt', 'revokedAt', 'createdAt', 'grants'].includes(key));
+    && Array.isArray(value.grants) && value.grants.every(isGrant);
 }
 
 function isGrant(value: unknown): value is VaultAgentGrant {
-  return isRecord(value) && isString(value.projectId) && isNullableString(value.environmentId) && isNullableString(value.secretId)
+  return isRecord(value) && hasOnlyAllowedKeys(value, ['id', 'projectId', 'projectName', 'environmentId', 'environmentName', 'secretId', 'secretName', 'action', 'createdAt'])
+    && isString(value.projectId) && isNullableString(value.environmentId) && isNullableString(value.secretId)
     && ['metadata:read', 'secret:reveal', 'secret:write', 'secret:delete'].includes(String(value.action))
     && (value.id === undefined || isString(value.id)) && (value.createdAt === undefined || isString(value.createdAt))
     && (value.projectName === undefined || isString(value.projectName))
     && (value.environmentName === undefined || isString(value.environmentName))
-    && (value.secretName === undefined || isString(value.secretName))
-    && !Object.hasOwn(value, 'value')
-    && Object.keys(value).every((key) => ['id', 'projectId', 'projectName', 'environmentId', 'environmentName', 'secretId', 'secretName', 'action', 'createdAt'].includes(key));
+    && (value.secretName === undefined || isString(value.secretName));
 }
 
 function isAuditEvent(value: unknown): value is VaultAuditEvent {
-  return isRecord(value) && isString(value.id) && ['user_jwt', 'vault_agent'].includes(String(value.actorKind))
+  return isRecord(value) && hasExactKeys(value, ['id', 'actorKind', 'actorTokenId', 'actorTokenName', 'actorTokenPrefix', 'action', 'projectId', 'environmentId', 'secretId', 'purpose', 'success', 'resultCode', 'requestId', 'occurredAt'])
+    && isString(value.id) && ['user_jwt', 'vault_agent'].includes(String(value.actorKind))
     && isNullableUuid(value.actorTokenId) && isNullableString(value.actorTokenName)
     && (value.actorTokenPrefix === null || (isString(value.actorTokenPrefix) && /^qvt_[A-Za-z0-9_-]{8}$/.test(value.actorTokenPrefix)))
     && ['metadata:read', 'secret:reveal', 'secret:write', 'secret:delete'].includes(String(value.action))
     && isNullableString(value.projectId) && isNullableString(value.environmentId) && isNullableString(value.secretId)
     && isNullableString(value.purpose) && typeof value.success === 'boolean' && isNullableString(value.resultCode)
-    && isNullableString(value.requestId) && isString(value.occurredAt) && !Object.hasOwn(value, 'value')
-    && Object.keys(value).every((key) => ['id', 'actorKind', 'actorTokenId', 'actorTokenName', 'actorTokenPrefix', 'action', 'projectId', 'environmentId', 'secretId', 'purpose', 'success', 'resultCode', 'requestId', 'occurredAt'].includes(key));
+    && isNullableString(value.requestId) && isString(value.occurredAt);
 }
 
 function listPayload<T>(value: unknown, validator: (item: unknown) => item is T, resource: string): T[] {
-  const items = Array.isArray(value) ? value : isRecord(value) && Array.isArray(value.items) ? value.items : null;
+  const items = Array.isArray(value) ? value : isRecord(value) && hasExactKeys(value, ['items']) && Array.isArray(value.items) ? value.items : null;
   if (!items || !items.every(validator)) throw new QVaultProtocolError(resource);
   return items;
 }
@@ -97,17 +107,18 @@ function metadataPayload<T>(value: unknown, validator: (item: unknown) => item i
 }
 
 function revealPayload(value: unknown): value is RevealVaultSecretResult {
-  return isRecord(value) && isString(value.secretId) && isString(value.project) && isString(value.environment) && isString(value.name)
-    && isString(value.value) && isInteger(value.version) && value.version > 0 && isString(value.updatedAt)
-    && Object.keys(value).every((key) => ['secretId', 'project', 'environment', 'name', 'value', 'version', 'updatedAt'].includes(key));
+  return isRecord(value) && hasExactKeys(value, ['secretId', 'project', 'environment', 'name', 'value', 'version', 'updatedAt'])
+    && isString(value.secretId) && isString(value.project) && isString(value.environment) && isString(value.name)
+    && isString(value.value) && isInteger(value.version) && value.version > 0 && isString(value.updatedAt);
 }
 
 function revealBatchPayload(value: unknown): value is RevealVaultSecretsResult {
-  return isRecord(value) && Array.isArray(value.items) && value.items.every(revealPayload);
+  return isRecord(value) && hasExactKeys(value, ['items']) && Array.isArray(value.items) && value.items.every(revealPayload);
 }
 
 function tokenResult(value: unknown): value is CreateVaultAgentTokenResult {
-  return isRecord(value) && isString(value.token) && /^qvt_[A-Za-z0-9_-]{43}$/.test(value.token) && isAgentTokenMetadata(value.metadata)
+  return isRecord(value) && hasExactKeys(value, ['token', 'metadata', 'grants'])
+    && isString(value.token) && /^qvt_[A-Za-z0-9_-]{43}$/.test(value.token) && isAgentTokenMetadata(value.metadata)
     && Array.isArray(value.grants) && value.grants.every(isGrant);
 }
 

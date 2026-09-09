@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { QVaultClient, QVaultProtocolError } from '../dist/index.js';
 
 const project = { id: '550e8400-e29b-41d4-a716-446655440000', slug: 'pearl-blanc', name: 'Pearl Blanc', description: null, createdAt: '2026-01-01', updatedAt: '2026-01-01', archivedAt: null };
+const environment = { id: '660e8400-e29b-41d4-a716-446655440000', projectId: project.id, slug: 'production', name: 'Production', description: null, createdAt: '2026-01-01', updatedAt: '2026-01-01', archivedAt: null };
 const secret = { id: '770e8400-e29b-41d4-a716-446655440000', projectId: project.id, environmentId: '660e8400-e29b-41d4-a716-446655440000', name: 'CLOUDFLARE_API_TOKEN', description: null, version: 2, createdAt: '2026-01-01', updatedAt: '2026-01-02', rotatedAt: '2026-01-02', deletedAt: null };
+const tokenMetadata = { id: '990e8400-e29b-41d4-a716-446655440000', name: 'Deploy agent', tokenPrefix: 'qvt_12345678', expiresAt: null, lastUsedAt: null, revokedAt: null, createdAt: '2026-01-01', grants: [] };
 
 function jsonResponse(data, status = 200, headers = {}) {
   return new Response(JSON.stringify({ data }), { status, headers: { 'content-type': 'application/json', ...headers } });
@@ -67,6 +69,64 @@ test('QVaultClient validates metadata and reveal responses without caching plain
   assert.equal(calls[1].url, 'http://example.test/vault/secrets/reveal');
   assert.equal(JSON.parse(calls[1].init.body).name, secret.name);
   assert.equal(JSON.parse(calls[1].init.body).value, undefined);
+});
+
+test('QVaultClient accepts the current agent token creation response shape', async () => {
+  const token = `qvt_${'A'.repeat(43)}`;
+  const client = new QVaultClient({
+    baseUrl: 'http://example.test',
+    getAccessToken: () => 'jwt-test',
+    fetchImplementation: async () => jsonResponse({ token, metadata: tokenMetadata, grants: [] }),
+  });
+  assert.deepEqual(await client.createAgentToken({ name: tokenMetadata.name, expiresAt: null, grants: [{ projectId: project.id, environmentId: null, secretId: null, action: 'metadata:read' }] }), {
+    token,
+    metadata: tokenMetadata,
+    grants: [],
+  });
+});
+
+test('QVaultClient rejects unexpected and secret-bearing fields across Vault payloads', async () => {
+  const grant = { projectId: project.id, environmentId: null, secretId: null, action: 'metadata:read' };
+  const revealItem = { secretId: secret.id, project: project.slug, environment: environment.slug, name: secret.name, value: 'synthetic-reveal-value', version: secret.version, updatedAt: secret.updatedAt };
+  const auditEvent = {
+    id: '880e8400-e29b-41d4-a716-446655440000',
+    actorKind: 'user_jwt',
+    actorTokenId: null,
+    actorTokenName: null,
+    actorTokenPrefix: null,
+    action: 'metadata:read',
+    projectId: project.id,
+    environmentId: environment.id,
+    secretId: secret.id,
+    purpose: 'synthetic audit purpose',
+    success: true,
+    resultCode: null,
+    requestId: 'aa0e8400-e29b-41d4-a716-446655440000',
+    occurredAt: '2026-01-03T00:00:00.000Z',
+  };
+  const token = `qvt_${'B'.repeat(43)}`;
+  const cases = [
+    { resource: 'projects', response: { items: [{ ...project, ciphertext: 'synthetic-ciphertext' }] }, request: (client) => client.listProjects(), leaked: 'synthetic-ciphertext' },
+    { resource: 'project', response: { ...project, tokenHash: 'synthetic-token-hash' }, request: (client) => client.createProject({ name: project.name }), leaked: 'synthetic-token-hash' },
+    { resource: 'environments', response: [{ ...environment, token: 'synthetic-token' }], request: (client) => client.listEnvironments(project.id), leaked: 'synthetic-token' },
+    { resource: 'environment', response: { ...environment, value: 'synthetic-value' }, request: (client) => client.createEnvironment(project.id, { name: environment.name }), leaked: 'synthetic-value' },
+    { resource: 'secret metadata', response: { ...secret, ciphertext: 'synthetic-ciphertext' }, request: (client) => client.getSecret(secret.id), leaked: 'synthetic-ciphertext' },
+    { resource: 'agent tokens', response: { items: [{ ...tokenMetadata, tokenHash: 'synthetic-token-hash' }] }, request: (client) => client.listAgentTokens(), leaked: 'synthetic-token-hash' },
+    { resource: 'agent grants', response: { items: [grant], token_hash: 'synthetic-token-hash' }, request: (client) => client.replaceAgentGrants(tokenMetadata.id, []), leaked: 'synthetic-token-hash' },
+    { resource: 'audit events', response: [{ ...auditEvent, token_hash: 'synthetic-token-hash' }], request: (client) => client.listAudit(), leaked: 'synthetic-token-hash' },
+    { resource: 'reveal batch', response: { items: [revealItem], extra: 'synthetic-extra' }, request: (client) => client.revealSecrets({ secrets: [{ project: project.slug, environment: environment.slug, name: secret.name }], purpose: 'synthetic batch' }), leaked: 'synthetic-extra' },
+    { resource: 'agent token', response: { token, metadata: tokenMetadata, grants: [], tokenHash: 'synthetic-token-hash' }, request: (client) => client.createAgentToken({ name: tokenMetadata.name, expiresAt: null, grants: [grant] }), leaked: 'synthetic-token-hash' },
+  ];
+
+  for (const testCase of cases) {
+    const client = new QVaultClient({ baseUrl: 'http://example.test', getAccessToken: () => 'jwt-test', fetchImplementation: async () => jsonResponse(testCase.response) });
+    await assert.rejects(() => testCase.request(client), (error) => {
+      assert.ok(error instanceof QVaultProtocolError);
+      assert.match(error.message, new RegExp(`malformed ${testCase.resource}`));
+      assert.equal(error.message.includes(testCase.leaked), false);
+      return true;
+    });
+  }
 });
 
 test('QVaultClient preserves the explicit bounded batch reveal contract', async () => {
