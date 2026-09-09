@@ -333,7 +333,10 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
       pendingNotebookMutationIdRef.current = restoredValues.notebookId !== note.notebookId
         ? draft.notebookMutationId ?? crypto.randomUUID()
         : null;
-      if (restored.status === 'clean' && draft.baseVersion < note.version) pendingMutationIdRef.current = crypto.randomUUID();
+      if (restored.status === 'clean' && draft.baseVersion < note.version) {
+        pendingMutationIdRef.current = crypto.randomUUID();
+        if (restoredValues.notebookId !== note.notebookId) pendingNotebookMutationIdRef.current = crypto.randomUUID();
+      }
       if (restored.status === 'clean' && valuesEqual(restoredValues, valuesFromNote(note))) {
         void deleteDraft(note.id).catch(() => undefined);
         pendingMutationIdRef.current = null;
