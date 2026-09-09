@@ -182,7 +182,7 @@ select is((select version from notesdb.vault_secrets where id = ((select respons
 -- Replace the current receipt hash with the pre-deployment shape to model a
 -- production receipt created before expectedVersion became hash-bound.
 update notesdb.vault_mutations
-set request_hash = repeat('l', 64)
+set request_hash = repeat('a', 64)
 where owner_id = (select id from auth.users where email = 'owner@qnotes.local')
   and mutation_id = 'a1000000-0000-4000-8000-000000000021';
 select is((public.qnotes_vault_rotate_secret(
@@ -193,7 +193,7 @@ select is((public.qnotes_vault_rotate_secret(
   1,
   'a1000000-0000-4000-8000-000000000021',
   repeat('e', 64),
-  repeat('l', 64),
+  repeat('a', 64),
   null,
   'a1000000-0000-4000-8000-000000000029',
   'user_jwt'
@@ -207,7 +207,7 @@ select is((public.qnotes_vault_rotate_secret(
   2,
   'a1000000-0000-4000-8000-000000000021',
   repeat('f', 64),
-  repeat('l', 64),
+  repeat('a', 64),
   null,
   'a1000000-0000-4000-8000-000000000030',
   'user_jwt'
