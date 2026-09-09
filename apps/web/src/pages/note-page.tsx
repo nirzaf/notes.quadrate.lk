@@ -159,14 +159,15 @@ function LoadedNoteSession({ note, userId, search, queryKeys }: LoadedNoteSessio
       try {
         const remote = await api.getNote(currentNote.id);
         const merged = threeWayMerge(currentNote.contentMarkdown, currentAutosave.value, remote.contentMarkdown);
-        const localMetadataChanged = currentAutosave.title !== currentNote.title || !tagsEqual(currentAutosave.tags, currentNote.tags);
-        const remoteMetadataChanged = remote.title !== currentNote.title || !tagsEqual(remote.tags, currentNote.tags);
-        const metadataConflict = localMetadataChanged && remoteMetadataChanged && (currentAutosave.title !== remote.title || !tagsEqual(currentAutosave.tags, remote.tags));
+        const localMetadataChanged = currentAutosave.title !== currentNote.title || !tagsEqual(currentAutosave.tags, currentNote.tags) || currentAutosave.notebookId !== currentNote.notebookId;
+        const remoteMetadataChanged = remote.title !== currentNote.title || !tagsEqual(remote.tags, currentNote.tags) || remote.notebookId !== currentNote.notebookId;
+        const metadataConflict = localMetadataChanged && remoteMetadataChanged && (currentAutosave.title !== remote.title || !tagsEqual(currentAutosave.tags, remote.tags) || currentAutosave.notebookId !== remote.notebookId);
         if (merged.status === 'clean' && !metadataConflict) {
-          const localTitle = currentAutosave.title; const localTags = [...currentAutosave.tags];
+          const localTitle = currentAutosave.title; const localTags = [...currentAutosave.tags]; const localNotebookId = currentAutosave.notebookId;
           currentAutosave.adoptRemote(remote);
           queryClient.setQueryData(queryKeys.note(currentNote.id), remote);
           if (localMetadataChanged) currentAutosave.changeMetadata({ title: localTitle, tags: localTags });
+          if (localNotebookId !== remote.notebookId) currentAutosave.changeNotebook(localNotebookId);
           if (merged.merged !== remote.contentMarkdown) currentAutosave.change(merged.merged);
           if (localMetadataChanged || merged.merged !== remote.contentMarkdown) await currentAutosave.flush();
           await refreshNoteViews(queryClient, userId, currentNote.id);
