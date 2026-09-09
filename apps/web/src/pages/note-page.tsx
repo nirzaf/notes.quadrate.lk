@@ -44,8 +44,20 @@ interface NoteConflict {
   remote: Note | null;
   remoteDeleted?: boolean;
   baseMarkdown?: string;
+  localValues?: DraftValues;
   metadataConflicts?: DraftMetadataConflict[];
   reconciledValues?: DraftValues;
+}
+
+function conflictMetadata(conflict: NoteConflict, current: DraftValues): Pick<DraftValues, 'title' | 'tags' | 'notebookId'> {
+  const merged = conflict.reconciledValues;
+  const local = conflict.localValues;
+  if (!merged || !local) return { title: current.title, tags: [...current.tags], notebookId: current.notebookId };
+  return {
+    title: current.title === local.title ? merged.title : current.title,
+    tags: tagsEqual(current.tags, local.tags) ? [...merged.tags] : [...current.tags],
+    notebookId: current.notebookId === local.notebookId ? merged.notebookId : current.notebookId,
+  };
 }
 
 function NoteUnavailable({ error = false, onRetry }: { error?: boolean; onRetry?: () => void }): JSX.Element {
@@ -114,10 +126,11 @@ function LoadedNoteSession({ note, userId, search, queryKeys }: LoadedNoteSessio
     void refreshNoteViews(queryClient, userId, saved.id).catch(() => undefined);
   }, [queryClient, queryKeys, userId]);
   const onConflict = useCallback((error: QNotesHttpError) => {
-    const details = error.details as { currentNote?: unknown; baseMarkdown?: unknown; metadataConflicts?: unknown; reconciledValues?: unknown } | undefined;
+    const details = error.details as { currentNote?: unknown; baseMarkdown?: unknown; localValues?: unknown; metadataConflicts?: unknown; reconciledValues?: unknown } | undefined;
     const metadataConflicts = Array.isArray(details?.metadataConflicts) ? details.metadataConflicts as DraftMetadataConflict[] : [];
+    const localValues = details?.localValues && typeof details.localValues === 'object' ? details.localValues as DraftValues : undefined;
     const reconciledValues = details?.reconciledValues && typeof details.reconciledValues === 'object' ? details.reconciledValues as DraftValues : undefined;
-    setConflict({ error, remote: asNote(details?.currentNote), remoteDeleted: Boolean(details && 'deleted' in details && details.deleted), ...(typeof details?.baseMarkdown === 'string' ? { baseMarkdown: details.baseMarkdown } : {}), ...(metadataConflicts.length ? { metadataConflicts } : {}), ...(reconciledValues ? { reconciledValues } : {}) });
+    setConflict({ error, remote: asNote(details?.currentNote), remoteDeleted: Boolean(details && 'deleted' in details && details.deleted), ...(typeof details?.baseMarkdown === 'string' ? { baseMarkdown: details.baseMarkdown } : {}), ...(localValues ? { localValues } : {}), ...(metadataConflicts.length ? { metadataConflicts } : {}), ...(reconciledValues ? { reconciledValues } : {}) });
   }, []);
   useEffect(() => { if (conflict) setConflictOpen(true); }, [conflict]);
   const autosave = useNoteAutosave({ note, onSaved, onConflict, readOnly: Boolean(note.deletedAt) });
@@ -161,7 +174,7 @@ function LoadedNoteSession({ note, userId, search, queryKeys }: LoadedNoteSessio
         const remote = { ...currentNote, version: incoming.version, updatedAt: incoming.updatedAt, deletedAt: incoming.updatedAt };
         const error = new QNotesHttpError(409, 'NOTE_VERSION_CONFLICT', 'The note was deleted on another device.', crypto.randomUUID(), { currentVersion: incoming.version, currentNote: remote, deleted: true });
         currentAutosave.blockAutosave();
-        setConflict({ error, remote, remoteDeleted: true });
+        setConflict({ error, remote, remoteDeleted: true, localValues: { markdown: currentAutosave.value, title: currentAutosave.title, tags: [...currentAutosave.tags], notebookId: currentAutosave.notebookId } });
       } else await recoverRef.current();
       return;
     }
@@ -169,7 +182,13 @@ function LoadedNoteSession({ note, userId, search, queryKeys }: LoadedNoteSessio
       await refreshNoteViews(queryClient, userId, incoming.noteId);
       return;
     }
-    if (currentAutosave.status === 'conflict') return;
+    if (currentAutosave.status === 'conflict') {
+      try {
+        const remote = await api.getNote(currentNote.id, { includeDeleted: true });
+        setConflict((current) => current ? { ...current, remote, remoteDeleted: Boolean(remote.deletedAt) } : current);
+      } catch { /* Keep the retained conflict until the user retries. */ }
+      return;
+    }
     if (currentAutosave.dirty) {
       try {
         const remote = await api.getNote(currentNote.id);
@@ -200,7 +219,7 @@ function LoadedNoteSession({ note, userId, search, queryKeys }: LoadedNoteSessio
         } else {
           const error = new QNotesHttpError(409, 'NOTE_VERSION_CONFLICT', 'The note was changed on another device.', crypto.randomUUID(), { currentVersion: remote.version, currentNote: remote, conflicts: merged.conflicts, metadataConflicts: merged.metadataConflicts, reconciledValues: merged.values, baseMarkdown: currentNote.contentMarkdown });
           currentAutosave.blockAutosave();
-          setConflict({ error, remote, baseMarkdown: currentNote.contentMarkdown, ...(merged.metadataConflicts.length ? { metadataConflicts: merged.metadataConflicts } : {}), reconciledValues: merged.values });
+          setConflict({ error, remote, baseMarkdown: currentNote.contentMarkdown, localValues: { markdown: currentAutosave.value, title: currentAutosave.title, tags: [...currentAutosave.tags], notebookId: currentAutosave.notebookId }, ...(merged.metadataConflicts.length ? { metadataConflicts: merged.metadataConflicts } : {}), reconciledValues: merged.values });
         }
       } catch { await recoverRef.current(); }
       return;
@@ -244,7 +263,7 @@ function LoadedNoteSession({ note, userId, search, queryKeys }: LoadedNoteSessio
       if (action === 'restore' && autosave.dirty) {
         const error = new QNotesHttpError(409, 'NOTE_VERSION_CONFLICT', 'The note was restored. Review your saved draft before saving it.', crypto.randomUUID(), { currentVersion: saved.version, currentNote: saved });
         autosave.blockAutosave();
-        setConflict({ error, remote: saved });
+        setConflict({ error, remote: saved, localValues: { markdown: autosave.value, title: autosave.title, tags: [...autosave.tags], notebookId: autosave.notebookId } });
       } else if (action === 'delete' && !force) autosave.adoptRemote(saved);
       autosave.acknowledgeMutation(input.mutationId); queryClient.setQueryData(queryKeys.note(note.id), saved);
       await refreshNoteViews(queryClient, userId, note.id); setDeleteBlocked(false); toast(action === 'delete' ? 'Note moved to the trash.' : 'Note restored.', 'success');
@@ -267,11 +286,19 @@ function LoadedNoteSession({ note, userId, search, queryKeys }: LoadedNoteSessio
     const localMarkdown = autosave.value; const localTitle = autosave.title; const localTags = [...autosave.tags]; const localNotebookId = autosave.notebookId;
     autosave.adoptRemote(conflict.remote); autosave.changeMetadata({ title: localTitle, tags: localTags }); autosave.changeNotebook(localNotebookId); autosave.change(localMarkdown); setConflict(null); setConflictOpen(false); void autosave.flush().catch(() => undefined);
   };
-  const saveRemote = () => { if (!conflict?.remote) return; autosave.adoptRemote(conflict.remote); queryClient.setQueryData(queryKeys.note(note.id), conflict.remote); setConflict(null); setConflictOpen(false); };
+  const saveRemote = () => {
+    if (!conflict?.remote) return;
+    void api.getNote(note.id, { includeDeleted: true }).then((remote) => {
+      autosave.adoptRemote(remote);
+      queryClient.setQueryData(queryKeys.note(note.id), remote);
+      setConflict(null);
+      setConflictOpen(false);
+    }).catch(() => toast('The latest note version could not be loaded. Review the conflict again and retry.', 'error'));
+  };
   const saveMerged = (markdown: string) => {
     if (!conflict?.remote) return;
-    const mergedMetadata = conflict.reconciledValues;
-    const localTitle = mergedMetadata ? mergedMetadata.title : autosave.title; const localTags = mergedMetadata ? mergedMetadata.tags : [...autosave.tags]; const localNotebookId = mergedMetadata ? mergedMetadata.notebookId : autosave.notebookId;
+    const mergedMetadata = conflictMetadata(conflict, { markdown: autosave.value, title: autosave.title, tags: [...autosave.tags], notebookId: autosave.notebookId });
+    const localTitle = mergedMetadata.title; const localTags = mergedMetadata.tags; const localNotebookId = mergedMetadata.notebookId;
     autosave.adoptRemote(conflict.remote); autosave.changeMetadata({ title: localTitle, tags: localTags }); autosave.changeNotebook(localNotebookId); autosave.change(markdown); setConflict(null); setConflictOpen(false); void autosave.flush().catch(() => undefined);
   };
   const saveAsNew = async () => {

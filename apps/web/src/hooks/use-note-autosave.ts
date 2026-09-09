@@ -376,6 +376,12 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
           conflicts: restored.conflicts,
           metadataConflicts: restored.metadataConflicts,
           reconciledValues: restored.values,
+          localValues: {
+            markdown: draft.localMarkdown,
+            title: draft.localTitle ?? note.title,
+            tags: draft.localTags ? [...draft.localTags] : [...note.tags],
+            notebookId: draft.localNotebookId !== undefined ? draft.localNotebookId : note.notebookId,
+          },
           draftBaseVersion: draft.baseVersion,
           baseMarkdown: draft.baseMarkdown,
           draftReason: restored.reason,
