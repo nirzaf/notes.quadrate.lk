@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
 import { removeRememberedNote, readSyncCursor, writeSyncCursor } from '../indexed-db';
 import { useAuth } from '../auth-context';
-import { noteQueryKeys, refreshNoteViews } from '../note-query-keys';
+import { runSyncRecovery } from '../sync-recovery-core';
 
 export function useSyncRecovery(): { syncing: boolean; recover: () => Promise<void> } {
   const { session } = useAuth();
@@ -29,28 +29,17 @@ export function useSyncRecovery(): { syncing: boolean; recover: () => Promise<vo
     const recovery = (async () => {
       setSyncing(true);
       try {
-        let cursor = await readSyncCursor(recoveryUserId);
-        let hasMore = true;
-        while (hasMore) {
-          if (generation !== generationRef.current) return;
-          const page = await api.sync(cursor ?? undefined, undefined, { signal: controller.signal });
-          if (generation !== generationRef.current) return;
-          const changedNoteIds = new Set<string>();
-          for (const change of page.changes) {
-            changedNoteIds.add(change.noteId);
-            if (change.deletedAt) await removeRememberedNote(change.noteId, recoveryUserId);
-          }
-          await Promise.all([...changedNoteIds].map((noteId) => refreshNoteViews(queryClient, recoveryUserId, noteId)));
-          cursor = page.nextCursor;
-          hasMore = page.hasMore;
-        }
-        if (generation !== generationRef.current) return;
-        await writeSyncCursor(cursor, recoveryUserId);
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: noteQueryKeys.forUser(recoveryUserId).all }),
-          queryClient.invalidateQueries({ queryKey: ['qnotes', recoveryUserId, 'search'] }),
-          queryClient.invalidateQueries({ queryKey: noteQueryKeys.forUser(recoveryUserId).notebooks }),
-        ]);
+        await runSyncRecovery({
+          userId: recoveryUserId,
+          queryClient,
+          api,
+          readSyncCursor,
+          writeSyncCursor,
+          removeRememberedNote,
+          generation,
+          getGeneration: () => generationRef.current,
+          signal: controller.signal,
+        });
       } finally {
         if (generation === generationRef.current) setSyncing(false);
         if (abortRef.current === controller) {

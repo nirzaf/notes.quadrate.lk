@@ -22,10 +22,11 @@ import { useAuth } from '../auth-context';
 import { useNoteAutosave } from '../hooks/use-note-autosave';
 import { useCreateNote } from '../hooks/use-create-note';
 import { useSyncRecovery } from '../hooks/use-sync-recovery';
+import { shouldSkipAcknowledgedRealtimeEvent } from '../realtime-policy';
 import { formatUpdatedAt } from '../lib/utils';
 import { consumeEditorFocus, requestEditorFocus } from '../lib/editor-focus';
 import { captureFullPageScreenshot, screenshotFile, waitForScreenshotLayout } from '../lib/screenshot';
-import { noteQueryKeys, refreshNoteViews, type WorkspaceQueryKeys } from '../note-query-keys';
+import { noteQueryKeys, refreshNoteCollections, refreshNoteViews, type WorkspaceQueryKeys } from '../note-query-keys';
 import { withoutSearchMatch, type AppSearchParams } from '../navigation-context';
 
 const NoteEditor = lazy(() => import('../components/note-editor').then(({ NoteEditor: component }) => ({ default: component })));
@@ -117,7 +118,7 @@ function LoadedNoteSession({ note, userId, search, queryKeys }: LoadedNoteSessio
   }, [autosave]);
   const { create } = useCreateNote({
     notebookId: note.notebookId,
-    onCreated: async (created) => { await queryClient.invalidateQueries({ queryKey: queryKeys.all }); requestEditorFocus(created.id); await navigate({ to: '/notes/$noteId', params: { noteId: created.id } }); },
+    onCreated: async (created) => { await refreshNoteCollections(queryClient, userId); requestEditorFocus(created.id); await navigate({ to: '/notes/$noteId', params: { noteId: created.id } }); },
     onError: (error) => toast(error instanceof Error ? error.message : 'Unable to create note. Try again.', 'error'),
   });
   const { syncing, recover } = useSyncRecovery();
@@ -131,6 +132,7 @@ function LoadedNoteSession({ note, userId, search, queryKeys }: LoadedNoteSessio
   const event = useCallback(async (incoming: RealtimeNoteEvent) => {
     const currentNote = noteRef.current;
     const currentAutosave = autosaveRef.current;
+    if (incoming.noteId === currentNote.id && shouldSkipAcknowledgedRealtimeEvent(incoming, getDeviceId(), currentAutosave.isMutationAcknowledged)) return;
     if (incoming.noteId !== currentNote.id) {
       await refreshNoteViews(queryClient, userId, incoming.noteId);
       await recoverRef.current();

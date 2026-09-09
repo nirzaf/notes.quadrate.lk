@@ -13,7 +13,7 @@ import { Button } from './ui/button';
 import { useToast } from './ui/toast';
 import { requestEditorFocus } from '../lib/editor-focus';
 import { useCreateNote } from '../hooks/use-create-note';
-import { noteQueryKeys, refreshNoteViews } from '../note-query-keys';
+import { noteQueryKeys, refreshNoteCollections, refreshNoteViews } from '../note-query-keys';
 import { DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 import { Sheet, SheetContent } from './ui/sheet';
 import { searchShortcutLabel, withoutSearchMatch, type AppSearchParams } from '../navigation-context';
@@ -52,9 +52,9 @@ export function AppShell({ title = 'QNotes', notes = [], sidebarNotes: sidebarNo
     onNotebookSelect?.(notebookId);
   }, [onNotebookSelect, selectedNotebookIdProp]);
   const defaultRealtimeEvent = useCallback((event: RealtimeNoteEvent) => { void refreshNoteViews(queryClient, userId, event.noteId).catch(() => undefined); }, [queryClient, userId]);
-  const defaultRealtimeReconnect = useCallback(() => { void Promise.all([queryClient.invalidateQueries({ queryKey: queryKeys.all }), queryClient.invalidateQueries({ queryKey: ['qnotes', userId, 'search'] })]).catch(() => undefined); }, [queryClient, queryKeys.all, userId]);
+  const defaultRealtimeReconnect = useCallback(() => { void refreshNoteCollections(queryClient, userId).catch(() => undefined); }, [queryClient, userId]);
   useNoteRealtime(onRealtimeEvent ?? defaultRealtimeEvent, onRealtimeReconnect ?? defaultRealtimeReconnect);
-  const defaultCreate = useCreateNote({ notebookId: null, onCreated: async (note) => { await queryClient.invalidateQueries({ queryKey: queryKeys.all }); requestEditorFocus(note.id); await navigate({ to: '/notes/$noteId', params: { noteId: note.id } }); }, onError: (error) => toast(error instanceof Error ? error.message : 'Unable to create note. Try again.', 'error') });
+  const defaultCreate = useCreateNote({ notebookId: null, onCreated: async (note) => { await refreshNoteCollections(queryClient, userId); requestEditorFocus(note.id); await navigate({ to: '/notes/$noteId', params: { noteId: note.id } }); }, onError: (error) => toast(error instanceof Error ? error.message : 'Unable to create note. Try again.', 'error') });
   const create = onNew ?? (() => void defaultCreate.create());
   const select = onSelectNote ?? ((noteId: string) => void navigate({ to: '/notes/$noteId', params: { noteId } }));
   useEffect(() => {

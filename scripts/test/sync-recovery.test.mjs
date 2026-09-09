@@ -1,0 +1,120 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { noteQueryKeys } from '../../apps/web/src/note-query-keys.ts';
+import { runSyncRecovery } from '../../apps/web/src/sync-recovery-core.ts';
+
+function recordingQueryClient(events = []) {
+  const calls = [];
+  return {
+    calls,
+    invalidateQueries: async ({ queryKey }) => {
+      events.push(['invalidate', queryKey]);
+      calls.push(queryKey);
+    },
+  };
+}
+
+function hasQueryKey(calls, expected) {
+  return calls.filter((queryKey) => JSON.stringify(queryKey) === JSON.stringify(expected)).length;
+}
+
+function change(noteId, deletedAt = null) {
+  return { noteId, deletedAt };
+}
+
+test('recovery batches repeated IDs across pages and invalidates after the final cursor is stored', async () => {
+  const userId = 'user-a';
+  const keys = noteQueryKeys.forUser(userId);
+  const events = [];
+  const queryClient = recordingQueryClient(events);
+  const syncCursors = [];
+  const pages = [
+    { changes: [change('note-a')], nextCursor: 'cursor-1', hasMore: true },
+    { changes: [change('note-b'), change('note-a', '2026-09-09T00:00:00.000Z')], nextCursor: 'cursor-2', hasMore: false },
+  ];
+  const removed = [];
+  let pageIndex = 0;
+
+  await runSyncRecovery({
+    userId,
+    queryClient,
+    api: { sync: async (cursor) => { syncCursors.push(cursor); return pages[pageIndex++]; } },
+    readSyncCursor: async () => 'cursor-0',
+    writeSyncCursor: async (cursor) => { events.push(['write', cursor]); },
+    removeRememberedNote: async (noteId) => { removed.push(noteId); },
+    generation: 0,
+    getGeneration: () => 0,
+    signal: new AbortController().signal,
+  });
+
+  assert.deepEqual(syncCursors, ['cursor-0', 'cursor-1']);
+  assert.deepEqual(removed, ['note-a']);
+  assert.deepEqual(events.filter(([kind]) => kind === 'write'), [['write', 'cursor-2']]);
+  assert.ok(events.findIndex(([kind]) => kind === 'write') < events.findIndex(([kind]) => kind === 'invalidate'));
+  for (const queryKey of [keys.homeFamily, keys.sidebarFamily, keys.trashFamily, keys.searchFamily]) assert.equal(hasQueryKey(queryClient.calls, queryKey), 1);
+  assert.equal(hasQueryKey(queryClient.calls, keys.note('note-a')), 1);
+  assert.equal(hasQueryKey(queryClient.calls, keys.note('note-b')), 1);
+});
+
+test('incremental no-change recovery stores its cursor without unconditional list or search invalidation', async () => {
+  const queryClient = recordingQueryClient();
+  let syncCount = 0;
+  let writtenCursor = null;
+
+  await runSyncRecovery({
+    userId: 'user-a',
+    queryClient,
+    api: { sync: async (cursor) => { syncCount += 1; return { changes: [], nextCursor: cursor ?? null, hasMore: false }; } },
+    readSyncCursor: async () => 'cursor-existing',
+    writeSyncCursor: async (cursor) => { writtenCursor = cursor; },
+    removeRememberedNote: async () => {},
+    generation: 0,
+    getGeneration: () => 0,
+    signal: new AbortController().signal,
+  });
+
+  assert.equal(syncCount, 1);
+  assert.equal(writtenCursor, 'cursor-existing');
+  assert.deepEqual(queryClient.calls, []);
+});
+
+test('first/reset recovery still reconciles collections when there are no changes', async () => {
+  const userId = 'user-a';
+  const keys = noteQueryKeys.forUser(userId);
+  const queryClient = recordingQueryClient();
+
+  await runSyncRecovery({
+    userId,
+    queryClient,
+    api: { sync: async () => ({ changes: [], nextCursor: null, hasMore: false }) },
+    readSyncCursor: async () => null,
+    writeSyncCursor: async () => {},
+    removeRememberedNote: async () => {},
+    generation: 0,
+    getGeneration: () => 0,
+    signal: new AbortController().signal,
+  });
+
+  for (const queryKey of [keys.homeFamily, keys.sidebarFamily, keys.trashFamily, keys.searchFamily]) assert.equal(hasQueryKey(queryClient.calls, queryKey), 1);
+});
+
+test('recovery stops before cursor advancement or invalidation when its generation becomes stale', async () => {
+  const events = [];
+  const queryClient = recordingQueryClient(events);
+  let currentGeneration = 0;
+
+  await runSyncRecovery({
+    userId: 'user-a',
+    queryClient,
+    api: { sync: async () => { currentGeneration = 1; return { changes: [change('note-a')], nextCursor: 'cursor-1', hasMore: false }; } },
+    readSyncCursor: async () => 'cursor-0',
+    writeSyncCursor: async () => { events.push(['write']); },
+    removeRememberedNote: async () => { events.push(['remove']); },
+    generation: 0,
+    getGeneration: () => currentGeneration,
+    signal: new AbortController().signal,
+  });
+
+  assert.deepEqual(events, []);
+  assert.deepEqual(queryClient.calls, []);
+});
