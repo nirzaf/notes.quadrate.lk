@@ -1,17 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Note, SyncStatus } from '@qnotes/shared';
 import { QNotesHttpError } from '@qnotes/api-client';
-import { AutosaveCoordinator } from '@qnotes/sync';
+import { AutosaveCoordinator, reconcileDraft, type DraftValues } from '@qnotes/sync';
 import { api } from '../api';
 import { getAccountDraftStore, getDeviceId, rememberNote } from '../indexed-db';
 import { useAuth } from '../auth-context';
-
-interface DraftValues {
-  markdown: string;
-  title: string;
-  tags: string[];
-  notebookId: string | null;
-}
 
 interface SavePayload extends DraftValues {
   editRevision: number;
@@ -100,6 +93,8 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
   const persistDraft = (revision: number): Promise<void> => {
     const base = authoritative.current;
     const local = draftRef.current;
+    const mutationId = pendingMutationIdRef.current ?? crypto.randomUUID();
+    pendingMutationIdRef.current = mutationId;
     const write = draftWriteChainRef.current.then(async () => {
       if (!store || !userIdRef.current) throw new Error('Local draft storage is unavailable for this account.');
       await store.put({
@@ -107,6 +102,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
         baseVersion: base.version,
         baseMarkdown: base.contentMarkdown,
         localMarkdown: local.markdown,
+        mutationId,
         baseTitle: base.title,
         localTitle: local.title,
         baseTags: [...base.tags],
@@ -285,30 +281,54 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
   useEffect(() => {
     let active = true;
     const requestedNoteId = note.id;
-    const requestedVersion = note.version;
+    const requestedUserId = userId;
     if (!store || !userId) return () => { active = false; };
     void store.get(note.id).then((draft) => {
-      if (!active || !enabledRef.current || readOnlyRef.current || noteIdRef.current !== requestedNoteId || dirtyRef.current || !draft || draft.baseVersion > requestedVersion) return;
-      const restored: DraftValues = {
-        markdown: draft.localMarkdown,
-        title: draft.localTitle ?? note.title,
-        tags: draft.localTags ? [...draft.localTags] : [...note.tags],
-        notebookId: draft.localNotebookId ?? note.notebookId,
-      };
-      if (valuesEqual(restored, valuesFromNote(note))) return;
+      if (!active || !enabledRef.current || noteIdRef.current !== requestedNoteId || userIdRef.current !== requestedUserId || dirtyRef.current || !draft) return;
+      const restored = reconcileDraft(draft, note);
+      const restoredValues = restored.values;
+      pendingMutationIdRef.current = draft.mutationId ?? crypto.randomUUID();
+      if (restored.status === 'clean' && valuesEqual(restoredValues, valuesFromNote(note))) {
+        void deleteDraft(note.id).catch(() => undefined);
+        return;
+      }
       editRevision.current += 1;
       draftPersistedRef.current = true;
-      markDirty(restored);
+      markDirty(restoredValues);
+      if (restored.status === 'conflict') {
+        const message = restored.reason === 'remote-deleted'
+          ? 'This note was deleted on another device. Your local draft is preserved.'
+          : restored.reason === 'newer-base'
+            ? 'This local draft is based on a newer version that is not available here. Review it before saving.'
+            : 'This local draft could not be safely reconciled with the saved note. Review it before saving.';
+        const error = new QNotesHttpError(409, 'NOTE_VERSION_CONFLICT', message, crypto.randomUUID(), {
+          currentVersion: note.version,
+          currentNote: note,
+          conflicts: restored.conflicts,
+          draftBaseVersion: draft.baseVersion,
+          baseMarkdown: draft.baseMarkdown,
+          draftReason: restored.reason,
+          deleted: restored.reason === 'remote-deleted',
+        });
+        setErrorMessage(message);
+        setStatus('conflict');
+        onConflictRef.current(error);
+        return;
+      }
       setErrorMessage(null);
-      setStatus(online() ? 'pending' : 'offline');
-      coordinatorRef.current?.schedule(currentPayload());
+      const revision = editRevision.current;
+      void persistDraft(revision).then(() => {
+        if (!active || !mountedRef.current || revision !== editRevision.current || noteIdRef.current !== requestedNoteId || userIdRef.current !== requestedUserId) return;
+        setStatus(online() ? 'pending' : 'offline');
+        coordinatorRef.current?.schedule(currentPayload());
+      }).catch(() => undefined);
     }).catch((error: unknown) => {
-      if (!active || noteIdRef.current !== requestedNoteId) return;
+      if (!active || noteIdRef.current !== requestedNoteId || userIdRef.current !== requestedUserId) return;
       setErrorMessage(error instanceof Error ? error.message : 'Local draft storage is unavailable.');
       setStatus('storage-error');
     });
     return () => { active = false; };
-  }, [enabled, note.id, note.version]);
+  }, [enabled, note.id, note.version, store, userId]);
 
   useEffect(() => {
     const updateOnline = () => {
@@ -338,7 +358,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
   const change = useCallback((next: string) => {
     if (readOnlyRef.current) return;
     editRevision.current += 1;
-    pendingMutationIdRef.current = null;
+    pendingMutationIdRef.current = crypto.randomUUID();
     const nextValues = { ...draftRef.current, markdown: next, tags: [...draftRef.current.tags] };
     const isDirty = markDirty(nextValues);
     setErrorMessage(null);
@@ -358,7 +378,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
   const changeMetadata = useCallback((next: { title?: string; tags?: string[] }) => {
     if (readOnlyRef.current) return;
     editRevision.current += 1;
-    pendingMutationIdRef.current = null;
+    pendingMutationIdRef.current = crypto.randomUUID();
     const nextValues = {
       ...draftRef.current,
       title: next.title ?? draftRef.current.title,

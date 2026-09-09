@@ -5,6 +5,8 @@ export interface NoteDraft {
   baseVersion: number;
   baseMarkdown: string;
   localMarkdown: string;
+  /** Stable retry identity persisted before an autosave request is sent. */
+  mutationId?: UUID;
   /** Optional so drafts written before metadata recovery was added remain readable. */
   baseTitle?: string;
   localTitle?: string;

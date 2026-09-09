@@ -74,14 +74,14 @@ function diffHunks(base: string[], updated: string[]): Hunk[] {
 
 function overlaps(left: Hunk, right: Hunk): boolean {
   if (left.start === left.end && right.start === right.end) return left.start === right.start;
-  if (left.start === left.end) return left.start >= right.start && left.start <= right.end;
-  if (right.start === right.end) return right.start >= left.start && right.start <= left.end;
+  if (left.start === left.end) return left.start >= right.start && left.start < right.end;
+  if (right.start === right.end) return right.start >= left.start && right.start < left.end;
   return left.start < right.end && right.start < left.end;
 }
 
 function overlapsRange(hunk: Hunk, start: number, end: number): boolean {
   if (start === end) return hunk.start === start && hunk.end === end;
-  if (hunk.start === hunk.end) return hunk.start >= start && hunk.start <= end;
+  if (hunk.start === hunk.end) return hunk.start >= start && hunk.start < end;
   return hunk.start < end && start < hunk.end;
 }
 

@@ -88,7 +88,7 @@ function LoadedNoteSession({ note, userId, search, queryKeys }: LoadedNoteSessio
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { toast } = useToast();
-  const [conflict, setConflict] = useState<{ error: QNotesHttpError; remote: Note | null; remoteDeleted?: boolean } | null>(null);
+  const [conflict, setConflict] = useState<{ error: QNotesHttpError; remote: Note | null; remoteDeleted?: boolean; baseMarkdown?: string } | null>(null);
   const [focusEditor, setFocusEditor] = useState(() => consumeEditorFocus(note.id));
   const [view, setView] = useState<'edit' | 'preview'>(() => (focusEditor ? 'edit' : 'preview'));
   const [movingNotebook, setMovingNotebook] = useState(false);
@@ -104,8 +104,8 @@ function LoadedNoteSession({ note, userId, search, queryKeys }: LoadedNoteSessio
     void refreshNoteViews(queryClient, userId, saved.id).catch(() => undefined);
   }, [queryClient, queryKeys, userId]);
   const onConflict = useCallback((error: QNotesHttpError) => {
-    const details = error.details as { currentNote?: unknown } | undefined;
-    setConflict({ error, remote: asNote(details?.currentNote), remoteDeleted: Boolean(details && 'deleted' in details && details.deleted) });
+    const details = error.details as { currentNote?: unknown; baseMarkdown?: unknown } | undefined;
+    setConflict({ error, remote: asNote(details?.currentNote), remoteDeleted: Boolean(details && 'deleted' in details && details.deleted), ...(typeof details?.baseMarkdown === 'string' ? { baseMarkdown: details.baseMarkdown } : {}) });
   }, []);
   const autosave = useNoteAutosave({ note, onSaved, onConflict, readOnly: Boolean(note.deletedAt) });
   const flushBeforeShare = useCallback(async () => {
@@ -286,7 +286,7 @@ function LoadedNoteSession({ note, userId, search, queryKeys }: LoadedNoteSessio
         <div className="q-editor-footer"><span className="q-small">{note.deletedAt ? 'Read-only note in Trash.' : 'Markdown is saved after 800ms of quiet.'}</span></div>
       </section>{!note.deletedAt ? <aside className="q-panel-stack"><AttachmentPanel noteId={note.id} attachments={attachmentsQuery.data ?? []} onRefresh={() => attachmentsQuery.refetch()} onCaptureFullPage={captureEntirePage} /></aside> : null}</div>
     </div>
-    <ConflictResolver open={Boolean(conflict)} baseMarkdown={note.contentMarkdown} localMarkdown={autosave.value} remoteNote={conflict?.remote ?? null} remoteDeleted={conflict?.remoteDeleted ?? false} error={conflict?.error} onUseMine={saveMine} onUseRemote={saveRemote} onSaveMerged={saveMerged} onSaveAsNew={() => void saveAsNew()} onCancel={() => setConflict(null)} />
+    <ConflictResolver open={Boolean(conflict)} baseMarkdown={conflict?.baseMarkdown ?? note.contentMarkdown} localMarkdown={autosave.value} remoteNote={conflict?.remote ?? null} remoteDeleted={conflict?.remoteDeleted ?? false} error={conflict?.error} onUseMine={saveMine} onUseRemote={saveRemote} onSaveMerged={saveMerged} onSaveAsNew={() => void saveAsNew()} onCancel={() => setConflict(null)} />
     <Dialog open={blocker.status === 'blocked'} onOpenChange={(open) => { if (!open) blocker.reset?.(); }}><DialogContent><DialogHeader><DialogTitle>Save is still pending</DialogTitle><DialogDescription>The server did not confirm the latest edit. Your local draft remains available. Retry, stay here, or leave only after the draft is durably stored on this account.</DialogDescription></DialogHeader><div className="q-dialog-actions"><Button variant="outline" onClick={() => blocker.reset?.()}>Stay and edit</Button><Button variant="secondary" onClick={() => { blocker.reset?.(); autosave.retry(); }}>Retry save</Button><Button onClick={() => void leaveWithDraft()}>Leave with draft</Button></div></DialogContent></Dialog>
     <Dialog open={deleteBlocked} onOpenChange={setDeleteBlocked}><DialogContent><DialogHeader><DialogTitle>Save is blocked</DialogTitle><DialogDescription>Your local draft is retained, but the server rejected or could not receive the latest changes. Keep editing and retry, or move the current server version to Trash while keeping this draft for recovery.</DialogDescription></DialogHeader><div className="q-dialog-actions"><Button variant="outline" onClick={() => setDeleteBlocked(false)}>Keep note</Button><Button variant="danger" onClick={() => void updateDeletion('delete', true)}>Delete anyway</Button></div></DialogContent></Dialog>
     <PublicShareDialog open={shareOpen} note={noteForCopy} share={shareQuery.data ?? null} loading={shareQuery.isPending} onOpenChange={setShareOpen} onBeforeCreate={flushBeforeShare} onRefresh={() => shareQuery.refetch()} />

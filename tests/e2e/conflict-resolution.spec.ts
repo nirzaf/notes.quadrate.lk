@@ -139,3 +139,69 @@ test('preserves a dirty draft and can recover it after remote deletion', async (
     await device.context.close();
   }
 });
+
+test('reconciles a persisted older draft with a newer remote version after reload', async ({ browser }) => {
+  const session = await signInSession();
+  const note = await createNoteApi(session.access_token, `Reload recovery ${crypto.randomUUID()}`, 'alpha\nbeta\ngamma\n');
+  const device = await createDevice(browser);
+  try {
+    await device.page.goto(noteUrl(note.id));
+    await expectPreviewMode(device.page);
+    const databaseName = `qnotes-account-${encodeURIComponent(session.user.id)}`;
+    await device.page.evaluate(async ({ databaseName, draft }) => {
+      const database = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open(databaseName, 2);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error ?? new Error('Unable to open the test draft database.'));
+      });
+      await new Promise<void>((resolve, reject) => {
+        const transaction = database.transaction('drafts', 'readwrite');
+        transaction.objectStore('drafts').put(draft);
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error ?? new Error('Unable to seed the test draft.'));
+        transaction.onabort = () => reject(transaction.error ?? new Error('Unable to seed the test draft.'));
+      });
+      database.close();
+    }, {
+      databaseName,
+      draft: {
+        noteId: note.id,
+        baseVersion: note.version,
+        baseMarkdown: note.contentMarkdown,
+        localMarkdown: 'local alpha\nbeta\ngamma\n',
+        mutationId: crypto.randomUUID(),
+        baseTitle: note.title,
+        localTitle: note.title,
+        baseTags: [],
+        localTags: [],
+        baseNotebookId: null,
+        localNotebookId: null,
+        updatedAt: new Date().toISOString(),
+      },
+    });
+    await updateNoteApi(session.access_token, note, 'alpha\nbeta\nremote gamma\n');
+    await device.page.reload();
+    await expect.poll(async () => (await getNoteApi(session.access_token, note.id)).contentMarkdown, { timeout: 15_000 }).toBe('local alpha\nbeta\nremote gamma\n');
+    await device.page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await expectEditorMode(device.page);
+    await expect(device.page.locator('.cm-content')).toContainText('local alpha');
+    await expect(device.page.locator('.cm-content')).toContainText('remote gamma');
+    await expect.poll(() => device.page.evaluate(async ({ databaseName, noteId }) => {
+      const database = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open(databaseName, 2);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error ?? new Error('Unable to reopen the test draft database.'));
+      });
+      const draft = await new Promise<unknown>((resolve, reject) => {
+        const transaction = database.transaction('drafts', 'readonly');
+        const request = transaction.objectStore('drafts').get(noteId);
+        request.onsuccess = () => resolve(request.result ?? null);
+        request.onerror = () => reject(request.error ?? new Error('Unable to read the test draft.'));
+      });
+      database.close();
+      return draft;
+    }, { databaseName, noteId: note.id })).toBeNull();
+  } finally {
+    await device.context.close();
+  }
+});
