@@ -34,11 +34,6 @@ type VaultEnvironment = { id: string; projectId: string; slug: string; name: str
 type VaultSecret = { id: string; projectId: string; environmentId: string; name: string; description: string | null; version: number };
 type VaultAgentToken = { id: string; name: string; tokenPrefix: string; grants: Array<Record<string, unknown>> };
 
-function responseData<T>(body: unknown): T {
-  if (!body || typeof body !== 'object' || !('data' in body)) throw new Error('Invalid local API response envelope.');
-  return (body as { data: T }).data;
-}
-
 function readUint16(view: DataView, offset: number): number {
   return view.getUint16(offset, true);
 }
@@ -81,6 +76,7 @@ function archiveEntries(archive: Uint8Array): Map<string, Uint8Array> {
     if (entryEnd > archive.byteLength || compressedSize > archive.byteLength) throw new Error('The workspace archive entry is outside the archive.');
     const path = decoder.decode(archive.slice(cursor + 46, cursor + 46 + fileNameLength));
     if (entries.has(path)) throw new Error('The workspace archive contains a duplicate entry.');
+    if (localHeaderOffset + 30 > archive.byteLength) throw new Error('The workspace archive entry is outside the archive.');
     if (readUint32(view, localHeaderOffset) !== 0x04034b50) throw new Error('The workspace archive has an invalid local entry.');
     const localNameLength = readUint16(view, localHeaderOffset + 26);
     const localExtraLength = readUint16(view, localHeaderOffset + 28);
@@ -124,23 +120,23 @@ async function createVaultIsolationFixture(token: string): Promise<{
   const secretName = `ISOLATION_${crypto.randomUUID().replaceAll('-', '').slice(0, 16).toUpperCase()}`;
   const projectResponse = await apiJson('/vault/projects', token, { method: 'POST', body: JSON.stringify({ name: `${marker}-project`, slug: `${marker}-project` }) });
   expect(projectResponse.response.status).toBe(201);
-  const project = responseData<VaultProject>(projectResponse.body);
+  const project = data<VaultProject>(projectResponse.body);
   const environmentResponse = await apiJson(`/vault/projects/${project.id}/environments`, token, { method: 'POST', body: JSON.stringify({ name: `${marker}-environment`, slug: `${marker}-environment` }) });
   expect(environmentResponse.response.status).toBe(201);
-  const environment = responseData<VaultEnvironment>(environmentResponse.body);
+  const environment = data<VaultEnvironment>(environmentResponse.body);
   const secretResponse = await apiJson(`/vault/environments/${environment.id}/secrets`, token, {
     method: 'POST',
     body: JSON.stringify({ projectId: project.id, environmentId: environment.id, name: secretName, description: `${marker}-description`, value: secretValue, mutationId: crypto.randomUUID() }),
   });
   expect(secretResponse.response.status).toBe(201);
-  const secret = responseData<VaultSecret>(secretResponse.body);
+  const secret = data<VaultSecret>(secretResponse.body);
   const tokenName = `${marker}-agent`;
   const tokenResponse = await apiJson('/vault/agent-tokens', token, {
     method: 'POST',
     body: JSON.stringify({ name: tokenName, expiresAt: null, grants: [{ projectId: project.id, environmentId: environment.id, secretId: secret.id, action: 'secret:reveal' }] }),
   });
   expect(tokenResponse.response.status).toBe(201);
-  const tokenData = responseData<{ token: string; metadata: VaultAgentToken }>(tokenResponse.body);
+  const tokenData = data<{ token: string; metadata: VaultAgentToken }>(tokenResponse.body);
   const qvtToken = tokenData.token;
   const agentToken = tokenData.metadata;
   const auditPurpose = `${marker}-reveal-purpose`;
@@ -149,7 +145,7 @@ async function createVaultIsolationFixture(token: string): Promise<{
     body: JSON.stringify({ project: project.slug, environment: environment.slug, name: secret.name, purpose: auditPurpose }),
   });
   expect(revealResponse.response.status).toBe(200);
-  const revealedValue = responseData<{ value?: unknown }>(revealResponse.body).value;
+  const revealedValue = data<{ value?: unknown }>(revealResponse.body).value;
   expect(revealedValue === secretValue).toBe(true);
   return { project, environment, secret, qvtToken, agentToken, secretValue, auditPurpose, marker };
 }
@@ -157,24 +153,24 @@ async function createVaultIsolationFixture(token: string): Promise<{
 async function readVaultState(token: string): Promise<unknown> {
   const projectsResponse = await apiJson('/vault/projects', token);
   expect(projectsResponse.response.status).toBe(200);
-  const projects = responseData<VaultProject[]>(projectsResponse.body);
+  const projects = data<VaultProject[]>(projectsResponse.body);
   const environments: VaultEnvironment[] = [];
   const secrets: VaultSecret[] = [];
   for (const project of projects) {
     const environmentsResponse = await apiJson(`/vault/projects/${project.id}/environments`, token);
     expect(environmentsResponse.response.status).toBe(200);
-    for (const environment of responseData<VaultEnvironment[]>(environmentsResponse.body)) {
+    for (const environment of data<VaultEnvironment[]>(environmentsResponse.body)) {
       environments.push(environment);
       const secretsResponse = await apiJson(`/vault/environments/${environment.id}/secrets`, token);
       expect(secretsResponse.response.status).toBe(200);
-      secrets.push(...responseData<VaultSecret[]>(secretsResponse.body));
+      secrets.push(...data<VaultSecret[]>(secretsResponse.body));
     }
   }
   const tokensResponse = await apiJson('/vault/agent-tokens', token);
   expect(tokensResponse.response.status).toBe(200);
   const auditResponse = await apiJson('/vault/audit', token);
   expect(auditResponse.response.status).toBe(200);
-  return { projects, environments, secrets, tokens: responseData<VaultAgentToken[]>(tokensResponse.body), audit: responseData<unknown[]>(auditResponse.body) };
+  return { projects, environments, secrets, tokens: data<VaultAgentToken[]>(tokensResponse.body), audit: data<unknown[]>(auditResponse.body) };
 }
 
 test('keeps Vault fixtures out of Notes archives, imports, and public shares', async () => {
@@ -184,10 +180,10 @@ test('keeps Vault fixtures out of Notes archives, imports, and public shares', a
   const fixture = await createVaultIsolationFixture(source.access_token);
   const auditResponse = await apiJson('/vault/audit', source.access_token);
   expect(auditResponse.response.status).toBe(200);
-  const auditEvents = responseData<unknown[]>(auditResponse.body);
+  const auditEvents = data<unknown[]>(auditResponse.body);
   const tokenListResponse = await apiJson('/vault/agent-tokens', source.access_token);
   expect(tokenListResponse.response.status).toBe(200);
-  const listedAgentToken = responseData<VaultAgentToken[]>(tokenListResponse.body).find((item) => item.id === fixture.agentToken.id);
+  const listedAgentToken = data<VaultAgentToken[]>(tokenListResponse.body).find((item) => item.id === fixture.agentToken.id);
   expect(Boolean(listedAgentToken?.grants.some((grant) => grant.projectId === fixture.project.id && grant.environmentId === fixture.environment.id && grant.secretId === fixture.secret.id && grant.action === 'secret:reveal'))).toBe(true);
 
   const publicShare = await createPublicShareApi(source.access_token, note.id);
@@ -223,7 +219,7 @@ test('keeps Vault fixtures out of Notes archives, imports, and public shares', a
   const resolved = await resolvePublicShareApi(publicShare.token);
   expect(resolved.response.status).toBe(200);
   expect(Object.keys(resolved.body as Record<string, unknown>).sort()).toEqual(['data']);
-  const resolvedBody = responseData<Record<string, unknown>>(resolved.body);
+  const resolvedBody = data<Record<string, unknown>>(resolved.body);
   expect(Object.keys(resolvedBody).sort()).toEqual(['contentMarkdown', 'title', 'updatedAt'].sort());
   expect(resolvedBody.title === note.title && resolvedBody.contentMarkdown === note.contentMarkdown && typeof resolvedBody.updatedAt === 'string').toBe(true);
   expect(containsAnyValue(resolved.body, vaultMaterial)).toBe(false);
@@ -232,13 +228,13 @@ test('keeps Vault fixtures out of Notes archives, imports, and public shares', a
   const beforeTargetVault = await readVaultState(target.access_token);
   const dryRun = await importWorkspace(target.access_token, archive, '?dryRun=true');
   expect(dryRun.response.status).toBe(200);
-  expect(responseData<{ dryRun: boolean; ready: boolean }>(dryRun.body)).toMatchObject({ dryRun: true, ready: true });
+  expect(data<{ dryRun: boolean; ready: boolean }>(dryRun.body)).toMatchObject({ dryRun: true, ready: true });
   expect(containsAnyValue(dryRun.body, vaultMaterial)).toBe(false);
   expect(JSON.stringify(await readVaultState(target.access_token)) === JSON.stringify(beforeTargetVault)).toBe(true);
 
   const confirmed = await importWorkspace(target.access_token, archive, '?confirm=true');
   expect(confirmed.response.status).toBe(200);
-  expect(responseData<{ dryRun: boolean; ready: boolean }>(confirmed.body)).toMatchObject({ dryRun: false, ready: true });
+  expect(data<{ dryRun: boolean; ready: boolean }>(confirmed.body)).toMatchObject({ dryRun: false, ready: true });
   expect(containsAnyValue(confirmed.body, vaultMaterial)).toBe(false);
   expect(JSON.stringify(await readVaultState(target.access_token)) === JSON.stringify(beforeTargetVault)).toBe(true);
 });
@@ -322,7 +318,7 @@ test('restores notebooks, tagged notes, and attachments without duplicating on r
   expect(Array.from(new Uint8Array(await downloaded.arrayBuffer()))).toEqual(Array.from(bytes));
   const importedShare = await apiJson(`/api/notes/${importedNote!.id}/share`, target.access_token);
   expect(importedShare.response.status).toBe(200);
-  expect((importedShare.body as { data?: unknown }).data).toBeNull();
+  expect(data<null>(importedShare.body)).toBeNull();
   const importedTokens = await apiJson('/api/tokens', target.access_token);
   expect(importedTokens.response.status).toBe(200);
   expect(data<unknown[]>(importedTokens.body)).toHaveLength(0);
