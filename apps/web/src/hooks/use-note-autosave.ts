@@ -532,6 +532,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
     void deleteDraft(nextNote.id).catch(() => undefined);
   }, [store]);
   const blockAutosave = useCallback(() => {
+    saveRevision.current += 1;
     reconciliationBlockedRef.current = true;
     coordinatorRef.current?.cancelPending();
     setStatus('conflict');
