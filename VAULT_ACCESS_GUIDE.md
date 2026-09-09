@@ -176,3 +176,15 @@ pnpm exec supabase test db
 
 The SQL suite requires a local Supabase instance. Never apply the migration or
 test reset flow to hosted production data from this guide.
+
+## QNotes for Hermes companion plugin
+
+The companion is an optional external native Hermes plugin. Its default is
+Notes `read` with Vault `none`; selecting Vault metadata, reveal, or write is a
+separate operator choice and still requires matching qvt resource/action
+grants. A Vault reveal intentionally places plaintext in the Hermes/model
+session boundary, so the plugin does not preload, log, mirror, or automatically
+transmit secret values. It uses the existing MCP server and `QNOTES_URL`; a
+non-empty `QVAULT_URL` remains unsupported. Disablement of the plugin, removal
+of the MCP entry, removal of local credential inputs, and qnt/qvt revocation
+are separate actions.

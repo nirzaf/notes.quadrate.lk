@@ -1,0 +1,5 @@
+name: qnotes
+version: 0.1.0
+description: QNotes setup, workflow guidance, and safe MCP diagnostics for Hermes.
+provides_tools: []
+provides_hooks: []
