@@ -1,22 +1,23 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Note, SyncStatus } from '@qnotes/shared';
 import { QNotesHttpError } from '@qnotes/api-client';
-import { AutosaveCoordinator } from '@qnotes/sync';
+import { AutosaveCoordinator, reconcileDraft, type DraftValues } from '@qnotes/sync';
 import { api } from '../api';
 import { getAccountDraftStore, getDeviceId, rememberNote } from '../indexed-db';
 import { useAuth } from '../auth-context';
-
-interface DraftValues {
-  markdown: string;
-  title: string;
-  tags: string[];
-  notebookId: string | null;
-}
 
 interface SavePayload extends DraftValues {
   editRevision: number;
   noteId: string;
   userId: string;
+}
+
+interface DraftBaseSnapshot {
+  baseVersion: number;
+  baseMarkdown: string;
+  baseTitle?: string;
+  baseTags?: string[];
+  baseNotebookId?: Note['notebookId'];
 }
 
 interface UseNoteAutosaveOptions {
@@ -47,6 +48,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
   const [value, setValue] = useState(note.contentMarkdown);
   const [title, setTitle] = useState(note.title);
   const [tags, setTags] = useState<string[]>(note.tags);
+  const [notebookId, setNotebookId] = useState<Note['notebookId']>(note.notebookId);
   const [savedAt, setSavedAt] = useState(note.updatedAt);
   const [status, setStatus] = useState<SyncStatus>('saved');
   const [dirty, setDirty] = useState(false);
@@ -58,6 +60,9 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
   const noteIdRef = useRef(note.id);
   const acknowledgedMutationIdRef = useRef<string | null>(null);
   const pendingMutationIdRef = useRef<string | null>(null);
+  const pendingNotebookMutationIdRef = useRef<string | null>(null);
+  const reconciliationBlockedRef = useRef(false);
+  const blockedDraftBaseRef = useRef<DraftBaseSnapshot | null>(null);
   const saveRevision = useRef(0);
   const editRevision = useRef(0);
   const dirtyRef = useRef(false);
@@ -91,6 +96,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
     setValue(next.markdown);
     setTitle(next.title);
     setTags([...next.tags]);
+    setNotebookId(next.notebookId);
     dirtyRef.current = isDirty;
     setDirty(isDirty);
     onDirtyRef.current?.(isDirty);
@@ -99,19 +105,25 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
 
   const persistDraft = (revision: number): Promise<void> => {
     const base = authoritative.current;
+    const blockedBase = blockedDraftBaseRef.current;
     const local = draftRef.current;
+    const mutationId = pendingMutationIdRef.current ?? crypto.randomUUID();
+    const notebookMutationId = pendingNotebookMutationIdRef.current;
+    pendingMutationIdRef.current = mutationId;
     const write = draftWriteChainRef.current.then(async () => {
       if (!store || !userIdRef.current) throw new Error('Local draft storage is unavailable for this account.');
       await store.put({
         noteId: base.id,
-        baseVersion: base.version,
-        baseMarkdown: base.contentMarkdown,
+        baseVersion: blockedBase?.baseVersion ?? base.version,
+        baseMarkdown: blockedBase?.baseMarkdown ?? base.contentMarkdown,
         localMarkdown: local.markdown,
-        baseTitle: base.title,
+        mutationId,
+        ...(notebookMutationId ? { notebookMutationId } : {}),
+        baseTitle: blockedBase?.baseTitle ?? base.title,
         localTitle: local.title,
-        baseTags: [...base.tags],
+        baseTags: [...(blockedBase?.baseTags ?? base.tags)],
         localTags: [...local.tags],
-        baseNotebookId: base.notebookId,
+        baseNotebookId: blockedBase?.baseNotebookId !== undefined ? blockedBase.baseNotebookId : base.notebookId,
         localNotebookId: local.notebookId,
         updatedAt: new Date().toISOString(),
       });
@@ -141,13 +153,44 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
 
   saveHandler.current = async (payload) => {
     if (!mountedRef.current || readOnlyRef.current || !enabledRef.current || !userIdRef.current) throw new Error('This note session is no longer authenticated.');
+    if (reconciliationBlockedRef.current) return;
     const revision = saveRevision.current;
-    const current = authoritative.current;
+    let current = authoritative.current;
     if (payload.noteId !== current.id || payload.userId !== userIdRef.current) throw new Error('This note save belongs to an inactive session.');
     const mutationId = pendingMutationIdRef.current ?? crypto.randomUUID();
     pendingMutationIdRef.current = mutationId;
+    if (payload.notebookId !== current.notebookId) {
+      const notebookMutationId = pendingNotebookMutationIdRef.current ?? crypto.randomUUID();
+      pendingNotebookMutationIdRef.current = notebookMutationId;
+      try {
+        setStatus('saving');
+        const moved = await api.moveNoteToNotebook(current.id, { notebookId: payload.notebookId, expectedVersion: current.version, deviceId: getDeviceId(), mutationId: notebookMutationId });
+        if (!mountedRef.current || revision !== saveRevision.current) return;
+        current = moved;
+        authoritative.current = moved;
+        setSavedAt(moved.updatedAt);
+        void rememberNote(moved, userIdRef.current).catch(() => undefined);
+        onSavedRef.current(moved);
+        pendingNotebookMutationIdRef.current = null;
+        await persistDraft(editRevision.current);
+      } catch (error: unknown) {
+        if (revision !== saveRevision.current) return;
+        if (error instanceof QNotesHttpError && error.code === 'NOTE_VERSION_CONFLICT') {
+          setErrorMessage(error.message);
+          setStatus('conflict');
+          onConflictRef.current(error);
+        } else if (error instanceof QNotesHttpError && error.status < 500) {
+          setErrorMessage(error.message);
+          setStatus('validation-error');
+          pendingNotebookMutationIdRef.current = null;
+        }
+        throw error;
+      }
+    }
+    const normalizedTitle = payload.title.trim() || 'Untitled note';
+    const bodyUnchanged = normalizedTitle === current.title && payload.markdown === current.contentMarkdown && tagsEqual(payload.tags, current.tags);
     const requestPayload = {
-      title: payload.title.trim() || 'Untitled note',
+      title: normalizedTitle,
       slug: current.slug,
       contentMarkdown: payload.markdown,
       tags: payload.tags,
@@ -166,7 +209,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
       if (!online()) throw new Error('Network unavailable.');
       setStatus('saving');
       try {
-        const saved = await api.updateNote(current.id, requestPayload);
+        const saved = bodyUnchanged ? current : await api.updateNote(current.id, requestPayload);
         if (!mountedRef.current || revision !== saveRevision.current) return;
         authoritative.current = saved;
         setSavedAt(saved.updatedAt);
@@ -251,6 +294,9 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
       saveRevision.current += 1;
       noteIdRef.current = note.id;
       pendingMutationIdRef.current = null;
+      pendingNotebookMutationIdRef.current = null;
+      reconciliationBlockedRef.current = false;
+      blockedDraftBaseRef.current = null;
       authoritative.current = note;
       draftRef.current = valuesFromNote(note);
       valueRef.current = note.contentMarkdown;
@@ -261,6 +307,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
       setValue(note.contentMarkdown);
       setTitle(note.title);
       setTags([...note.tags]);
+      setNotebookId(note.notebookId);
       setSavedAt(note.updatedAt);
       setDirty(false);
       setAcknowledgedMutationId(null);
@@ -278,6 +325,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
       }
       setTitle(note.title);
       setTags([...note.tags]);
+      setNotebookId(note.notebookId);
       setSavedAt(note.updatedAt);
     }
   }, [note]);
@@ -285,30 +333,82 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
   useEffect(() => {
     let active = true;
     const requestedNoteId = note.id;
-    const requestedVersion = note.version;
+    const requestedUserId = userId;
     if (!store || !userId) return () => { active = false; };
     void store.get(note.id).then((draft) => {
-      if (!active || !enabledRef.current || readOnlyRef.current || noteIdRef.current !== requestedNoteId || dirtyRef.current || !draft || draft.baseVersion > requestedVersion) return;
-      const restored: DraftValues = {
-        markdown: draft.localMarkdown,
-        title: draft.localTitle ?? note.title,
-        tags: draft.localTags ? [...draft.localTags] : [...note.tags],
-        notebookId: draft.localNotebookId ?? note.notebookId,
-      };
-      if (valuesEqual(restored, valuesFromNote(note))) return;
+      if (!active || !enabledRef.current || noteIdRef.current !== requestedNoteId || userIdRef.current !== requestedUserId || dirtyRef.current || !draft) return;
+      const restored = reconcileDraft(draft, note);
+      const restoredValues = restored.values;
+      reconciliationBlockedRef.current = restored.status === 'conflict';
+      blockedDraftBaseRef.current = restored.status === 'conflict' ? {
+        baseVersion: draft.baseVersion,
+        baseMarkdown: draft.baseMarkdown,
+        ...(draft.baseTitle !== undefined ? { baseTitle: draft.baseTitle } : {}),
+        ...(draft.baseTags !== undefined ? { baseTags: [...draft.baseTags] } : {}),
+        ...(draft.baseNotebookId !== undefined ? { baseNotebookId: draft.baseNotebookId } : {}),
+      } : null;
+      pendingMutationIdRef.current = draft.mutationId ?? crypto.randomUUID();
+      pendingNotebookMutationIdRef.current = restoredValues.notebookId !== note.notebookId
+        ? draft.notebookMutationId ?? crypto.randomUUID()
+        : null;
+      if (restored.status === 'clean' && draft.baseVersion < note.version) {
+        pendingMutationIdRef.current = crypto.randomUUID();
+        if (restoredValues.notebookId !== note.notebookId) pendingNotebookMutationIdRef.current = crypto.randomUUID();
+      }
+      if (restored.status === 'clean' && valuesEqual(restoredValues, valuesFromNote(note))) {
+        void deleteDraft(note.id).catch(() => undefined);
+        pendingMutationIdRef.current = null;
+        pendingNotebookMutationIdRef.current = null;
+        return;
+      }
       editRevision.current += 1;
       draftPersistedRef.current = true;
-      markDirty(restored);
+      markDirty(restoredValues);
+      if (restored.status === 'conflict') {
+        const message = restored.reason === 'remote-deleted'
+          ? 'This note was deleted on another device. Your local draft is preserved.'
+          : restored.reason === 'newer-base'
+            ? 'This local draft is based on a newer version that is not available here. Review it before saving.'
+            : 'This local draft could not be safely reconciled with the saved note. Review it before saving.';
+        const error = new QNotesHttpError(409, 'NOTE_VERSION_CONFLICT', message, crypto.randomUUID(), {
+          currentVersion: note.version,
+          currentNote: note,
+          conflicts: restored.conflicts,
+          metadataConflicts: restored.metadataConflicts,
+          reconciledValues: restored.values,
+          localValues: {
+            markdown: draft.localMarkdown,
+            title: draft.localTitle ?? note.title,
+            tags: draft.localTags ? [...draft.localTags] : [...note.tags],
+            notebookId: draft.localNotebookId !== undefined ? draft.localNotebookId : note.notebookId,
+          },
+          draftBaseVersion: draft.baseVersion,
+          ...(draft.baseTitle !== undefined ? { draftBaseTitle: draft.baseTitle } : {}),
+          ...(draft.baseTags !== undefined ? { draftBaseTags: [...draft.baseTags] } : {}),
+          ...(draft.baseNotebookId !== undefined ? { draftBaseNotebookId: draft.baseNotebookId } : {}),
+          baseMarkdown: draft.baseMarkdown,
+          draftReason: restored.reason,
+          deleted: restored.reason === 'remote-deleted',
+        });
+        setErrorMessage(message);
+        setStatus('conflict');
+        onConflictRef.current(error);
+        return;
+      }
       setErrorMessage(null);
-      setStatus(online() ? 'pending' : 'offline');
-      coordinatorRef.current?.schedule(currentPayload());
+      const revision = editRevision.current;
+      void persistDraft(revision).then(() => {
+        if (!active || !mountedRef.current || revision !== editRevision.current || noteIdRef.current !== requestedNoteId || userIdRef.current !== requestedUserId) return;
+        setStatus(online() ? 'pending' : 'offline');
+        coordinatorRef.current?.schedule(currentPayload());
+      }).catch(() => undefined);
     }).catch((error: unknown) => {
-      if (!active || noteIdRef.current !== requestedNoteId) return;
+      if (!active || noteIdRef.current !== requestedNoteId || userIdRef.current !== requestedUserId) return;
       setErrorMessage(error instanceof Error ? error.message : 'Local draft storage is unavailable.');
       setStatus('storage-error');
     });
     return () => { active = false; };
-  }, [enabled, note.id, note.version]);
+  }, [enabled, note.id, note.version, store, userId]);
 
   useEffect(() => {
     const updateOnline = () => {
@@ -338,13 +438,20 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
   const change = useCallback((next: string) => {
     if (readOnlyRef.current) return;
     editRevision.current += 1;
-    pendingMutationIdRef.current = null;
+    pendingMutationIdRef.current = crypto.randomUUID();
     const nextValues = { ...draftRef.current, markdown: next, tags: [...draftRef.current.tags] };
     const isDirty = markDirty(nextValues);
-    setErrorMessage(null);
+    if (!reconciliationBlockedRef.current) setErrorMessage(null);
+    if (reconciliationBlockedRef.current) {
+      setStatus('conflict');
+      void persistDraft(editRevision.current).catch(() => undefined);
+      return;
+    }
     if (!isDirty) {
       coordinatorRef.current?.cancelPending();
       void deleteDraft(authoritative.current.id).catch(() => undefined);
+      pendingMutationIdRef.current = null;
+      pendingNotebookMutationIdRef.current = null;
       draftPersistedRef.current = false;
       draftStorageFailedRef.current = false;
       setStatus('saved');
@@ -358,18 +465,50 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
   const changeMetadata = useCallback((next: { title?: string; tags?: string[] }) => {
     if (readOnlyRef.current) return;
     editRevision.current += 1;
-    pendingMutationIdRef.current = null;
+    pendingMutationIdRef.current = crypto.randomUUID();
     const nextValues = {
       ...draftRef.current,
       title: next.title ?? draftRef.current.title,
       tags: next.tags ? [...next.tags] : [...draftRef.current.tags],
     };
     const isDirty = markDirty(nextValues);
-    setErrorMessage(null);
+    if (!reconciliationBlockedRef.current) setErrorMessage(null);
+    if (reconciliationBlockedRef.current) {
+      setStatus('conflict');
+      void persistDraft(editRevision.current).catch(() => undefined);
+      return;
+    }
     if (!isDirty) {
       coordinatorRef.current?.cancelPending();
       void deleteDraft(authoritative.current.id).catch(() => undefined);
+      pendingMutationIdRef.current = null;
+      pendingNotebookMutationIdRef.current = null;
       draftPersistedRef.current = false;
+      setStatus('saved');
+      return;
+    }
+    setStatus('pending');
+    void persistDraft(editRevision.current).catch(() => undefined);
+    coordinatorRef.current?.schedule(currentPayload());
+  }, []);
+  const changeNotebook = useCallback((next: Note['notebookId']) => {
+    if (readOnlyRef.current) return;
+    editRevision.current += 1;
+    pendingNotebookMutationIdRef.current = next === authoritative.current.notebookId ? null : crypto.randomUUID();
+    const isDirty = markDirty({ ...draftRef.current, notebookId: next, tags: [...draftRef.current.tags] });
+    if (!reconciliationBlockedRef.current) setErrorMessage(null);
+    if (reconciliationBlockedRef.current) {
+      setStatus('conflict');
+      void persistDraft(editRevision.current).catch(() => undefined);
+      return;
+    }
+    if (!isDirty) {
+      coordinatorRef.current?.cancelPending();
+      void deleteDraft(authoritative.current.id).catch(() => undefined);
+      pendingMutationIdRef.current = null;
+      pendingNotebookMutationIdRef.current = null;
+      draftPersistedRef.current = false;
+      draftStorageFailedRef.current = false;
       setStatus('saved');
       return;
     }
@@ -379,6 +518,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
   }, []);
 
   const flush = useCallback(async () => {
+    if (reconciliationBlockedRef.current) throw new Error('Resolve the note conflict before saving.');
     try {
       await (coordinatorRef.current?.flush() ?? Promise.resolve());
     } catch (error: unknown) {
@@ -391,7 +531,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
     await persistDraft(editRevision.current);
   }, []);
   const retry = useCallback(() => {
-    if (!dirtyRef.current || readOnlyRef.current) return;
+    if (!dirtyRef.current || readOnlyRef.current || reconciliationBlockedRef.current) return;
     setErrorMessage(null);
     setStatus('pending');
     coordinatorRef.current?.schedule(currentPayload());
@@ -399,6 +539,9 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
   const adoptRemote = useCallback((nextNote: Note) => {
     saveRevision.current += 1;
     pendingMutationIdRef.current = null;
+    pendingNotebookMutationIdRef.current = null;
+    reconciliationBlockedRef.current = false;
+    blockedDraftBaseRef.current = null;
     coordinatorRef.current?.cancelPending();
     authoritative.current = nextNote;
     draftRef.current = valuesFromNote(nextNote);
@@ -410,6 +553,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
     setValue(nextNote.contentMarkdown);
     setTitle(nextNote.title);
     setTags([...nextNote.tags]);
+    setNotebookId(nextNote.notebookId);
     setSavedAt(nextNote.updatedAt);
     setDirty(false);
     setAcknowledgedMutationId(null);
@@ -419,10 +563,26 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
     setStatus('saved');
     void deleteDraft(nextNote.id).catch(() => undefined);
   }, [store]);
+  const blockAutosave = useCallback(() => {
+    saveRevision.current += 1;
+    if (!blockedDraftBaseRef.current) {
+      const current = authoritative.current;
+      blockedDraftBaseRef.current = {
+        baseVersion: current.version,
+        baseMarkdown: current.contentMarkdown,
+        baseTitle: current.title,
+        baseTags: [...current.tags],
+        baseNotebookId: current.notebookId,
+      };
+    }
+    reconciliationBlockedRef.current = true;
+    coordinatorRef.current?.cancelPending();
+    setStatus('conflict');
+  }, []);
   const acknowledgeMutation = useCallback((mutationId: string) => {
     acknowledgedMutationIdRef.current = mutationId;
     setAcknowledgedMutationId(mutationId);
   }, []);
   const isMutationAcknowledged = useCallback((mutationId: string) => acknowledgedMutationIdRef.current === mutationId, []);
-  return { value, title, tags, status, savedAt, dirty, errorMessage, acknowledgedMutationId, change, changeMetadata, flush, preserveDraft, retry, adoptRemote, acknowledgeMutation, isMutationAcknowledged };
+  return { value, title, tags, notebookId, status, savedAt, dirty, errorMessage, acknowledgedMutationId, change, changeMetadata, changeNotebook, flush, preserveDraft, retry, adoptRemote, blockAutosave, acknowledgeMutation, isMutationAcknowledged };
 }
