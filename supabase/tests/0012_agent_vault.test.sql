@@ -1,5 +1,5 @@
 begin;
-select plan(73);
+select plan(80);
 
 select ok(to_regclass('notesdb.vault_projects') is not null, 'Vault projects table exists');
 select ok(to_regclass('notesdb.vault_environments') is not null, 'Vault environments table exists');
@@ -17,6 +17,10 @@ select ok((select p.prosecdef from pg_proc p where p.oid = 'public.qnotes_vault_
 select ok(not has_function_privilege('anon', 'public.qnotes_vault_reveal_secret(uuid,uuid,uuid,text,uuid,text)', 'EXECUTE'), 'anon cannot execute the reveal RPC');
 select ok(not has_function_privilege('authenticated', 'public.qnotes_vault_reveal_secret(uuid,uuid,uuid,text,uuid,text)', 'EXECUTE'), 'authenticated cannot execute the reveal RPC');
 select ok(has_function_privilege('service_role', 'public.qnotes_vault_reveal_secret(uuid,uuid,uuid,text,uuid,text)', 'EXECUTE'), 'service_role can execute the reveal RPC');
+select ok((select p.prosecdef from pg_proc p where p.oid = 'public.qnotes_vault_rotate_secret(uuid,uuid,text,text,bigint,uuid,text,text,uuid,uuid,text)'::regprocedure), 'Vault rotate RPC is SECURITY DEFINER');
+select ok(not has_function_privilege('anon', 'public.qnotes_vault_rotate_secret(uuid,uuid,text,text,bigint,uuid,text,text,uuid,uuid,text)', 'EXECUTE'), 'anon cannot execute the rotate RPC');
+select ok(not has_function_privilege('authenticated', 'public.qnotes_vault_rotate_secret(uuid,uuid,text,text,bigint,uuid,text,text,uuid,uuid,text)', 'EXECUTE'), 'authenticated cannot execute the rotate RPC');
+select ok(has_function_privilege('service_role', 'public.qnotes_vault_rotate_secret(uuid,uuid,text,text,bigint,uuid,text,text,uuid,uuid,text)', 'EXECUTE'), 'service_role can execute the rotate RPC');
 
 insert into notesdb.vault_projects (id, owner_id, slug, name)
 values
@@ -110,6 +114,7 @@ select public.qnotes_vault_rotate_secret(
   'a1000000-0000-4000-8000-000000000021',
   repeat('e', 64),
   null,
+  null,
   'a1000000-0000-4000-8000-000000000022',
   'user_jwt'
 ) as response;
@@ -117,7 +122,7 @@ select public.qnotes_vault_rotate_secret(
 select is((select response->>'status' from vault_rpc_rotate_a), 'ok', 'rotate returns ok at the expected version');
 select is((select (response->'secret'->>'version')::bigint from vault_rpc_rotate_a), 2::bigint, 'a successful rotate increments the version once');
 select ok((select count(*) = 1 from notesdb.vault_audit_events where action = 'secret:write' and secret_id = ((select response->'secret'->>'id' from vault_rpc_create_a))::uuid and success and result_code = 'rotated' and request_id = 'a1000000-0000-4000-8000-000000000022'), 'rotate writes a success audit event');
-select ok((select count(*) = 1 from notesdb.vault_mutations where owner_id = (select id from auth.users where email = 'owner@qnotes.local') and mutation_id = 'a1000000-0000-4000-8000-000000000021' and operation = 'rotated'), 'rotate writes one mutation receipt');
+select ok((select count(*) = 1 from notesdb.vault_mutations where owner_id = (select id from auth.users where email = 'owner@qnotes.local') and mutation_id = 'a1000000-0000-4000-8000-000000000021' and operation = 'rotated' and request_hash = repeat('e', 64)), 'rotate writes one current-hash mutation receipt');
 
 select is((public.qnotes_vault_rotate_secret(
   (select id from auth.users where email = 'owner@qnotes.local'),
@@ -127,6 +132,7 @@ select is((public.qnotes_vault_rotate_secret(
   1,
   'a1000000-0000-4000-8000-000000000021',
   repeat('e', 64),
+  null,
   null,
   'a1000000-0000-4000-8000-000000000023',
   'user_jwt'
@@ -139,7 +145,8 @@ select is((public.qnotes_vault_rotate_secret(
   'synthetic rotated metadata',
   2,
   'a1000000-0000-4000-8000-000000000021',
-  repeat('f', 64),
+  repeat('e', 64),
+  null,
   null,
   'a1000000-0000-4000-8000-000000000024',
   'user_jwt'
@@ -153,6 +160,7 @@ select is((public.qnotes_vault_rotate_secret(
   'a1000000-0000-4000-8000-000000000025',
   repeat('1', 64),
   null,
+  null,
   'a1000000-0000-4000-8000-000000000026',
   'user_jwt'
 )->>'status'), 'version_conflict', 'a new stale rotate returns a version conflict');
@@ -165,10 +173,45 @@ select is((public.qnotes_vault_rotate_secret(
   'a1000000-0000-4000-8000-000000000027',
   repeat('2', 64),
   null,
+  null,
   'a1000000-0000-4000-8000-000000000028',
   'user_jwt'
 )->>'currentVersion'), '2', 'a rotate version conflicts return the authoritative version');
 select is((select version from notesdb.vault_secrets where id = ((select response->'secret'->>'id' from vault_rpc_create_a))::uuid), 2::bigint, 'a stale rotate leaves the current version unchanged');
+
+-- Replace the current receipt hash with the pre-deployment shape to model a
+-- production receipt created before expectedVersion became hash-bound.
+update notesdb.vault_mutations
+set request_hash = repeat('l', 64)
+where owner_id = (select id from auth.users where email = 'owner@qnotes.local')
+  and mutation_id = 'a1000000-0000-4000-8000-000000000021';
+select is((public.qnotes_vault_rotate_secret(
+  (select id from auth.users where email = 'owner@qnotes.local'),
+  ((select response->'secret'->>'id' from vault_rpc_create_a))::uuid,
+  (select rotated_value from vault_rpc_test_values),
+  'synthetic rotated metadata',
+  1,
+  'a1000000-0000-4000-8000-000000000021',
+  repeat('e', 64),
+  repeat('l', 64),
+  null,
+  'a1000000-0000-4000-8000-000000000029',
+  'user_jwt'
+)->>'status'), 'idempotent', 'an unchanged pre-deployment rotate replays through the legacy hash');
+select is((select version from notesdb.vault_secrets where id = ((select response->'secret'->>'id' from vault_rpc_create_a))::uuid), 2::bigint, 'a legacy rotate replay does not increment the version');
+select is((public.qnotes_vault_rotate_secret(
+  (select id from auth.users where email = 'owner@qnotes.local'),
+  ((select response->'secret'->>'id' from vault_rpc_create_a))::uuid,
+  (select rotated_value from vault_rpc_test_values),
+  'synthetic rotated metadata',
+  2,
+  'a1000000-0000-4000-8000-000000000021',
+  repeat('f', 64),
+  repeat('l', 64),
+  null,
+  'a1000000-0000-4000-8000-000000000030',
+  'user_jwt'
+)->>'status'), 'mutation_reuse_conflict', 'a legacy rotate mutation cannot be reused with a different expected version');
 
 select is((public.qnotes_vault_delete_secret(
   (select id from auth.users where email = 'owner@qnotes.local'),
@@ -390,6 +433,7 @@ select is((public.qnotes_vault_rotate_secret(
   1,
   'a1000000-0000-4000-8000-000000000053',
   repeat('a', 64),
+  null,
   null,
   'a1000000-0000-4000-8000-000000000054',
   'user_jwt'
