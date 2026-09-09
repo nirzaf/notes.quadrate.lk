@@ -40,6 +40,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
   const [value, setValue] = useState(note.contentMarkdown);
   const [title, setTitle] = useState(note.title);
   const [tags, setTags] = useState<string[]>(note.tags);
+  const [notebookId, setNotebookId] = useState<Note['notebookId']>(note.notebookId);
   const [savedAt, setSavedAt] = useState(note.updatedAt);
   const [status, setStatus] = useState<SyncStatus>('saved');
   const [dirty, setDirty] = useState(false);
@@ -51,6 +52,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
   const noteIdRef = useRef(note.id);
   const acknowledgedMutationIdRef = useRef<string | null>(null);
   const pendingMutationIdRef = useRef<string | null>(null);
+  const pendingNotebookMutationIdRef = useRef<string | null>(null);
   const saveRevision = useRef(0);
   const editRevision = useRef(0);
   const dirtyRef = useRef(false);
@@ -84,6 +86,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
     setValue(next.markdown);
     setTitle(next.title);
     setTags([...next.tags]);
+    setNotebookId(next.notebookId);
     dirtyRef.current = isDirty;
     setDirty(isDirty);
     onDirtyRef.current?.(isDirty);
@@ -94,6 +97,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
     const base = authoritative.current;
     const local = draftRef.current;
     const mutationId = pendingMutationIdRef.current ?? crypto.randomUUID();
+    const notebookMutationId = pendingNotebookMutationIdRef.current;
     pendingMutationIdRef.current = mutationId;
     const write = draftWriteChainRef.current.then(async () => {
       if (!store || !userIdRef.current) throw new Error('Local draft storage is unavailable for this account.');
@@ -103,6 +107,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
         baseMarkdown: base.contentMarkdown,
         localMarkdown: local.markdown,
         mutationId,
+        ...(notebookMutationId ? { notebookMutationId } : {}),
         baseTitle: base.title,
         localTitle: local.title,
         baseTags: [...base.tags],
@@ -138,12 +143,42 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
   saveHandler.current = async (payload) => {
     if (!mountedRef.current || readOnlyRef.current || !enabledRef.current || !userIdRef.current) throw new Error('This note session is no longer authenticated.');
     const revision = saveRevision.current;
-    const current = authoritative.current;
+    let current = authoritative.current;
     if (payload.noteId !== current.id || payload.userId !== userIdRef.current) throw new Error('This note save belongs to an inactive session.');
     const mutationId = pendingMutationIdRef.current ?? crypto.randomUUID();
     pendingMutationIdRef.current = mutationId;
+    if (payload.notebookId !== current.notebookId) {
+      const notebookMutationId = pendingNotebookMutationIdRef.current ?? crypto.randomUUID();
+      pendingNotebookMutationIdRef.current = notebookMutationId;
+      try {
+        setStatus('saving');
+        const moved = await api.moveNoteToNotebook(current.id, { notebookId: payload.notebookId, expectedVersion: current.version, deviceId: getDeviceId(), mutationId: notebookMutationId });
+        if (!mountedRef.current || revision !== saveRevision.current) return;
+        current = moved;
+        authoritative.current = moved;
+        setSavedAt(moved.updatedAt);
+        void rememberNote(moved, userIdRef.current).catch(() => undefined);
+        onSavedRef.current(moved);
+        pendingNotebookMutationIdRef.current = null;
+        await persistDraft(editRevision.current);
+      } catch (error: unknown) {
+        if (revision !== saveRevision.current) return;
+        if (error instanceof QNotesHttpError && error.code === 'NOTE_VERSION_CONFLICT') {
+          setErrorMessage(error.message);
+          setStatus('conflict');
+          onConflictRef.current(error);
+        } else if (error instanceof QNotesHttpError && error.status < 500) {
+          setErrorMessage(error.message);
+          setStatus('validation-error');
+          pendingNotebookMutationIdRef.current = null;
+        }
+        throw error;
+      }
+    }
+    const normalizedTitle = payload.title.trim() || 'Untitled note';
+    const bodyUnchanged = normalizedTitle === current.title && payload.markdown === current.contentMarkdown && tagsEqual(payload.tags, current.tags);
     const requestPayload = {
-      title: payload.title.trim() || 'Untitled note',
+      title: normalizedTitle,
       slug: current.slug,
       contentMarkdown: payload.markdown,
       tags: payload.tags,
@@ -162,7 +197,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
       if (!online()) throw new Error('Network unavailable.');
       setStatus('saving');
       try {
-        const saved = await api.updateNote(current.id, requestPayload);
+        const saved = bodyUnchanged ? current : await api.updateNote(current.id, requestPayload);
         if (!mountedRef.current || revision !== saveRevision.current) return;
         authoritative.current = saved;
         setSavedAt(saved.updatedAt);
@@ -247,6 +282,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
       saveRevision.current += 1;
       noteIdRef.current = note.id;
       pendingMutationIdRef.current = null;
+      pendingNotebookMutationIdRef.current = null;
       authoritative.current = note;
       draftRef.current = valuesFromNote(note);
       valueRef.current = note.contentMarkdown;
@@ -257,6 +293,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
       setValue(note.contentMarkdown);
       setTitle(note.title);
       setTags([...note.tags]);
+      setNotebookId(note.notebookId);
       setSavedAt(note.updatedAt);
       setDirty(false);
       setAcknowledgedMutationId(null);
@@ -274,6 +311,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
       }
       setTitle(note.title);
       setTags([...note.tags]);
+      setNotebookId(note.notebookId);
       setSavedAt(note.updatedAt);
     }
   }, [note]);
@@ -288,8 +326,14 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
       const restored = reconcileDraft(draft, note);
       const restoredValues = restored.values;
       pendingMutationIdRef.current = draft.mutationId ?? crypto.randomUUID();
+      pendingNotebookMutationIdRef.current = restoredValues.notebookId !== note.notebookId
+        ? draft.notebookMutationId ?? crypto.randomUUID()
+        : null;
+      if (restored.status === 'clean' && draft.baseVersion < note.version) pendingMutationIdRef.current = crypto.randomUUID();
       if (restored.status === 'clean' && valuesEqual(restoredValues, valuesFromNote(note))) {
         void deleteDraft(note.id).catch(() => undefined);
+        pendingMutationIdRef.current = null;
+        pendingNotebookMutationIdRef.current = null;
         return;
       }
       editRevision.current += 1;
@@ -365,6 +409,8 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
     if (!isDirty) {
       coordinatorRef.current?.cancelPending();
       void deleteDraft(authoritative.current.id).catch(() => undefined);
+      pendingMutationIdRef.current = null;
+      pendingNotebookMutationIdRef.current = null;
       draftPersistedRef.current = false;
       draftStorageFailedRef.current = false;
       setStatus('saved');
@@ -389,7 +435,29 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
     if (!isDirty) {
       coordinatorRef.current?.cancelPending();
       void deleteDraft(authoritative.current.id).catch(() => undefined);
+      pendingMutationIdRef.current = null;
+      pendingNotebookMutationIdRef.current = null;
       draftPersistedRef.current = false;
+      setStatus('saved');
+      return;
+    }
+    setStatus('pending');
+    void persistDraft(editRevision.current).catch(() => undefined);
+    coordinatorRef.current?.schedule(currentPayload());
+  }, []);
+  const changeNotebook = useCallback((next: Note['notebookId']) => {
+    if (readOnlyRef.current) return;
+    editRevision.current += 1;
+    pendingNotebookMutationIdRef.current = next === authoritative.current.notebookId ? null : crypto.randomUUID();
+    const isDirty = markDirty({ ...draftRef.current, notebookId: next, tags: [...draftRef.current.tags] });
+    setErrorMessage(null);
+    if (!isDirty) {
+      coordinatorRef.current?.cancelPending();
+      void deleteDraft(authoritative.current.id).catch(() => undefined);
+      pendingMutationIdRef.current = null;
+      pendingNotebookMutationIdRef.current = null;
+      draftPersistedRef.current = false;
+      draftStorageFailedRef.current = false;
       setStatus('saved');
       return;
     }
@@ -419,6 +487,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
   const adoptRemote = useCallback((nextNote: Note) => {
     saveRevision.current += 1;
     pendingMutationIdRef.current = null;
+    pendingNotebookMutationIdRef.current = null;
     coordinatorRef.current?.cancelPending();
     authoritative.current = nextNote;
     draftRef.current = valuesFromNote(nextNote);
@@ -430,6 +499,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
     setValue(nextNote.contentMarkdown);
     setTitle(nextNote.title);
     setTags([...nextNote.tags]);
+    setNotebookId(nextNote.notebookId);
     setSavedAt(nextNote.updatedAt);
     setDirty(false);
     setAcknowledgedMutationId(null);
@@ -444,5 +514,5 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
     setAcknowledgedMutationId(mutationId);
   }, []);
   const isMutationAcknowledged = useCallback((mutationId: string) => acknowledgedMutationIdRef.current === mutationId, []);
-  return { value, title, tags, status, savedAt, dirty, errorMessage, acknowledgedMutationId, change, changeMetadata, flush, preserveDraft, retry, adoptRemote, acknowledgeMutation, isMutationAcknowledged };
+  return { value, title, tags, notebookId, status, savedAt, dirty, errorMessage, acknowledgedMutationId, change, changeMetadata, changeNotebook, flush, preserveDraft, retry, adoptRemote, acknowledgeMutation, isMutationAcknowledged };
 }

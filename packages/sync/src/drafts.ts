@@ -7,6 +7,8 @@ export interface NoteDraft {
   localMarkdown: string;
   /** Stable retry identity persisted before an autosave request is sent. */
   mutationId?: UUID;
+  /** Stable retry identity for a recovered notebook move sent separately. */
+  notebookMutationId?: UUID;
   /** Optional so drafts written before metadata recovery was added remain readable. */
   baseTitle?: string;
   localTitle?: string;

@@ -142,6 +142,12 @@ test('preserves a dirty draft and can recover it after remote deletion', async (
 
 test('reconciles a persisted older draft with a newer remote version after reload', async ({ browser }) => {
   const session = await signInSession();
+  const notebookResponse = await apiJson('/api/notebooks', session.access_token, { method: 'POST', body: JSON.stringify({ name: `Recovered ${crypto.randomUUID()}` }) });
+  const notebookId = notebookResponse.response.ok && notebookResponse.body && typeof notebookResponse.body === 'object' && 'data' in notebookResponse.body
+    && notebookResponse.body.data && typeof notebookResponse.body.data === 'object' && 'id' in notebookResponse.body.data && typeof notebookResponse.body.data.id === 'string'
+    ? notebookResponse.body.data.id
+    : null;
+  if (!notebookId) throw new Error(`Unable to create the recovery notebook: ${JSON.stringify(notebookResponse.body)}`);
   const note = await createNoteApi(session.access_token, `Reload recovery ${crypto.randomUUID()}`, 'alpha\nbeta\ngamma\n');
   const device = await createDevice(browser);
   try {
@@ -175,13 +181,13 @@ test('reconciles a persisted older draft with a newer remote version after reloa
         baseTags: [],
         localTags: [],
         baseNotebookId: null,
-        localNotebookId: null,
+        localNotebookId: notebookId,
         updatedAt: new Date().toISOString(),
       },
     });
     await updateNoteApi(session.access_token, note, 'alpha\nbeta\nremote gamma\n');
     await device.page.reload();
-    await expect.poll(async () => (await getNoteApi(session.access_token, note.id)).contentMarkdown, { timeout: 15_000 }).toBe('local alpha\nbeta\nremote gamma\n');
+    await expect.poll(async () => await getNoteApi(session.access_token, note.id), { timeout: 15_000 }).toMatchObject({ contentMarkdown: 'local alpha\nbeta\nremote gamma\n', notebookId });
     await device.page.getByRole('button', { name: 'Edit', exact: true }).click();
     await expectEditorMode(device.page);
     await expect(device.page.locator('.cm-content')).toContainText('local alpha');

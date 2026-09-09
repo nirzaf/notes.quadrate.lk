@@ -235,20 +235,20 @@ function LoadedNoteSession({ note, userId, search, queryKeys }: LoadedNoteSessio
   };
   const saveMine = () => {
     if (!conflict?.remote) return;
-    const localMarkdown = autosave.value; const localTitle = autosave.title; const localTags = [...autosave.tags];
-    autosave.adoptRemote(conflict.remote); autosave.changeMetadata({ title: localTitle, tags: localTags }); autosave.change(localMarkdown); setConflict(null); void autosave.flush().catch(() => undefined);
+    const localMarkdown = autosave.value; const localTitle = autosave.title; const localTags = [...autosave.tags]; const localNotebookId = autosave.notebookId;
+    autosave.adoptRemote(conflict.remote); autosave.changeMetadata({ title: localTitle, tags: localTags }); autosave.changeNotebook(localNotebookId); autosave.change(localMarkdown); setConflict(null); void autosave.flush().catch(() => undefined);
   };
   const saveRemote = () => { if (!conflict?.remote) return; autosave.adoptRemote(conflict.remote); queryClient.setQueryData(queryKeys.note(note.id), conflict.remote); setConflict(null); };
   const saveMerged = (markdown: string) => {
     if (!conflict?.remote) return;
-    const localTitle = autosave.title; const localTags = [...autosave.tags];
-    autosave.adoptRemote(conflict.remote); autosave.changeMetadata({ title: localTitle, tags: localTags }); autosave.change(markdown); setConflict(null); void autosave.flush().catch(() => undefined);
+    const localTitle = autosave.title; const localTags = [...autosave.tags]; const localNotebookId = autosave.notebookId;
+    autosave.adoptRemote(conflict.remote); autosave.changeMetadata({ title: localTitle, tags: localTags }); autosave.changeNotebook(localNotebookId); autosave.change(markdown); setConflict(null); void autosave.flush().catch(() => undefined);
   };
   const saveAsNew = async () => {
     if (!conflict?.remoteDeleted) return;
     try {
       const recoveredTitle = `${autosave.title || 'Untitled note'} (recovered)`.slice(0, MAX_TITLE_LENGTH);
-      const recovered = await api.createNote({ title: recoveredTitle, contentMarkdown: autosave.value, tags: autosave.tags, notebookId: note.notebookId, deviceId: getDeviceId(), mutationId: crypto.randomUUID() });
+      const recovered = await api.createNote({ title: recoveredTitle, contentMarkdown: autosave.value, tags: autosave.tags, notebookId: autosave.notebookId, deviceId: getDeviceId(), mutationId: crypto.randomUUID() });
       if (conflict.remote) autosave.adoptRemote(conflict.remote);
       queryClient.setQueryData(queryKeys.note(recovered.id), recovered); await refreshNoteViews(queryClient, userId, recovered.id); setConflict(null); toast('Draft saved as a new note.', 'success'); await navigate({ to: '/notes/$noteId', params: { noteId: recovered.id } });
     } catch (error: unknown) { toast(error instanceof Error ? error.message : 'Unable to recover the draft.', 'error'); }
