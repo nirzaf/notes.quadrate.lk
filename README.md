@@ -19,6 +19,23 @@ The repository is a pnpm monorepo. The web app is a Vite/React PWA, the API is a
 
 The repository ships a native stdio MCP server in `packages/mcp-server` and a hosted, read-only-by-default Streamable HTTP MCP endpoint for Gemini Spark at `https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-mcp`, including standard OAuth discovery, dynamic client registration, PKCE consent, and public-share resolution through `resolve_public_share`. The native `write` profile omits public-share creation by default; set `QNOTES_MCP_ENABLE_PUBLIC_SHARE=true` only when its `QNOTES_WRITE_TOKEN` also has `shares:write`, or use the separate least-privilege `share` profile. An explicitly configured `QNOTES_MCP_PROFILE=share` hosted deployment can additionally expose guarded, 24-hour public-share creation when the authenticated caller’s personal token has `shares:write`; no shared owner credential is configured. Unknown or absent profile values remain read-only. See [API_ACCESS_GUIDE.md](API_ACCESS_GUIDE.md) for the REST API, CLI, JavaScript client, and MCP setup.
 
+## QNotes for Hermes companion plugin
+
+QNotes also ships an external native Hermes companion under
+`integrations/hermes-plugin/`. It registers only `/qnotes`, `/qnotes-help`,
+`/qnotes-status`, and the explicit `qnotes:workflow` skill; the existing stdio
+MCP server remains the sole implementation of Notes and Vault business tools.
+Build the trusted workspace first, then use
+`scripts/export-hermes-plugin-config.mjs` to create a reviewable fragment.
+The exporter delegates tool/profile truth to `buildHermesMcpConfig()`, emits
+placeholders only, and does not write Hermes configuration or contact the API.
+Use a disposable `HERMES_HOME` for Plugin Doctor and the real loader/MCP
+handshake. The tested Hermes v0.21 CLI has no `hermes plugins compat`
+subcommand; re-check `hermes plugins --help` before using a compatibility
+command from a newer release. Use a pinned reviewed source commit for
+installation. Publication and production deployment are separate operations
+and are not performed by the plugin.
+
 ## Using the web app
 
 Open `/login` to sign in or create an account. Authenticated users land on the private notes workspace at `/`.
