@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { getBlockTool } from '../dist/tools/get-block.js';
 import { readNoteContextTool } from '../dist/tools/read-note-context.js';
 import { createPublicShareTool } from '../dist/tools/create-public-share.js';
 import { searchNotesTool } from '../dist/tools/search-notes.js';
 import { appendNoteTool, captureNoteTool, deleteNoteTool, restoreNoteTool, updateNoteTool } from '../dist/tools/write-notes.js';
 import { appendMarkdown } from '../dist/tools/common.js';
-import { READ_TOOL_NAMES, SHARE_PROFILE_TOOL_NAMES, SHARE_TOOL_NAMES, WRITE_PROFILE_TOOL_NAMES, WRITE_TOOL_NAMES, createQNotesMcpServer } from '../dist/server.js';
+import { PROFILE_TOOL_NAMES, READ_TOOL_NAMES, SHARE_PROFILE_TOOL_NAMES, SHARE_TOOL_NAMES, WRITE_PROFILE_TOOL_NAMES, WRITE_TOOL_NAMES, createQNotesMcpServer } from '../dist/server.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
@@ -301,6 +302,20 @@ test('MCP protocol advertises the exact read and write tool profiles', async () 
   assert.equal(readToolNames.includes('create_notebook'), false);
   await readAgain.client.close();
   await write.client.close();
+});
+
+test('hosted qnotes-mcp passes no Vault options and exposes only Notes tools', async () => {
+  const hostedSource = await readFile(new URL('../../../supabase/functions/qnotes-mcp/index.ts', import.meta.url), 'utf8');
+  assert.match(hostedSource, /const server = createQNotesMcpServer\(client, HOSTED_MCP_PROFILE\);/);
+  assert.doesNotMatch(hostedSource, /\b(?:QVaultClient|QVAULT_[A-Z_]+|vaultClient|vaultProfile|vault_[a-z_]+)\b/);
+
+  for (const profile of ['read', 'share']) {
+    const { client } = await connectedProtocol(profile, protocolClient());
+    const tools = await client.listTools();
+    assert.deepEqual(tools.tools.map((tool) => tool.name), PROFILE_TOOL_NAMES[profile]);
+    assert.equal(tools.tools.some((tool) => tool.name.startsWith('vault_')), false);
+    await client.close();
+  }
 });
 
 test('MCP write profile registers create_public_share only with the explicit capability', async () => {

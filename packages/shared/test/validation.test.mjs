@@ -93,7 +93,7 @@ test('validates optional append versions and generates a parseable Hermes config
 test('accepts the least-privilege share scope and generates a share MCP profile', () => {
   assert.deepEqual(validateTokenInput({ name: 'Share agent', scopes: ['notes:read', 'search:read', 'shares:write'], expiresAt: null }).scopes, ['notes:read', 'search:read', 'shares:write']);
   const config = JSON.parse(buildHermesMcpConfig({ profile: 'share', serverPath: '/repo/packages/mcp-server/dist/index.js' }));
-  assert.deepEqual(config.mcp_servers.qnotes_share.env, { QNOTES_URL: '${QNOTES_URL}', QNOTES_TOKEN: '${QNOTES_TOKEN}' });
+  assert.deepEqual(config.mcp_servers.qnotes_share.env, { QNOTES_URL: '${QNOTES_URL}', QNOTES_TOKEN: '${QNOTES_TOKEN}', QNOTES_MCP_PROFILE: 'share' });
   assert.deepEqual(config.mcp_servers.qnotes_share.tools.include, ['search_notes', 'read_note_context', 'get_block', 'list_notebooks', 'resolve_public_share', 'create_public_share']);
 });
 
