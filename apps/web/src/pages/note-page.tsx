@@ -123,6 +123,7 @@ function LoadedNoteSession({ note, userId, search, queryKeys }: LoadedNoteSessio
   const [deleteBlocked, setDeleteBlocked] = useState(false);
   const [resolvingRemote, setResolvingRemote] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const noteRef = useRef(note);
   const notesQuery = useQuery({ queryKey: queryKeys.sidebar, queryFn: ({ signal }) => api.listNotes({ limit: 50, signal }) });
   const notebooksQuery = useQuery({ queryKey: queryKeys.notebooks, queryFn: ({ signal }) => api.listNotebooks({ signal }) });
   const attachmentsQuery = useQuery({ queryKey: queryKeys.attachments(note.id), queryFn: ({ signal }) => api.listAttachments(note.id, { signal }) });
@@ -137,8 +138,9 @@ function LoadedNoteSession({ note, userId, search, queryKeys }: LoadedNoteSessio
     const metadataConflicts = Array.isArray(details?.metadataConflicts) ? details.metadataConflicts as DraftMetadataConflict[] : [];
     const localValues = details?.localValues && typeof details.localValues === 'object' ? details.localValues as DraftValues : undefined;
     const reconciledValues = details?.reconciledValues && typeof details.reconciledValues === 'object' ? details.reconciledValues as DraftValues : undefined;
-    const baseValues = valuesFromNote(note);
-    setConflict({ error, remote: asNote(details?.currentNote), baseVersion: typeof details?.draftBaseVersion === 'number' ? details.draftBaseVersion : note.version, baseValues, remoteDeleted: Boolean(details && 'deleted' in details && details.deleted), ...(typeof details?.baseMarkdown === 'string' ? { baseMarkdown: details.baseMarkdown } : {}), ...(localValues ? { localValues } : {}), ...(metadataConflicts.length ? { metadataConflicts } : {}), ...(reconciledValues ? { reconciledValues } : {}) });
+    const baseNote = noteRef.current;
+    const baseValues = valuesFromNote(baseNote);
+    setConflict({ error, remote: asNote(details?.currentNote), baseVersion: typeof details?.draftBaseVersion === 'number' ? details.draftBaseVersion : baseNote.version, baseValues, remoteDeleted: Boolean(details && 'deleted' in details && details.deleted), ...(typeof details?.baseMarkdown === 'string' ? { baseMarkdown: details.baseMarkdown } : {}), ...(localValues ? { localValues } : {}), ...(metadataConflicts.length ? { metadataConflicts } : {}), ...(reconciledValues ? { reconciledValues } : {}) });
   }, []);
   useEffect(() => { if (conflict) setConflictOpen(true); }, [conflict]);
   const autosave = useNoteAutosave({ note, onSaved, onConflict, readOnly: Boolean(note.deletedAt) });
@@ -156,7 +158,6 @@ function LoadedNoteSession({ note, userId, search, queryKeys }: LoadedNoteSessio
     onError: (error) => toast(error instanceof Error ? error.message : 'Unable to create note. Try again.', 'error'),
   });
   const { syncing, recover } = useSyncRecovery();
-  const noteRef = useRef(note);
   const autosaveRef = useRef(autosave);
   const recoverRef = useRef(recover);
   const conflictRef = useRef(conflict);
@@ -333,6 +334,10 @@ function LoadedNoteSession({ note, userId, search, queryKeys }: LoadedNoteSessio
     resolvingRemoteRef.current = true;
     setResolvingRemote(true);
     void api.getNote(note.id, { includeDeleted: true }).then((remote) => {
+      if (remote.deletedAt) {
+        setConflict((current) => current ? { ...current, remote, remoteDeleted: true } : current);
+        return;
+      }
       autosave.adoptRemote(remote);
       queryClient.setQueryData(queryKeys.note(note.id), remote);
       setConflict(null);
