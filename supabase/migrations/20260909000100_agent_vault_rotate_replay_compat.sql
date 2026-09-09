@@ -1,8 +1,6 @@
 -- Preserve retries for rotate receipts created before expectedVersion became
 -- part of the request hash. New receipts continue to store p_request_hash.
 
-drop function if exists public.qnotes_vault_rotate_secret(uuid, uuid, text, text, bigint, uuid, text, uuid, uuid, text);
-
 create or replace function public.qnotes_vault_rotate_secret(
   p_owner_id uuid,
   p_secret_id uuid,

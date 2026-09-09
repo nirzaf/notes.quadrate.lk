@@ -1,5 +1,5 @@
 begin;
-select plan(80);
+select plan(81);
 
 select ok(to_regclass('notesdb.vault_projects') is not null, 'Vault projects table exists');
 select ok(to_regclass('notesdb.vault_environments') is not null, 'Vault environments table exists');
@@ -199,6 +199,19 @@ select is((public.qnotes_vault_rotate_secret(
   'user_jwt'
 )->>'status'), 'idempotent', 'an unchanged pre-deployment rotate replays through the legacy hash');
 select is((select version from notesdb.vault_secrets where id = ((select response->'secret'->>'id' from vault_rpc_create_a))::uuid), 2::bigint, 'a legacy rotate replay does not increment the version');
+select is((public.qnotes_vault_rotate_secret(
+  (select id from auth.users where email = 'owner@qnotes.local'),
+  ((select response->'secret'->>'id' from vault_rpc_create_a))::uuid,
+  (select rotated_value from vault_rpc_test_values),
+  'synthetic rotated metadata',
+  1,
+  'a1000000-0000-4000-8000-000000000021',
+  repeat('f', 64),
+  repeat('b', 64),
+  null,
+  'a1000000-0000-4000-8000-000000000060',
+  'user_jwt'
+)->>'status'), 'mutation_reuse_conflict', 'a legacy rotate mutation cannot be reused with a different legacy request hash');
 select is((public.qnotes_vault_rotate_secret(
   (select id from auth.users where email = 'owner@qnotes.local'),
   ((select response->'secret'->>'id' from vault_rpc_create_a))::uuid,
