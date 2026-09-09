@@ -59,7 +59,6 @@ export async function runSyncRecovery({ userId, queryClient, api, readSyncCursor
   }
   if (isStale()) return;
   await writeSyncCursor(cursor, userId);
-  if (isStale()) return;
 
   if (changedNoteIds.size > 0) {
     await refreshNoteViewsForNotes(queryClient, userId, changedNoteIds);

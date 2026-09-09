@@ -69,6 +69,7 @@ export async function refreshNoteCollections(queryClient: NoteQueryClient, userI
     queryClient.invalidateQueries({ queryKey: keys.sidebarFamily }),
     queryClient.invalidateQueries({ queryKey: keys.trashFamily }),
     queryClient.invalidateQueries({ queryKey: keys.searchFamily }),
+    queryClient.invalidateQueries({ queryKey: keys.notebooks }),
   ]);
 }
 

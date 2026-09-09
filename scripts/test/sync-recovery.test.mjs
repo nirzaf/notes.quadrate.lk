@@ -51,7 +51,7 @@ test('recovery batches repeated IDs across pages and invalidates after the final
   assert.deepEqual(removed, ['note-a']);
   assert.deepEqual(events.filter(([kind]) => kind === 'write'), [['write', 'cursor-2']]);
   assert.ok(events.findIndex(([kind]) => kind === 'write') < events.findIndex(([kind]) => kind === 'invalidate'));
-  for (const queryKey of [keys.homeFamily, keys.sidebarFamily, keys.trashFamily, keys.searchFamily]) assert.equal(hasQueryKey(queryClient.calls, queryKey), 1);
+  for (const queryKey of [keys.homeFamily, keys.sidebarFamily, keys.trashFamily, keys.searchFamily, keys.notebooks]) assert.equal(hasQueryKey(queryClient.calls, queryKey), 1);
   assert.equal(hasQueryKey(queryClient.calls, keys.note('note-a')), 1);
   assert.equal(hasQueryKey(queryClient.calls, keys.note('note-b')), 1);
 });
@@ -117,4 +117,39 @@ test('recovery stops before cursor advancement or invalidation when its generati
 
   assert.deepEqual(events, []);
   assert.deepEqual(queryClient.calls, []);
+});
+
+test('recovery still invalidates account-scoped views when generation changes during cursor persistence', async () => {
+  const userId = 'user-a';
+  const keys = noteQueryKeys.forUser(userId);
+  const queryClient = recordingQueryClient();
+  let currentGeneration = 0;
+  let releaseWrite;
+  let resolveWriteStarted;
+  const writeStarted = new Promise((resolve) => { resolveWriteStarted = resolve; });
+  const writeRelease = new Promise((resolve) => { releaseWrite = resolve; });
+
+  const recovery = runSyncRecovery({
+    userId,
+    queryClient,
+    api: { sync: async () => ({ changes: [change('note-a')], nextCursor: 'cursor-1', hasMore: false }) },
+    readSyncCursor: async () => 'cursor-0',
+    writeSyncCursor: async () => {
+      resolveWriteStarted();
+      await writeRelease;
+    },
+    removeRememberedNote: async () => {},
+    generation: 0,
+    getGeneration: () => currentGeneration,
+    signal: new AbortController().signal,
+  });
+
+  await writeStarted;
+  currentGeneration = 1;
+  releaseWrite();
+  await recovery;
+
+  for (const queryKey of [keys.homeFamily, keys.sidebarFamily, keys.trashFamily, keys.searchFamily, keys.notebooks, keys.note('note-a')]) {
+    assert.ok(queryClient.calls.some((called) => JSON.stringify(called) === JSON.stringify(queryKey)));
+  }
 });
