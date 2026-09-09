@@ -509,6 +509,7 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
   }, []);
 
   const flush = useCallback(async () => {
+    if (reconciliationBlockedRef.current) throw new Error('Resolve the note conflict before saving.');
     try {
       await (coordinatorRef.current?.flush() ?? Promise.resolve());
     } catch (error: unknown) {
