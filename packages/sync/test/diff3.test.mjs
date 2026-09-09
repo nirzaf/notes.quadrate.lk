@@ -14,6 +14,31 @@ test('merges non-overlapping edits', () => {
   assert.deepEqual(result, { status: 'clean', merged: 'ONE\ntwo\nTHREE\nfour', conflicts: [] });
 });
 
+test('keeps disjoint edits in base order for either argument order', () => {
+  const base = 'a\nb\nc';
+  const local = 'a\nb\nC';
+  const remote = 'A\nb\nc';
+  assert.deepEqual(threeWayMerge(base, local, remote), { status: 'clean', merged: 'A\nb\nC', conflicts: [] });
+  assert.deepEqual(threeWayMerge(base, remote, local), { status: 'clean', merged: 'A\nb\nC', conflicts: [] });
+});
+
+test('expands alternating overlapping hunks into one conflict region', () => {
+  const result = threeWayMerge(
+    'a\nb\nc\nd\ne',
+    'a\nLOCAL-B\nc\nLOCAL-D\ne',
+    'a\nREMOTE-B\nREMOTE-C\nREMOTE-D\ne',
+  );
+  assert.equal(result.status, 'conflict');
+  assert.equal(result.conflicts.length, 1);
+  assert.deepEqual(result.conflicts[0], {
+    baseStartLine: 1,
+    baseEndLine: 4,
+    base: ['b', 'c', 'd'],
+    local: ['LOCAL-B', 'c', 'LOCAL-D'],
+    remote: ['REMOTE-B', 'REMOTE-C', 'REMOTE-D'],
+  });
+});
+
 test('returns required markers for overlapping conflicts', () => {
   const result = threeWayMerge('one\ntwo\nthree', 'one\nLOCAL\nthree', 'one\nREMOTE\nthree');
   assert.equal(result.status, 'conflict');

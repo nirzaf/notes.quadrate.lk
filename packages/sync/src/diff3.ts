@@ -79,6 +79,12 @@ function overlaps(left: Hunk, right: Hunk): boolean {
   return left.start < right.end && right.start < left.end;
 }
 
+function overlapsRange(hunk: Hunk, start: number, end: number): boolean {
+  if (start === end) return hunk.start === start && hunk.end === end;
+  if (hunk.start === hunk.end) return hunk.start >= start && hunk.start <= end;
+  return hunk.start < end && start < hunk.end;
+}
+
 function applyHunks(base: string[], start: number, end: number, hunks: Hunk[]): string[] {
   const result: string[] = [];
   let cursor = start;
@@ -122,13 +128,13 @@ export function threeWayMerge(baseValue: string, localValue: string, remoteValue
       merged.push(...base.slice(cursor));
       break;
     }
-    if (localHunk && (!remoteHunk || !overlaps(localHunk, remoteHunk))) {
+    if (localHunk && (!remoteHunk || (localHunk.start <= remoteHunk.start && !overlaps(localHunk, remoteHunk)))) {
       merged.push(...localHunk.replacement);
       cursor = localHunk.end;
       localIndex += 1;
       continue;
     }
-    if (remoteHunk && (!localHunk || !overlaps(localHunk, remoteHunk))) {
+    if (remoteHunk && (!localHunk || (remoteHunk.start <= localHunk.start && !overlaps(localHunk, remoteHunk)))) {
       merged.push(...remoteHunk.replacement);
       cursor = remoteHunk.end;
       remoteIndex += 1;
@@ -139,19 +145,23 @@ export function threeWayMerge(baseValue: string, localValue: string, remoteValue
     let conflictEnd = Math.max(localHunk?.end ?? conflictStart, remoteHunk?.end ?? conflictStart);
     const localGroup: Hunk[] = [];
     const remoteGroup: Hunk[] = [];
-    while (localIndex < localHunks.length) {
-      const hunk = localHunks[localIndex]!;
-      if (hunk.start > conflictEnd) break;
-      localGroup.push(hunk);
-      conflictEnd = Math.max(conflictEnd, hunk.end);
-      localIndex += 1;
-    }
-    while (remoteIndex < remoteHunks.length) {
-      const hunk = remoteHunks[remoteIndex]!;
-      if (hunk.start > conflictEnd) break;
-      remoteGroup.push(hunk);
-      conflictEnd = Math.max(conflictEnd, hunk.end);
-      remoteIndex += 1;
+    let expanded = true;
+    while (expanded) {
+      expanded = false;
+      const nextLocal = localHunks[localIndex];
+      if (nextLocal && overlapsRange(nextLocal, conflictStart, conflictEnd)) {
+        localGroup.push(nextLocal);
+        conflictEnd = Math.max(conflictEnd, nextLocal.end);
+        localIndex += 1;
+        expanded = true;
+      }
+      const nextRemote = remoteHunks[remoteIndex];
+      if (nextRemote && overlapsRange(nextRemote, conflictStart, conflictEnd)) {
+        remoteGroup.push(nextRemote);
+        conflictEnd = Math.max(conflictEnd, nextRemote.end);
+        remoteIndex += 1;
+        expanded = true;
+      }
     }
     const localLines = applyHunks(base, conflictStart, conflictEnd, localGroup);
     const remoteLines = applyHunks(base, conflictStart, conflictEnd, remoteGroup);
