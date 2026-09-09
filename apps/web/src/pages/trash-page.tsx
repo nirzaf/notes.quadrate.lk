@@ -8,7 +8,7 @@ import { getDeviceId } from '../indexed-db';
 import { AppShell } from '../components/app-shell';
 import { Button } from '../components/ui/button';
 import { useToast } from '../components/ui/toast';
-import { noteQueryKeys } from '../note-query-keys';
+import { noteQueryKeys, refreshNoteViews } from '../note-query-keys';
 import { useAuth } from '../auth-context';
 
 export function TrashPage(): JSX.Element {
@@ -32,7 +32,7 @@ export function TrashPage(): JSX.Element {
     setRestoringId(noteId);
     try {
       await api.restoreNote(noteId, { expectedVersion: version, deviceId: getDeviceId(), mutationId: crypto.randomUUID() });
-      await queryClient.invalidateQueries({ queryKey: queryKeys.all });
+      await refreshNoteViews(queryClient, userId, noteId);
       toast('Note restored.', 'success');
     } catch (error: unknown) {
       toast(error instanceof Error ? error.message : 'Unable to restore note.', 'error');

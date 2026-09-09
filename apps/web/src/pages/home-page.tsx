@@ -12,7 +12,7 @@ import { Button } from '../components/ui/button';
 import { useToast } from '../components/ui/toast';
 import { useSyncRecovery } from '../hooks/use-sync-recovery';
 import { useCreateNote } from '../hooks/use-create-note';
-import { noteQueryKeys } from '../note-query-keys';
+import { noteQueryKeys, refreshNoteCollections } from '../note-query-keys';
 import { UNFILED_SEARCH_NOTEBOOK, mergeSearchParams, type AppSearchPatch, withSearchMatch, withoutSearchMatch } from '../navigation-context';
 import { formatUpdatedAt } from '../lib/utils';
 import { requestEditorFocus } from '../lib/editor-focus';
@@ -52,7 +52,7 @@ export function HomePage(): JSX.Element {
   const handleRealtimeEvent = useCallback((_event: RealtimeNoteEvent) => { void recover(); }, [recover]);
   const { create, creating } = useCreateNote({
     notebookId: selectedNotebookFilter,
-    onCreated: async (note) => { await queryClient.invalidateQueries({ queryKey: queryKeys.all }); requestEditorFocus(note.id); await navigate({ to: '/notes/$noteId', params: { noteId: note.id }, search: withoutSearchMatch(search) }); },
+    onCreated: async (note) => { await refreshNoteCollections(queryClient, userId); requestEditorFocus(note.id); await navigate({ to: '/notes/$noteId', params: { noteId: note.id }, search: withoutSearchMatch(search) }); },
     onError: (error) => toast(error instanceof Error ? error.message : 'Unable to create note. Try again.', 'error'),
   });
   const createStarterNote = useCallback(() => { void create(starterNotePreset); }, [create]);
