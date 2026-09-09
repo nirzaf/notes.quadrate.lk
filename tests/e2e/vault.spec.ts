@@ -348,8 +348,9 @@ test('supports replay-safe rotation and explicit bounded batch reveal', async ()
   const replay = await apiJson(`/vault/secrets/${fixture.secret.id}`, session.access_token, { method: 'PATCH', body: JSON.stringify(rotateInput) });
   expect(replay.response.status).toBe(200);
   expect(data<VaultSecret>(replay.body).version).toBe(fixture.secret.version + 1);
-  const reuse = await apiJson(`/vault/secrets/${fixture.secret.id}`, session.access_token, { method: 'PATCH', body: JSON.stringify({ ...rotateInput, value: 'local-e2e-different-value' }) });
+  const reuse = await apiJson(`/vault/secrets/${fixture.secret.id}`, session.access_token, { method: 'PATCH', body: JSON.stringify({ ...rotateInput, expectedVersion: fixture.secret.version + 1 }) });
   expect(reuse.response.status).toBe(409);
+  expect((reuse.body as { error?: { code?: string } }).error?.code).toBe('VAULT_MUTATION_REUSE');
 
   const batch = await apiJson('/vault/secrets/reveal-batch', session.access_token, {
     method: 'POST',

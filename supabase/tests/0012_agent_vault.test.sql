@@ -135,15 +135,15 @@ select is((select version from notesdb.vault_secrets where id = ((select respons
 select is((public.qnotes_vault_rotate_secret(
   (select id from auth.users where email = 'owner@qnotes.local'),
   ((select response->'secret'->>'id' from vault_rpc_create_a))::uuid,
-  (select primary_value from vault_rpc_test_values),
+  (select rotated_value from vault_rpc_test_values),
   'synthetic rotated metadata',
-  1,
+  2,
   'a1000000-0000-4000-8000-000000000021',
   repeat('f', 64),
   null,
   'a1000000-0000-4000-8000-000000000024',
   'user_jwt'
-)->>'status'), 'mutation_reuse_conflict', 'a rotate mutation cannot be reused with a different request hash');
+)->>'status'), 'mutation_reuse_conflict', 'a rotate mutation cannot be reused with a different expected version');
 select is((public.qnotes_vault_rotate_secret(
   (select id from auth.users where email = 'owner@qnotes.local'),
   ((select response->'secret'->>'id' from vault_rpc_create_a))::uuid,

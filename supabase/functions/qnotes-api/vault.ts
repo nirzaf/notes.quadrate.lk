@@ -302,7 +302,7 @@ export async function rotateVaultSecret(context: Context): Promise<Response> {
   const secret = await findSecret(auth.userId, secretId);
   const input = validateRotateVaultSecretInput(await context.req.json());
   await requireVaultAccess(auth, 'secret:write', { ownerId: auth.userId, projectId: String(secret.project_id), environmentId: String(secret.environment_id), secretId }, { requestId: context.get('requestId') });
-  const requestHash = await hashVaultMutation({ operation: 'rotated', secretId, value: input.value, description: input.description ?? null });
+  const requestHash = await hashVaultMutation({ operation: 'rotated', secretId, value: input.value, description: input.description ?? null, expectedVersion: input.expectedVersion });
   const result = assertSupabase(await serviceClient.rpc('qnotes_vault_rotate_secret', { p_owner_id: auth.userId, p_secret_id: secretId, p_value: input.value, p_description: input.description ?? null, p_expected_version: input.expectedVersion, p_mutation_id: input.mutationId, p_request_hash: requestHash, p_actor_token_id: actorTokenId(auth), p_request_id: context.get('requestId'), p_actor_kind: actorKind(auth) }));
   return dataBody(context, await mapVaultMutation(context, auth, result, 'rotate', { ownerId: auth.userId, projectId: String(secret.project_id), environmentId: String(secret.environment_id), secretId }));
 }
