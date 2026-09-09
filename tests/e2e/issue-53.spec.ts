@@ -100,7 +100,7 @@ test('opened Share distinguishes loading, failure, retry, and no-share states', 
   const firstRequestReleased = new Promise<void>((resolve) => { releaseFirstRequest = resolve; });
   await page.route(`**/functions/v1/qnotes-api/api/notes/${note.id}/share`, async (route) => {
     attempts += 1;
-    if (attempts === 1) {
+    if (attempts <= 2) {
       await firstRequestReleased;
       await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: { code: 'SHARE_UNAVAILABLE', message: 'Share service is temporarily unavailable.', requestId: 'issue-53-test' } }) });
       return;
@@ -123,5 +123,5 @@ test('opened Share distinguishes loading, failure, retry, and no-share states', 
 
   await dialog.getByRole('button', { name: 'Retry', exact: true }).click();
   await expect(dialog).toContainText('The link contains a secret that is shown once.');
-  expect(attempts).toBe(2);
+  expect(attempts).toBe(3);
 });
