@@ -5,7 +5,7 @@ import { appDbClient, attachmentFromRow, serviceClient } from '../_shared/databa
 import { ApiError } from '../_shared/errors.ts';
 import { ensureFinalObject, removeAttachmentObjectsOrScheduleDeletion, sha256Bytes, uniquePaths } from '../_shared/attachment-storage.ts';
 import { enforceRequestBudget } from '../_shared/request-limits.ts';
-import { findAuthorizedNote } from './notes.ts';
+import { findAuthorizedNote, findOwnedNoteIdentity } from './notes.ts';
 import { validateUploadedAttachmentSize } from './attachment-size.ts';
 import { validateAttachmentSignature } from './attachment-signature.ts';
 
@@ -66,7 +66,7 @@ async function failVerification(ownerId: string, attachmentId: string, error: st
 export async function listAttachments(context: Context): Promise<Response> {
   const auth = authFromContext(context);
   requireScope(auth, 'attachments:read');
-  const note = await findAuthorizedNote(auth, context.req.param('noteRef') ?? '');
+  const note = await findOwnedNoteIdentity(auth.userId, context.req.param('noteRef') ?? '');
   const { data, error } = await appDbClient.from('attachments').select('*').eq('owner_id', auth.userId).eq('note_id', note.id).is('deleted_at', null).order('created_at', { ascending: false }).limit(validateLimit(context.req.query().limit, 50, 20));
   if (error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to list attachments.');
   return statusResponse(context, (Array.isArray(data) ? data : []).map((row) => attachmentFromRow(objectRecord(row))));
