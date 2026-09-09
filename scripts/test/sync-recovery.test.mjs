@@ -56,6 +56,30 @@ test('recovery batches repeated IDs across pages and invalidates after the final
   assert.equal(hasQueryKey(queryClient.calls, keys.note('note-b')), 1);
 });
 
+test('recovery keeps the latest deletion state when a later page restores the note', async () => {
+  const queryClient = recordingQueryClient();
+  const removed = [];
+  let pageIndex = 0;
+  const pages = [
+    { changes: [change('note-a', '2026-09-09T00:00:00.000Z')], nextCursor: 'cursor-1', hasMore: true },
+    { changes: [change('note-a')], nextCursor: 'cursor-2', hasMore: false },
+  ];
+
+  await runSyncRecovery({
+    userId: 'user-a',
+    queryClient,
+    api: { sync: async () => pages[pageIndex++] },
+    readSyncCursor: async () => 'cursor-0',
+    writeSyncCursor: async () => {},
+    removeRememberedNote: async (noteId) => { removed.push(noteId); },
+    generation: 0,
+    getGeneration: () => 0,
+    signal: new AbortController().signal,
+  });
+
+  assert.deepEqual(removed, []);
+});
+
 test('incremental no-change recovery stores its cursor without unconditional list or search invalidation', async () => {
   const queryClient = recordingQueryClient();
   let syncCount = 0;

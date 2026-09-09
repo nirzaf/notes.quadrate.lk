@@ -48,6 +48,7 @@ export async function runSyncRecovery({ userId, queryClient, api, readSyncCursor
     for (const change of page.changes) {
       changedNoteIds.add(change.noteId);
       if (change.deletedAt) deletedNoteIds.add(change.noteId);
+      else deletedNoteIds.delete(change.noteId);
     }
     cursor = page.nextCursor;
     hasMore = page.hasMore;
