@@ -8,6 +8,13 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 export const VAULT_TOKEN_PEPPER_NAME = 'QNOTES_VAULT_TOKEN_PEPPER';
 
+// This gate proves the current privilege contract. It does not prove that the
+// notes runtime is isolated from the Supabase Vault deployment.
+export const VAULT_ISOLATION = Object.freeze({
+  status: 'open_residual',
+  reason: 'The notes runtime and Vault still share the current Supabase project and service-role trust zone.',
+});
+
 export const VAULT_METADATA_TABLES = [
   'vault_projects',
   'vault_environments',
@@ -240,12 +247,13 @@ export async function verifyVaultReadiness({ projectId, runCommand = executeSupa
   ], 'Supabase linked database readiness query');
   const checks = parseReadinessChecks(readinessOutput);
   assertReadinessChecksPassed(checks);
-  return { pepperPresent: true, checks };
+  return { pepperPresent: true, checks, isolation: VAULT_ISOLATION };
 }
 
 async function main() {
   const result = await verifyVaultReadiness({ projectId: process.env.SUPABASE_PROJECT_ID });
   console.log(`Vault production readiness passed: ${VAULT_TOKEN_PEPPER_NAME} is present by name; ${Object.keys(result.checks).length} boolean database checks passed.`);
+  console.log(`Vault runtime isolation status: ${result.isolation.status}. ${result.isolation.reason}`);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {

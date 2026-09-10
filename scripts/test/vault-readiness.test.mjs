@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  VAULT_ISOLATION,
   VAULT_READINESS_CHECKS,
   VAULT_READINESS_SQL,
   VAULT_TOKEN_PEPPER_NAME,
@@ -85,6 +86,8 @@ test('uses only the pinned read-only Supabase primitives and verifies them in or
   });
 
   assert.equal(result.pepperPresent, true);
+  assert.deepEqual(result.isolation, VAULT_ISOLATION);
+  assert.equal(result.isolation.status, 'open_residual');
   assert.doesNotMatch(JSON.stringify(result), /synthetic-secret/);
   assert.equal(calls.length, 2);
   assert.deepEqual(calls[0], ['exec', 'supabase', 'secrets', 'list', '--project-ref', 'ciyoandzjezgqxjpcrin', '--output-format', 'json']);
