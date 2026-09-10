@@ -52,7 +52,7 @@ export async function exportWorkspace(context: Context): Promise<Response> {
   const notes = Array.isArray(notesResult.data) ? notesResult.data as Record<string, unknown>[] : [];
   const notebooks = Array.isArray(notebooksResult.data) ? notebooksResult.data as Record<string, unknown>[] : [];
   const noteIds = notes.map((note) => String(note.id));
-  const attachmentsResult = noteIds.length ? await appDbClient.from('attachments').select('*').eq('owner_id', auth.userId).in('note_id', noteIds).in('extraction_status', ['uploaded', 'queued', 'processing', 'ready']).is('deleted_at', null) : { data: [], error: null };
+  const attachmentsResult = noteIds.length ? await appDbClient.from('attachments').select('*').eq('owner_id', auth.userId).in('note_id', noteIds).in('extraction_status', ['uploaded', 'queued', 'processing', 'ready', 'unsupported']).is('deleted_at', null) : { data: [], error: null };
   if (attachmentsResult.error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to export attachment metadata.');
   const attachments = Array.isArray(attachmentsResult.data) ? attachmentsResult.data as Record<string, unknown>[] : [];
   const files: Record<string, Uint8Array> = {};

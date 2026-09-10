@@ -1,4 +1,5 @@
 import { sha256Hex } from '@qnotes/markdown';
+import { sha256Bytes, uniquePaths } from '../_shared/attachment-storage.ts';
 import { archiveQueueMessage, deleteQueueMessage, readQueue } from '../_shared/queue.ts';
 import { appDbClient, serviceClient } from '../_shared/database.ts';
 import { extractAttachment, attachmentParagraphs } from './extract.ts';
@@ -8,6 +9,8 @@ const WORKER_CONCURRENCY = 3;
 const BATCH_SIZE = 5;
 const MAX_BATCHES_PER_REQUEST = 4;
 const CLEANUP_BATCH_SIZE = 25;
+const STALE_PROCESSING_AFTER = '15 minutes';
+const STALE_PROCESSING_LIMIT = 100;
 
 function validMessage(value: unknown): value is { attachmentId: string; ownerId: string } {
   return !!value && typeof value === 'object'
@@ -19,10 +22,6 @@ type AttachmentOutcome = 'completed' | 'skipped' | 'retried' | 'failed';
 
 function objectRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
-}
-
-function uniquePaths(...paths: unknown[]): string[] {
-  return paths.filter((path): path is string => typeof path === 'string' && path.length > 0).filter((path, index, all) => all.indexOf(path) === index);
 }
 
 async function scheduleCleanupRetry(row: Record<string, unknown>): Promise<void> {
@@ -139,7 +138,8 @@ async function processMessage(message: { message_id: number; read_count: number;
       return 'skipped';
     }
     if (completion.status !== 'ok') {
-      await serviceClient.rpc('qnotes_fail_attachment_processing', { p_owner_id: job.ownerId, p_attachment_id: job.attachmentId, p_status: 'failed', p_error: 'ATTACHMENT_INTEGRITY_MISMATCH' });
+      const failed = await serviceClient.rpc('qnotes_fail_attachment_processing', { p_owner_id: job.ownerId, p_attachment_id: job.attachmentId, p_status: 'failed', p_error: 'ATTACHMENT_INTEGRITY_MISMATCH' });
+      if (failed.error) throw failed.error;
       await archiveQueueMessage(queueName, message.message_id);
       return 'failed';
     }
@@ -147,7 +147,8 @@ async function processMessage(message: { message_id: number; read_count: number;
     return 'completed';
   } catch {
     if (message.read_count >= 5) {
-      await serviceClient.rpc('qnotes_fail_attachment_processing', { p_owner_id: job.ownerId, p_attachment_id: job.attachmentId, p_status: 'failed', p_error: 'ATTACHMENT_PROCESSING_FAILED' });
+      const failed = await serviceClient.rpc('qnotes_fail_attachment_processing', { p_owner_id: job.ownerId, p_attachment_id: job.attachmentId, p_status: 'failed', p_error: 'ATTACHMENT_PROCESSING_FAILED' });
+      if (failed.error) throw failed.error;
       await archiveQueueMessage(queueName, message.message_id);
       return 'failed';
     }
@@ -173,6 +174,8 @@ async function processBounded(messages: Array<{ message_id: number; read_count: 
 async function processRequest(request: Request): Promise<Response> {
   if (request.headers.get('x-qnotes-worker-secret') !== Deno.env.get('QNOTES_INTERNAL_WORKER_SECRET')) return Response.json({ error: 'unauthorized' }, { status: 401 });
   const outcomes: AttachmentOutcome[] = [];
+  const { error: recoveryError } = await serviceClient.rpc('qnotes_requeue_stale_attachment_processing', { p_stale_after: STALE_PROCESSING_AFTER, p_limit: STALE_PROCESSING_LIMIT });
+  if (recoveryError) throw recoveryError;
   try {
     await cleanupAttachmentObjects();
   } catch {
@@ -188,10 +191,3 @@ async function processRequest(request: Request): Promise<Response> {
 }
 
 Deno.serve(processRequest);
-
-async function sha256Bytes(value: Uint8Array): Promise<string> {
-  const copy = new ArrayBuffer(value.byteLength);
-  new Uint8Array(copy).set(value);
-  const digest = await crypto.subtle.digest('SHA-256', copy);
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
-}

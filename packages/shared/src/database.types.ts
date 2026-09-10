@@ -672,6 +672,10 @@ export type Database = {
         Args: { p_embedding_mode: string; p_limit?: number }
         Returns: number
       }
+      qnotes_requeue_stale_attachment_processing: {
+        Args: { p_limit?: number; p_stale_after?: string }
+        Returns: number
+      }
       qnotes_requeue_stale_embeddings: {
         Args: { p_stale_after?: string }
         Returns: number

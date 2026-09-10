@@ -3,6 +3,7 @@ import { isUUID, validateLimit } from '@qnotes/shared';
 import { authFromContext, requireScope } from '../_shared/auth.ts';
 import { appDbClient, attachmentFromRow, serviceClient } from '../_shared/database.ts';
 import { ApiError } from '../_shared/errors.ts';
+import { ensureFinalObject, removeAttachmentObjectsOrScheduleDeletion, sha256Bytes, uniquePaths } from '../_shared/attachment-storage.ts';
 import { enforceRequestBudget } from '../_shared/request-limits.ts';
 import { findAuthorizedNote } from './notes.ts';
 import { validateUploadedAttachmentSize } from './attachment-size.ts';
@@ -52,38 +53,11 @@ function browserStorageUrl(value: string): string {
   return signedUrl.toString();
 }
 
-async function sha256Bytes(value: Uint8Array): Promise<string> {
-  const copy = new ArrayBuffer(value.byteLength);
-  new Uint8Array(copy).set(value);
-  const digest = await crypto.subtle.digest('SHA-256', copy);
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
-function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
-  if (left.byteLength !== right.byteLength) return false;
-  for (let index = 0; index < left.byteLength; index += 1) if (left[index] !== right[index]) return false;
-  return true;
-}
-
-async function ensureFinalObject(bucket: string, path: string, mimeType: string, bytes: Uint8Array): Promise<void> {
-  const uploaded = await serviceClient.storage.from(bucket).upload(path, new Blob([bytes.buffer as ArrayBuffer], { type: mimeType }), { contentType: mimeType, upsert: false });
-  if (uploaded.error) {
-    const existing = await serviceClient.storage.from(bucket).download(path);
-    if (existing.error || !existing.data) throw new Error('FINAL_OBJECT_UNAVAILABLE');
-    const existingBytes = new Uint8Array(await existing.data.arrayBuffer());
-    if (!bytesEqual(existingBytes, bytes)) throw new Error('FINAL_OBJECT_CONFLICT');
-  }
-  const finalObject = await serviceClient.storage.from(bucket).download(path);
-  if (finalObject.error || !finalObject.data) throw new Error('FINAL_OBJECT_UNAVAILABLE');
-  const finalBytes = new Uint8Array(await finalObject.data.arrayBuffer());
-  if (!bytesEqual(finalBytes, bytes)) throw new Error('FINAL_OBJECT_INTEGRITY_MISMATCH');
-}
-
-async function failVerification(ownerId: string, attachmentId: string, error: string): Promise<void> {
+async function failVerification(ownerId: string, attachmentId: string, error: string, status = 'failed'): Promise<void> {
   const failed = await serviceClient.rpc('qnotes_fail_attachment_processing', {
     p_owner_id: ownerId,
     p_attachment_id: attachmentId,
-    p_status: 'failed',
+    p_status: status,
     p_error: error,
   });
   if (failed.error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to record the attachment verification failure.');
@@ -153,7 +127,7 @@ export async function finalizeAttachment(context: Context): Promise<Response> {
   const finalPath = String(begin.objectPath ?? row.data.object_path);
   const object = await serviceClient.storage.from(bucket).download(stagingPath);
   if (object.error || !object.data) {
-    await failVerification(auth.userId, attachmentId, 'ATTACHMENT_NOT_UPLOADED');
+    await failVerification(auth.userId, attachmentId, 'ATTACHMENT_NOT_UPLOADED', 'pending_upload');
     throw new ApiError(409, 'ATTACHMENT_NOT_UPLOADED', 'The attachment has not been uploaded.');
   }
   const bytes = new Uint8Array(await object.data.arrayBuffer());
@@ -173,30 +147,30 @@ export async function finalizeAttachment(context: Context): Promise<Response> {
   try {
     await ensureFinalObject(bucket, finalPath, String(row.data.mime_type), bytes);
   } catch (error) {
-    if (finalPath !== stagingPath) await serviceClient.storage.from(bucket).remove([finalPath]);
-    await failVerification(auth.userId, attachmentId, error instanceof Error && error.message === 'FINAL_OBJECT_CONFLICT' ? 'ATTACHMENT_FINAL_OBJECT_CONFLICT' : 'ATTACHMENT_INTEGRITY_MISMATCH');
+    const cleanup = finalPath === stagingPath ? 'removed' : await removeAttachmentObjectsOrScheduleDeletion(auth.userId, attachmentId, bucket, [finalPath]);
+    if (cleanup === 'removed') await failVerification(auth.userId, attachmentId, error instanceof Error && error.message === 'FINAL_OBJECT_CONFLICT' ? 'ATTACHMENT_FINAL_OBJECT_CONFLICT' : 'ATTACHMENT_INTEGRITY_MISMATCH');
     throw new ApiError(422, 'ATTACHMENT_INTEGRITY_MISMATCH', 'The verified attachment bytes could not be promoted safely.');
   }
   const result = await serviceClient.rpc('qnotes_finalize_attachment', { p_owner_id: auth.userId, p_attachment_id: attachmentId, p_checksum_sha256: checksum, p_generation: begin.generation });
   if (result.error) {
-    if (finalPath !== stagingPath) await serviceClient.storage.from(bucket).remove([finalPath]);
-    await failVerification(auth.userId, attachmentId, 'ATTACHMENT_FINALIZE_FAILED');
+    const cleanup = finalPath === stagingPath ? 'removed' : await removeAttachmentObjectsOrScheduleDeletion(auth.userId, attachmentId, bucket, [finalPath]);
+    if (cleanup === 'removed') await failVerification(auth.userId, attachmentId, 'ATTACHMENT_FINALIZE_FAILED');
     throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to finalize the attachment.');
   }
   const finalized = objectRecord(result.data);
   if (String(finalized.status) === 'generation_conflict') {
-    if (finalPath !== stagingPath) await serviceClient.storage.from(bucket).remove([finalPath]);
-    await failVerification(auth.userId, attachmentId, 'ATTACHMENT_GENERATION_CONFLICT');
+    const cleanup = finalPath === stagingPath ? 'removed' : await removeAttachmentObjectsOrScheduleDeletion(auth.userId, attachmentId, bucket, [finalPath]);
+    if (cleanup === 'removed') await failVerification(auth.userId, attachmentId, 'ATTACHMENT_GENERATION_CONFLICT');
     throw new ApiError(409, 'ATTACHMENT_GENERATION_CONFLICT', 'The attachment changed during verification.');
   }
   if (String(finalized.status) === 'invalid_checksum') {
-    if (finalPath !== stagingPath) await serviceClient.storage.from(bucket).remove([finalPath]);
-    await failVerification(auth.userId, attachmentId, 'ATTACHMENT_INVALID_CHECKSUM');
+    const cleanup = finalPath === stagingPath ? 'removed' : await removeAttachmentObjectsOrScheduleDeletion(auth.userId, attachmentId, bucket, [finalPath]);
+    if (cleanup === 'removed') await failVerification(auth.userId, attachmentId, 'ATTACHMENT_INVALID_CHECKSUM');
     throw new ApiError(500, 'INTERNAL_ERROR', 'The attachment digest was rejected.');
   }
   if (String(finalized.status) !== 'ok' && !['queued', 'processing', 'ready'].includes(String(finalized.status))) {
-    if (finalPath !== stagingPath) await serviceClient.storage.from(bucket).remove([finalPath]);
-    await failVerification(auth.userId, attachmentId, 'ATTACHMENT_FINALIZE_CONFLICT');
+    const cleanup = finalPath === stagingPath ? 'removed' : await removeAttachmentObjectsOrScheduleDeletion(auth.userId, attachmentId, bucket, [finalPath]);
+    if (cleanup === 'removed') await failVerification(auth.userId, attachmentId, 'ATTACHMENT_FINALIZE_CONFLICT');
     throw new ApiError(409, 'ATTACHMENT_FINALIZE_CONFLICT', 'The attachment could not be finalized from its current state.');
   }
   if (stagingPath !== finalPath) await serviceClient.storage.from(bucket).remove([stagingPath]);
@@ -230,7 +204,7 @@ export async function deleteAttachment(context: Context): Promise<Response> {
   if (requested.error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to start attachment deletion.');
   const deletion = objectRecord(requested.data);
   if (String(deletion.status) === 'not_found') throw new ApiError(404, 'ATTACHMENT_NOT_FOUND', 'The attachment was not found.');
-  const paths = [deletion.objectPath, deletion.stagingPath].filter((path): path is string => typeof path === 'string' && path.length > 0).filter((path, index, all) => all.indexOf(path) === index);
+  const paths = uniquePaths(deletion.objectPath, deletion.stagingPath);
   const removed = paths.length ? await serviceClient.storage.from(String(deletion.bucket ?? data.bucket)).remove(paths) : { error: null };
   if (!removed.error) {
     const completed = await serviceClient.rpc('qnotes_complete_attachment_deletion', { p_owner_id: auth.userId, p_attachment_id: attachmentId });

@@ -21,11 +21,12 @@ alter table notesdb.attachments
       and (staging_object_path is null or staging_object_path <> object_path)
       and (extraction_status not in ('pending_upload', 'verifying') or staging_object_path is not null)
       and (
-        extraction_status in ('pending_upload', 'verifying', 'failed', 'unsupported', 'deleting', 'deleted')
-        or (
-          extraction_status in ('queued', 'processing', 'ready')
-          and checksum_sha256 ~ '^[a-f0-9]{64}$'
-          and verified_at is not null
+          extraction_status in ('pending_upload', 'verifying', 'failed', 'unsupported', 'deleting', 'deleted')
+          or (
+            extraction_status in ('queued', 'processing', 'ready')
+            and checksum_sha256 is not null
+            and checksum_sha256 ~ '^[a-f0-9]{64}$'
+            and verified_at is not null
         )
       )
     )
@@ -138,7 +139,7 @@ begin
   where id = p_attachment_id and owner_id = p_owner_id and deleted_at is null
   for update;
   if not found then return jsonb_build_object('status', 'not_found'); end if;
-  if item.object_generation <> p_generation then return jsonb_build_object('status', 'generation_conflict'); end if;
+  if p_generation is null or item.object_generation <> p_generation then return jsonb_build_object('status', 'generation_conflict'); end if;
   if item.extraction_status in ('queued', 'processing', 'ready') then
     return jsonb_build_object('status', item.extraction_status, 'attachmentId', item.id);
   end if;
@@ -169,7 +170,7 @@ begin
   where id = p_attachment_id and owner_id = p_owner_id and deleted_at is null and extraction_status = 'processing'
   for update;
   if not found then return jsonb_build_object('status', 'not_found'); end if;
-  if item.object_generation <> p_generation or item.checksum_sha256 is distinct from p_checksum_sha256 or p_checksum_sha256 !~ '^[a-f0-9]{64}$' then return jsonb_build_object('status', 'integrity_conflict'); end if;
+  if p_generation is null or p_checksum_sha256 is null or item.object_generation <> p_generation or (item.storage_mode = 'immutable' and item.checksum_sha256 is distinct from p_checksum_sha256) or p_checksum_sha256 !~ '^[a-f0-9]{64}$' then return jsonb_build_object('status', 'integrity_conflict'); end if;
   if not exists (select 1 from notesdb.notes where id = item.note_id and owner_id = p_owner_id and deleted_at is null) then return jsonb_build_object('status', 'not_found'); end if;
   delete from notesdb.search_documents where owner_id = p_owner_id and note_id = item.note_id and source_type = 'attachment_chunk' and source_key like 'attachment:' || item.id::text || ':%';
   for document in select value from jsonb_array_elements(coalesce(p_documents, '[]'::jsonb))
@@ -183,6 +184,50 @@ begin
   set storage_mode = 'immutable', checksum_sha256 = p_checksum_sha256, verified_at = coalesce(verified_at, timezone('utc', now())), extraction_status = 'ready', extraction_error = null, updated_at = timezone('utc', now())
   where id = item.id;
   return jsonb_build_object('status', 'ok', 'attachmentId', item.id, 'generation', item.object_generation);
+end;
+$$;
+
+create or replace function public.qnotes_requeue_stale_attachment_processing(
+  p_stale_after interval default interval '15 minutes',
+  p_limit integer default 100
+)
+returns integer
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  attachment_record record;
+  queued_count integer := 0;
+begin
+  if p_stale_after is null or p_stale_after < interval '0 seconds' then
+    return 0;
+  end if;
+  if p_limit is null or p_limit < 1 or p_limit > 1000 then
+    raise exception using errcode = '22023', message = 'attachment recovery limit must be between 1 and 1000';
+  end if;
+
+  for attachment_record in
+    select a.id, a.owner_id, a.object_generation
+    from notesdb.attachments a
+    where a.extraction_status = 'processing'
+      and a.deleted_at is null
+      and a.updated_at <= timezone('utc', now()) - p_stale_after
+    order by a.updated_at, a.id
+    limit p_limit
+    for update of a skip locked
+  loop
+    update notesdb.attachments
+    set extraction_status = 'queued', extraction_error = null, updated_at = timezone('utc', now())
+    where id = attachment_record.id;
+    perform pgmq.send('attachment-processing', jsonb_build_object(
+      'attachmentId', attachment_record.id,
+      'ownerId', attachment_record.owner_id,
+      'generation', attachment_record.object_generation
+    ));
+    queued_count := queued_count + 1;
+  end loop;
+  return queued_count;
 end;
 $$;
 
@@ -228,11 +273,13 @@ $$;
 revoke all on function public.qnotes_begin_attachment_verification(uuid, uuid) from public, anon, authenticated;
 revoke all on function public.qnotes_finalize_attachment(uuid, uuid, text, uuid) from public, anon, authenticated;
 revoke all on function public.qnotes_complete_attachment_processing(uuid, uuid, uuid, text, jsonb) from public, anon, authenticated;
+revoke all on function public.qnotes_requeue_stale_attachment_processing(interval, integer) from public, anon, authenticated;
 revoke all on function public.qnotes_request_attachment_deletion(uuid, uuid) from public, anon, authenticated;
 revoke all on function public.qnotes_complete_attachment_deletion(uuid, uuid) from public, anon, authenticated;
 grant execute on function public.qnotes_begin_attachment_verification(uuid, uuid) to service_role;
 grant execute on function public.qnotes_finalize_attachment(uuid, uuid, text, uuid) to service_role;
 grant execute on function public.qnotes_complete_attachment_processing(uuid, uuid, uuid, text, jsonb) to service_role;
+grant execute on function public.qnotes_requeue_stale_attachment_processing(interval, integer) to service_role;
 grant execute on function public.qnotes_request_attachment_deletion(uuid, uuid) to service_role;
 grant execute on function public.qnotes_complete_attachment_deletion(uuid, uuid) to service_role;
 

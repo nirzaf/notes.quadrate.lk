@@ -449,7 +449,7 @@ Attachment upload is a two-step API plus one direct staging Storage operation:
 2. Upload the bytes directly to the private `note-attachments` bucket using the returned staging `path` and `token`.
 3. Finalize the attachment. The API verifies the byte count, supported file signature, final object bytes, and SHA-256 digest, then promotes the immutable final object and queues extraction.
 
-The signed path is under `staging/` and is registered to one pending attachment. Authenticated Storage clients cannot overwrite finalized objects or delete final objects directly. `DELETE /api/attachments/:attachmentId` starts a lifecycle-authorized cleanup; the worker retries object removal when Storage is temporarily unavailable.
+The signed path is under `staging/` and is registered to one pending attachment. Authenticated Storage clients cannot overwrite finalized objects or delete final objects directly. `DELETE /api/attachments/:attachmentId` starts a lifecycle-authorized cleanup; the worker retries object removal when Storage is temporarily unavailable and requeues stale processing rows.
 
 Request the signed upload URL:
 
@@ -506,7 +506,7 @@ curl -fsS \
   -o qnotes-backup.zip
 ```
 
-The ZIP contains `notes/<safe-slug>-<note-id>.md`, `attachments/<safe-slug>/<attachment-id>-<file-name>`, and `manifest.json`. The version-two manifest includes notebooks, note-to-notebook IDs, Markdown paths, and attachment metadata. Deleted notes and deleted attachments are excluded. Before any Storage download, the API checks Markdown bytes, declared attachment bytes, manifest bytes, and the 5,000-entry limit against the default 50 MiB compressed ZIP limit (configurable with `QNOTES_EXPORT_MAX_BYTES`); it retains a final ZIP-size check.
+The ZIP contains `notes/<safe-slug>-<note-id>.md`, `attachments/<safe-slug>/<attachment-id>-<file-name>`, and `manifest.json`. The version-two manifest includes notebooks, note-to-notebook IDs, Markdown paths, and attachment metadata. Deleted notes and deleted attachments are excluded; stored image attachments remain included even when their extraction status is `unsupported`. Before any Storage download, the API checks Markdown bytes, declared attachment bytes, manifest bytes, and the 5,000-entry limit against the default 50 MiB compressed ZIP limit (configurable with `QNOTES_EXPORT_MAX_BYTES`); it retains a final ZIP-size check.
 
 Validate a workspace backup without writing any data. The dry-run endpoint accepts the exported ZIP as the request body and requires all four note/attachment read/write scopes:
 
