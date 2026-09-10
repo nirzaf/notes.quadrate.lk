@@ -155,7 +155,7 @@ export async function clearApplicationData(): Promise<void> {
     });
     if (result.error || !result.data || !['ok', 'idempotent'].includes(String((result.data as { status?: unknown }).status))) throw result.error ?? new Error('Unable to remove a local encrypted Vault value during cleanup.');
   }
-  for (const table of ['vault_operation_approvals', 'vault_audit_events', 'vault_mutations', 'vault_agent_tokens', 'vault_projects']) {
+  for (const table of ['vault_operation_approvals', 'vault_mutations', 'vault_agent_tokens', 'vault_projects']) {
     const result = await client.from(table).delete().in('owner_id', ids);
     if (result.error) throw result.error;
   }
