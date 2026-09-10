@@ -1,6 +1,9 @@
-import { access, readFile } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const report = await readFile(new URL('../docs/PRODUCTION_HARDENING_EVIDENCE.md', import.meta.url), 'utf8');
+const repoRoot = await realpath(resolve(dirname(fileURLToPath(import.meta.url)), '..'));
+const report = await readFile(resolve(repoRoot, 'docs/PRODUCTION_HARDENING_EVIDENCE.md'), 'utf8');
 const requiredStories = Array.from({ length: 28 }, (_, index) => `US-${String(index + 1).padStart(2, '0')}`);
 const missingStories = requiredStories.filter((story) => !report.includes(`| ${story} / [`));
 const requiredPhrases = [
@@ -36,7 +39,10 @@ const evidencePaths = [...new Set(
 const missingEvidencePaths = [];
 for (const path of evidencePaths) {
   try {
-    await access(new URL(`../${path}`, import.meta.url));
+    const resolvedPath = await realpath(resolve(repoRoot, path));
+    const relativePath = relative(repoRoot, resolvedPath);
+    if (isAbsolute(relativePath) || relativePath === '..' || relativePath.startsWith(`..${sep}`)) throw new Error('evidence path escapes the repository');
+    if (!(await stat(resolvedPath)).isFile()) throw new Error('evidence path is not a regular file');
   } catch {
     missingEvidencePaths.push(path);
   }

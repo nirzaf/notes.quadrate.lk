@@ -155,6 +155,9 @@ jobs:
       - name: Run the checked-in search baseline
         if: steps.scope.outputs.required == 'true'
         run: pnpm run verify:search -- --seed
+      - name: Collect checked-in search query plans
+        if: steps.scope.outputs.required == 'true'
+        run: docker exec -i supabase_db_notes.quadrate.lk psql -v ON_ERROR_STOP=1 -U postgres -d postgres -f - < scripts/search-query-plans.sql
       - name: Stop the local Supabase stack
         if: always() && steps.scope.outputs.required == 'true'
         shell: bash
