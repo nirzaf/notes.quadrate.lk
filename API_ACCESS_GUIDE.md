@@ -180,6 +180,15 @@ The main validation limits are:
 | Attachment upload | Default 20 MiB, configurable with `QNOTES_MAX_ATTACHMENT_BYTES` |
 | Workspace ZIP | Default 50 MiB, configurable with `QNOTES_EXPORT_MAX_BYTES`; preflight rejects estimates above the limit or more than 5,000 archive entries |
 
+Every API request body is bounded before JSON, form, or archive parsing. The
+general API limit is 8 MiB, public-share resolution is 1 KiB, Vault requests
+are 278,528 bytes (256 KiB plus request overhead), and workspace imports use the configured ZIP limit. Oversized
+bodies return `413 REQUEST_TOO_LARGE`. Costly public-share, OAuth, semantic
+embedding, workspace export/import, and attachment-finalization operations
+use shared one-minute budgets; rejected requests return `429 RATE_LIMITED`
+with `Retry-After`, while an unavailable shared limiter fails closed with
+`503 RESOURCE_LIMIT_UNAVAILABLE`.
+
 ## REST API with cURL
 
 ### Health, notebooks, and notes

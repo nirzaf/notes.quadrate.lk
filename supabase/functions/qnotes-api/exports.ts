@@ -3,6 +3,7 @@ import type { Context } from 'hono';
 import { authFromContext, requireScope } from '../_shared/auth.ts';
 import { appDbClient, serviceClient } from '../_shared/database.ts';
 import { ApiError } from '../_shared/errors.ts';
+import { enforceRequestBudget } from '../_shared/request-limits.ts';
 import { findOwnedNote } from './notes.ts';
 import { planWorkspaceExport } from './export-preflight.ts';
 
@@ -29,6 +30,8 @@ export async function exportNote(context: Context): Promise<Response> {
 export async function exportWorkspace(context: Context): Promise<Response> {
   const auth = authFromContext(context);
   requireScope(auth, 'notes:read', 'attachments:read');
+  await enforceRequestBudget('workspace-export', `user:${auth.userId}`);
+  context.set('limitDecision', 'workspace-export-allowed');
   const [notesResult, notebooksResult] = await Promise.all([
     appDbClient.from('notes').select('id, slug, title, tags, notebook_id, version, created_at, updated_at, content_markdown').eq('owner_id', auth.userId).is('deleted_at', null).order('updated_at', { ascending: true }),
     appDbClient.from('notebooks').select('id, name, created_at, updated_at').eq('owner_id', auth.userId).order('created_at', { ascending: true }).order('name', { ascending: true }),

@@ -47,6 +47,7 @@ const functionEnv = [
   'QNOTES_FAKE_EMBEDDINGS=1',
   'QNOTES_MAX_ATTACHMENT_BYTES=20971520',
   'QNOTES_EXPORT_MAX_BYTES=52428800',
+  'QNOTES_CLIENT_IP_HEADER=x-forwarded-for',
   '',
 ].join('\n');
 const localValues = { supabaseUrl, publishableKey, serviceRoleKey, apiUrl };

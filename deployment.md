@@ -100,10 +100,23 @@ pnpm exec supabase secrets set --project-ref ciyoandzjezgqxjpcrin \
   QNOTES_VAULT_TOKEN_PEPPER="$QNOTES_VAULT_TOKEN_PEPPER" \
   QNOTES_INTERNAL_WORKER_SECRET="$QNOTES_INTERNAL_WORKER_SECRET" \
   QNOTES_MAX_ATTACHMENT_BYTES="20971520" \
-  QNOTES_EXPORT_MAX_BYTES="52428800"
+  QNOTES_EXPORT_MAX_BYTES="52428800" \
+  QNOTES_CLIENT_IP_HEADER="x-forwarded-for"
 ```
 
 Production must not set `QNOTES_FAKE_EMBEDDINGS=1`.
+
+The Edge Functions reject request bodies before parsing them: general API
+requests are capped at 8 MiB, public-share resolution at 1 KiB, Vault requests
+at 278,528 bytes (256 KiB plus request overhead), and workspace imports at `QNOTES_EXPORT_MAX_BYTES` (50 MiB by
+default). Shared service-only budget windows cover public sharing, OAuth,
+semantic embeddings, workspace export/import, and attachment processing.
+They return `429` with `Retry-After`; if the database limiter cannot be
+verified, the operation fails closed with `503`. The local Supabase evidence
+also records `max_rows = 1000` and Storage `file_size_limit = "50MiB"` in
+`supabase/config.toml`. The production gateway must overwrite or strip the
+configured `QNOTES_CLIENT_IP_HEADER` before forwarding requests; verify that
+gateway behavior as deployment evidence before enabling production traffic.
 
 The worker pg_cron jobs created by the migrations use Supabase Vault and invoke the workers every 30 seconds. A separate `qnotes-requeue-stale-embeddings` job runs daily at 03:00 UTC (06:00 UTC+03) as an embedding recovery/catch-up schedule. In the Supabase SQL Editor, create these Vault entries once, using the same worker secret as above. If the named entries already exist, update them instead of creating duplicates:
 
