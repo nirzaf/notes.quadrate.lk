@@ -192,7 +192,7 @@ select is(
 
 select ok(
   (
-    select count(*) > 0
+    select count(*) = 1
     from public.qnotes_semantic_search_scoped(
       (select id from auth.users where email = 'owner@qnotes.local'),
       'us23-large',
@@ -203,9 +203,15 @@ select ok(
       1,
       array['85000000-0000-4000-8000-000000000001']::uuid[],
       false
+    ) result
+    where result.note_id in (
+      select id
+      from notesdb.notes
+      where notebook_id = '85000000-0000-4000-8000-000000000001'
+        and slug like 'us23-large-%'
     )
   ),
-  'large authorized subset remains reachable through HNSW retrieval'
+  'large authorized subset returns a note from the requested notebook'
 );
 select ok(
   case public.qnotes_configure_hnsw_search(false)
@@ -247,15 +253,22 @@ select ok(
   'HNSW configuration is version-gated to a supported strategy'
 );
 select ok(
-  (public.qnotes_measure_tenant_vector_recall(
-    (select id from auth.users where email = 'owner@qnotes.local'),
-    ('[1,0,' || repeat('0,', 381) || '0]')::extensions.vector,
-    '{"tags":["us23-small"]}'::jsonb,
-    array['85000000-0000-4000-8000-000000000001']::uuid[],
-    false,
-    1
-  ) ? 'recallAtK'),
-  'recall probe reports a recall metric'
+  (
+    with probe as (
+      select public.qnotes_measure_tenant_vector_recall(
+        (select id from auth.users where email = 'owner@qnotes.local'),
+        ('[1,0,' || repeat('0,', 381) || '0]')::extensions.vector,
+        '{"tags":["us23-small"]}'::jsonb,
+        array['85000000-0000-4000-8000-000000000001']::uuid[],
+        false,
+        1
+      ) as result
+    )
+    select (result->>'recallAtK')::double precision = 1.0
+      and result->'exactIds' = result->'annIds'
+    from probe
+  ),
+  'recall probe reports exact one-document agreement'
 );
 
 select * from finish();
