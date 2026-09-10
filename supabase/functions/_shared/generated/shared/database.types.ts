@@ -376,6 +376,7 @@ export type Database = {
           embedding_status: string
           embedding_attempts: number
           embedding_mode: string
+          block_key: string | null
           heading_path: string | null
           id: string
           note_id: string
@@ -402,6 +403,7 @@ export type Database = {
           embedding_status?: string
           embedding_attempts?: number
           embedding_mode?: string
+          block_key?: string | null
           heading_path?: string | null
           id?: string
           note_id: string
@@ -425,6 +427,7 @@ export type Database = {
           embedding_status?: string
           embedding_attempts?: number
           embedding_mode?: string
+          block_key?: string | null
           heading_path?: string | null
           id?: string
           note_id?: string

@@ -1,5 +1,10 @@
 begin;
-select plan(15);
+select plan(17);
+
+select ok(exists (
+  select 1 from information_schema.columns
+  where table_schema = 'notesdb' and table_name = 'search_documents' and column_name = 'block_key'
+), 'search documents persist the parent block identity');
 
 select is(
   public.qnotes_embedding_input('Title', 'Heading', 'Body'),
@@ -101,6 +106,31 @@ select ok(
    ))))
    where value->>'sourceType' = 'code_block'),
   'expanded code documents carry versioned deterministic chunk keys'
+);
+insert into notesdb.notes (
+  id, owner_id, slug, title, content_markdown, content_plain, tags, version, last_mutation_id, updated_by_device_id
+) values (
+  'a2500000-0000-4000-8000-000000000001',
+  (select id from auth.users where email = 'owner@qnotes.local'),
+  'us25-block-provenance', 'US25 block provenance', '', '', '{}', 1, gen_random_uuid(), gen_random_uuid()
+);
+select public.qnotes_sync_note_content(
+  'a2500000-0000-4000-8000-000000000001',
+  (select id from auth.users where email = 'owner@qnotes.local'),
+  jsonb_build_array(jsonb_build_object(
+    'blockKey', 'block-1', 'blockType', 'code', 'title', 'SQL', 'language', 'sql',
+    'content', repeat('line ', 500), 'position', 0, 'copyable', true, 'contentHash', 'us25-block-hash'
+  )),
+  jsonb_build_array(jsonb_build_object(
+    'sourceType', 'code_block', 'sourceKey', 'block-1', 'sourceTitle', 'SQL',
+    'content', repeat('line ', 500), 'contentHash', 'us25-block-hash', 'position', 0
+  ))
+);
+select ok(
+  (select count(*) > 1 and bool_and(block_key = 'block-1')
+   from notesdb.search_documents
+   where note_id = 'a2500000-0000-4000-8000-000000000001'),
+  'oversized code chunks retain their parent block for language-filtered search'
 );
 with input as (
   select jsonb_build_array(

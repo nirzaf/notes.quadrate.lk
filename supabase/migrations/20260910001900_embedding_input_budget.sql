@@ -1,6 +1,18 @@
 -- US-25: keep embedding inputs inside the verified provider boundary while
 -- retaining the full source in note_blocks for exact block retrieval.
 
+alter table notesdb.search_documents add column if not exists block_key text;
+create index if not exists search_documents_owner_note_block_key
+  on notesdb.search_documents (owner_id, note_id, block_key);
+update notesdb.search_documents d
+set block_key = b.block_key
+from notesdb.note_blocks b
+where d.note_id = b.note_id
+  and d.owner_id = b.owner_id
+  and d.source_type in ('copy_block', 'code_block')
+  and split_part(d.source_key, ':chunk:', 1) = b.block_key
+  and d.block_key is distinct from b.block_key;
+
 create or replace function public.qnotes_utf8_prefix(p_value text, p_max_bytes integer)
 returns text
 language plpgsql
@@ -294,15 +306,16 @@ begin
 
     insert into notesdb.search_documents (
       owner_id, note_id, source_type, source_id, source_key, source_title,
-      heading_path, content, content_hash, position, embedding_status
+      block_key, heading_path, content, content_hash, position, embedding_status
     ) values (
       p_owner_id, p_note_id, 'note_metadata', null, source_key_value,
-      coalesce(item->>'sourceTitle', note_row.title), item->>'headingPath',
+      coalesce(item->>'sourceTitle', note_row.title), null, item->>'headingPath',
       content, content_hash, position_value, 'pending'
     )
     on conflict (note_id, source_type, source_key) do update set
       owner_id = excluded.owner_id,
       source_title = excluded.source_title,
+      block_key = excluded.block_key,
       heading_path = excluded.heading_path,
       content = excluded.content,
       content_hash = excluded.content_hash,
@@ -534,7 +547,7 @@ begin
 
     insert into notesdb.search_documents (
       owner_id, note_id, source_type, source_id, source_key, source_title,
-      heading_path, content, content_hash, position, embedding_status
+      block_key, heading_path, content, content_hash, position, embedding_status
     ) values (
       p_owner_id,
       p_note_id,
@@ -542,6 +555,7 @@ begin
       nullif(item->>'sourceId', '')::uuid,
       source_key_value,
       source_title,
+      nullif(item->>'blockKey', ''),
       heading_path,
       content,
       content_hash,
@@ -552,6 +566,7 @@ begin
       owner_id = excluded.owner_id,
       source_id = excluded.source_id,
       source_title = excluded.source_title,
+      block_key = excluded.block_key,
       heading_path = excluded.heading_path,
       content = excluded.content,
       content_hash = excluded.content_hash,
@@ -625,6 +640,21 @@ begin
     from notesdb.search_documents d
     join notesdb.notes n on n.id = d.note_id and n.owner_id = d.owner_id and n.deleted_at is null
     where d.embedding_input_hash is distinct from public.qnotes_embedding_input_hash(d.source_title, d.heading_path, d.content)
+      and (
+        (d.source_type = 'attachment_chunk' and (
+          select count(*) from notesdb.search_documents group_documents
+          where group_documents.note_id = d.note_id
+            and group_documents.owner_id = d.owner_id
+            and group_documents.source_type = 'attachment_chunk'
+            and group_documents.source_id = d.source_id
+        ) <= p_limit)
+        or (d.source_type <> 'attachment_chunk' and (
+          select count(*) from notesdb.search_documents group_documents
+          where group_documents.note_id = d.note_id
+            and group_documents.owner_id = d.owner_id
+            and group_documents.source_type <> 'attachment_chunk'
+        ) <= p_limit)
+      )
     order by d.id
     limit p_limit
     for update of d skip locked
@@ -670,10 +700,11 @@ begin
             from notesdb.note_blocks b
             where b.note_id = document_record.note_id and b.owner_id = document_record.owner_id;
             select coalesce(jsonb_agg(jsonb_build_object(
-              'sourceType', d.source_type,
-              'sourceId', d.source_id,
-              'sourceKey', d.source_key,
-              'sourceTitle', d.source_title,
+            'sourceType', d.source_type,
+            'sourceId', d.source_id,
+            'sourceKey', d.source_key,
+            'blockKey', d.block_key,
+            'sourceTitle', d.source_title,
               'headingPath', d.heading_path,
               'content', d.content,
               'contentHash', d.content_hash,
@@ -708,6 +739,7 @@ begin
           'sourceType', d.source_type,
           'sourceId', d.source_id,
           'sourceKey', d.source_key,
+          'blockKey', d.block_key,
           'sourceTitle', d.source_title,
           'headingPath', d.heading_path,
           'content', d.content,
@@ -737,6 +769,34 @@ begin
     end if;
   end loop;
   return queued_count;
+end;
+$$;
+
+-- Keep every search surface joined to the persisted parent block key. The
+-- function bodies predate the column, so reapply them after the data repair.
+do $$
+declare
+  signature text;
+  definition text;
+begin
+  foreach signature in array array[
+    'qnotes_keyword_search(uuid,text,integer,jsonb,integer,integer)',
+    'qnotes_semantic_search(uuid,text,extensions.vector,integer,jsonb,integer,integer)',
+    'qnotes_keyword_search_scoped(uuid,text,integer,jsonb,integer,integer,uuid[],boolean)',
+    'qnotes_semantic_search_scoped(uuid,text,extensions.vector,integer,jsonb,integer,integer,uuid[],boolean)'
+  ]
+  loop
+    select pg_get_functiondef(p.oid)
+    into definition
+    from pg_proc p
+    where p.oid = (format('public.%s', signature))::regprocedure;
+    if definition is null then
+      raise exception 'search function % does not exist', signature;
+    end if;
+    definition := replace(definition, 'b.block_key = d.source_key', 'b.block_key = coalesce(d.block_key, d.source_key)');
+    definition := replace(definition, 'b.block_key, b.language', 'coalesce(d.block_key, b.block_key) as block_key, b.language');
+    execute definition;
+  end loop;
 end;
 $$;
 
