@@ -14,5 +14,23 @@ export async function parseMarkdown(markdown: string): Promise<ParsedMarkdown> {
 
 export { MarkdownParseError, renderMarkdown };
 export { sha256Hex } from './hash.ts';
-export { chunkMarkdown, chunkText, estimateTokenCount, splitTokenAware } from './chunker.ts';
+export {
+  chunkMarkdown,
+  chunkText,
+  EMBEDDING_INPUT_BYTE_BUDGET,
+  EMBEDDING_INPUT_VERSION,
+  EMBEDDING_PREFIX_MAX_BYTES,
+  EMBEDDING_PROVIDER_TOKEN_LIMIT,
+  EMBEDDING_SPECIAL_TOKEN_RESERVE,
+  embeddingContentByteBudget,
+  embeddingInput,
+  embeddingInputByteLength,
+  embeddingInputFits,
+  embeddingInputHash,
+  embeddingPrefix,
+  estimateTokenCount,
+  splitEmbeddingContent,
+  splitTokenAware,
+  utf8ByteLength,
+} from './chunker.ts';
 export { getMarkdownOutline, MarkdownPatchError, patchMarkdownSection } from './outline.ts';

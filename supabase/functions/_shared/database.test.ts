@@ -4,7 +4,7 @@ import test from 'node:test';
 Deno.env.set('SUPABASE_URL', 'http://127.0.0.1:54321');
 Deno.env.set('SUPABASE_SERVICE_ROLE_KEY', 'local-test-service-role-key');
 
-const { noteFromRow, summaryFromRow } = await import('./database.ts');
+const { noteFromRow, searchResultFromRow, summaryFromRow } = await import('./database.ts');
 
 const baseRow = {
   id: '550e8400-e29b-41d4-a716-446655440000',
@@ -53,4 +53,22 @@ test('keeps long-note summary JSON bounded while full-note retrieval stays compl
   assert.equal(JSON.stringify(summaryFromRow(longRow)).length, JSON.stringify(summaryFromRow(shortRow)).length);
   assert.equal(noteFromRow(longRow).contentMarkdown, longMarkdown);
   assert.equal(noteFromRow(longRow).contentPlain, longPlain);
+});
+
+test('restores the canonical block key for a split search document', () => {
+  const result = searchResultFromRow({
+    ...baseRow,
+    note_id: baseRow.id,
+    note_slug: baseRow.slug,
+    note_title: baseRow.title,
+    source_type: 'code_block',
+    source_key: 'setup:chunk:1-deadbeef',
+    source_title: 'setup',
+    heading_path: null,
+    snippet: 'tail',
+    score: 1,
+    block_key: null,
+    language: 'sh',
+  });
+  assert.equal(result.blockKey, 'setup');
 });

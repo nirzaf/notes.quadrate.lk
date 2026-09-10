@@ -80,9 +80,19 @@ export function attachmentFromRow(row: Record<string, unknown>): Attachment {
   };
 }
 
+function canonicalBlockKey(sourceKey: string): string {
+  const chunkMarker = ':chunk:';
+  const markerIndex = sourceKey.indexOf(chunkMarker);
+  return markerIndex >= 0 ? sourceKey.slice(0, markerIndex) : sourceKey;
+}
+
 export function searchResultFromRow(row: Record<string, unknown>): SearchResult {
   const sourceType = String(row.source_type) as SearchResult['sourceType'];
-  const blockKey = row.block_key ? String(row.block_key) : sourceType === 'copy_block' || sourceType === 'code_block' ? String(row.source_key) : null;
+  const blockKey = row.block_key
+    ? String(row.block_key)
+    : sourceType === 'copy_block' || sourceType === 'code_block'
+      ? canonicalBlockKey(String(row.source_key))
+      : null;
   return {
     id: String(row.id),
     noteId: String(row.note_id),

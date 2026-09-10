@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeEmbedding, resolveEmbeddingMode, SYNTHETIC_EMBEDDING_MODE } from '../../supabase/functions/embedding-worker/embedding.ts';
+import { normalizeEmbedding, resolveEmbeddingMode, SYNTHETIC_EMBEDDING_MODE } from '../../supabase/functions/embedding-worker/policy.ts';
 
 test('rejects invalid embedding vectors before normalization', () => {
   assert.throws(() => normalizeEmbedding([]), /invalid vector/);

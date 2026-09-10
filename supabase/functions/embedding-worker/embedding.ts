@@ -1,16 +1,18 @@
+import {
+  EMBEDDING_INPUT_BYTE_BUDGET,
+  EMBEDDING_INPUT_VERSION,
+  embeddingInput as buildEmbeddingInput,
+  embeddingInputByteLength,
+  embeddingInputHash as hashEmbeddingInput,
+  splitEmbeddingContent,
+} from '@qnotes/markdown';
+import { normalizeEmbedding, resolveEmbeddingMode, SYNTHETIC_EMBEDDING_MODE } from './policy.ts';
+
+export { normalizeEmbedding, resolveEmbeddingMode, SYNTHETIC_EMBEDDING_MODE } from './policy.ts';
+
 export const EMBEDDING_MODEL = 'gte-small';
 export const EMBEDDING_MODEL_VERSION = 'v2';
-export const SYNTHETIC_EMBEDDING_MODE = 'synthetic-test-v1';
-
-export type EmbeddingMode = 'provider' | typeof SYNTHETIC_EMBEDDING_MODE;
-
-export function resolveEmbeddingMode(environment: { get(name: string): string | undefined }): EmbeddingMode {
-  if (environment.get('QNOTES_FAKE_EMBEDDINGS') !== '1') return 'provider';
-  if (environment.get('QNOTES_ENVIRONMENT') !== 'test' || environment.get('QNOTES_EMBEDDING_MODE') !== SYNTHETIC_EMBEDDING_MODE) {
-    throw new Error('Synthetic embeddings require the explicit test environment and synthetic-test-v1 mode.');
-  }
-  return SYNTHETIC_EMBEDDING_MODE;
-}
+export { EMBEDDING_INPUT_BYTE_BUDGET, EMBEDDING_INPUT_VERSION };
 
 interface EmbeddingSession {
   run(input: string): Promise<unknown>;
@@ -42,25 +44,12 @@ export async function fakeEmbedding(value: string): Promise<number[]> {
   return vector.map((item) => item / magnitude);
 }
 
-export function embeddingInput(document: { content: string; sourceTitle?: string | null; headingPath?: string | null }): string {
-  return [document.sourceTitle, document.headingPath, document.content]
-    .map((value) => typeof value === 'string' ? value.trim() : '')
-    .filter(Boolean)
-    .join('\n\n');
-}
+export const embeddingInput = buildEmbeddingInput;
 
-export async function embeddingInputHash(document: { content: string; sourceTitle?: string | null; headingPath?: string | null }): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(embeddingInput(document)));
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
+export const embeddingInputHash = hashEmbeddingInput;
 
-export function normalizeEmbedding(value: unknown): number[] {
-  if (!Array.isArray(value) || value.length !== 384 || !value.every((item) => typeof item === 'number' && Number.isFinite(item))) {
-    throw new Error('Embedding runtime returned an invalid vector.');
-  }
-  const magnitude = Math.sqrt(value.reduce((sum, item) => sum + item * item, 0));
-  if (!Number.isFinite(magnitude) || magnitude === 0) throw new Error('Embedding runtime returned a zero-norm vector.');
-  return value.map((item) => item / magnitude);
+export function boundEmbeddingInput(value: string): string {
+  return splitEmbeddingContent(value)[0] ?? '';
 }
 
 function getSession(): EmbeddingSession {
@@ -75,7 +64,11 @@ function getSession(): EmbeddingSession {
 }
 
 export async function createEmbedding(value: string): Promise<number[]> {
-  if (resolveEmbeddingMode(Deno.env) === SYNTHETIC_EMBEDDING_MODE) return fakeEmbedding(value);
-  const result = await getSession().run(value);
+  const providerInput = boundEmbeddingInput(value);
+  if (embeddingInputByteLength(providerInput) > EMBEDDING_INPUT_BYTE_BUDGET) {
+    throw new Error(`Embedding input exceeds the conservative ${EMBEDDING_INPUT_BYTE_BUDGET}-byte provider budget.`);
+  }
+  if (resolveEmbeddingMode(Deno.env) === SYNTHETIC_EMBEDDING_MODE) return fakeEmbedding(providerInput);
+  const result = await getSession().run(providerInput);
   return normalizeEmbedding(result);
 }
