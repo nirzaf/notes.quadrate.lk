@@ -18,7 +18,7 @@ export function uniquePaths(...paths: unknown[]): string[] {
 }
 
 export async function ensureFinalObject(bucket: string, path: string, mimeType: string, bytes: Uint8Array): Promise<void> {
-  const uploaded = await serviceClient.storage.from(bucket).upload(path, new Blob([bytes.buffer as ArrayBuffer], { type: mimeType }), { contentType: mimeType, upsert: false });
+  const uploaded = await serviceClient.storage.from(bucket).upload(path, new Blob([bytes.slice().buffer as ArrayBuffer], { type: mimeType }), { contentType: mimeType, upsert: false });
   if (uploaded.error) {
     const existing = await serviceClient.storage.from(bucket).download(path);
     if (existing.error || !existing.data) throw new Error('FINAL_OBJECT_UNAVAILABLE');

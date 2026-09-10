@@ -108,6 +108,16 @@ begin
   if not found or item.deleted_at is not null then
     return jsonb_build_object('status', 'not_found', 'claimed', false);
   end if;
+  if item.extraction_status = 'verifying'
+     and item.updated_at <= timezone('utc', now()) - interval '15 minutes' then
+    update notesdb.attachments
+    set extraction_status = 'pending_upload',
+        extraction_error = 'ATTACHMENT_VERIFICATION_RETRY',
+        staging_expires_at = greatest(coalesce(staging_expires_at, timezone('utc', now())), timezone('utc', now())) + interval '15 minutes',
+        updated_at = timezone('utc', now())
+    where id = item.id
+    returning * into item;
+  end if;
   if item.extraction_status = 'pending_upload' and item.staging_expires_at is not null and item.staging_expires_at <= timezone('utc', now()) then
     update notesdb.attachments
     set extraction_status = 'deleting', deleted_at = timezone('utc', now()), extraction_error = 'UPLOAD_EXPIRED', cleanup_next_at = timezone('utc', now()), updated_at = timezone('utc', now())
@@ -208,23 +218,32 @@ begin
   end if;
 
   for attachment_record in
-    select a.id, a.owner_id, a.object_generation
+    select a.id, a.owner_id, a.object_generation, a.extraction_status
     from notesdb.attachments a
-    where a.extraction_status = 'processing'
+    where a.extraction_status in ('processing', 'verifying')
       and a.deleted_at is null
       and a.updated_at <= timezone('utc', now()) - p_stale_after
     order by a.updated_at, a.id
     limit p_limit
     for update of a skip locked
   loop
-    update notesdb.attachments
-    set extraction_status = 'queued', extraction_error = null, updated_at = timezone('utc', now())
-    where id = attachment_record.id;
-    perform pgmq.send('attachment-processing', jsonb_build_object(
-      'attachmentId', attachment_record.id,
-      'ownerId', attachment_record.owner_id,
-      'generation', attachment_record.object_generation
-    ));
+    if attachment_record.extraction_status = 'verifying' then
+      update notesdb.attachments
+      set extraction_status = 'pending_upload',
+          extraction_error = 'ATTACHMENT_VERIFICATION_RETRY',
+          staging_expires_at = greatest(coalesce(staging_expires_at, timezone('utc', now())), timezone('utc', now())) + interval '15 minutes',
+          updated_at = timezone('utc', now())
+      where id = attachment_record.id;
+    else
+      update notesdb.attachments
+      set extraction_status = 'queued', extraction_error = null, updated_at = timezone('utc', now())
+      where id = attachment_record.id;
+      perform pgmq.send('attachment-processing', jsonb_build_object(
+        'attachmentId', attachment_record.id,
+        'ownerId', attachment_record.owner_id,
+        'generation', attachment_record.object_generation
+      ));
+    end if;
     queued_count := queued_count + 1;
   end loop;
   return queued_count;

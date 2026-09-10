@@ -35,7 +35,8 @@ async function cleanupAttachmentObjects(): Promise<void> {
   const expired = await appDbClient.from('attachments').select('id, owner_id').eq('extraction_status', 'pending_upload').is('deleted_at', null).not('staging_object_path', 'is', null).lte('staging_expires_at', now).limit(CLEANUP_BATCH_SIZE);
   if (expired.error) throw expired.error;
   for (const row of expired.data ?? []) {
-    await serviceClient.rpc('qnotes_request_attachment_deletion', { p_owner_id: String(row.owner_id), p_attachment_id: String(row.id) });
+    const requested = await serviceClient.rpc('qnotes_request_attachment_deletion', { p_owner_id: String(row.owner_id), p_attachment_id: String(row.id) });
+    if (requested.error || objectRecord(requested.data).status !== 'deleting') throw requested.error ?? new Error('Attachment deletion transition was not recorded.');
   }
 
   const deleting = await appDbClient.from('attachments').select('id, owner_id, bucket, object_path, staging_object_path, cleanup_attempts').eq('extraction_status', 'deleting').lte('cleanup_next_at', now).limit(CLEANUP_BATCH_SIZE);
@@ -51,7 +52,7 @@ async function cleanupAttachmentObjects(): Promise<void> {
     if (completed.error || objectRecord(completed.data).status !== 'ok') await scheduleCleanupRetry(row as Record<string, unknown>);
   }
 
-  const staging = await appDbClient.from('attachments').select('id, bucket, staging_object_path').not('staging_object_path', 'is', null).neq('extraction_status', 'deleting').neq('extraction_status', 'deleted').lte('staging_expires_at', now).limit(CLEANUP_BATCH_SIZE);
+  const staging = await appDbClient.from('attachments').select('id, bucket, staging_object_path').not('staging_object_path', 'is', null).neq('extraction_status', 'deleting').neq('extraction_status', 'deleted').neq('extraction_status', 'verifying').lte('staging_expires_at', now).limit(CLEANUP_BATCH_SIZE);
   if (staging.error) throw staging.error;
   for (const row of staging.data ?? []) {
     const path = String(row.staging_object_path ?? '');

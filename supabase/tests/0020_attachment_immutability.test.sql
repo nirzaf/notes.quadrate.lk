@@ -1,5 +1,5 @@
 begin;
-select plan(24);
+select plan(28);
 
 select set_config('request.jwt.claims', jsonb_build_object('role', 'authenticated', 'sub', (select id::text from auth.users where email = 'owner@qnotes.local'))::text, true);
 
@@ -43,6 +43,15 @@ values ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeee05', (select id from auth.users where
 select is((public.qnotes_requeue_stale_attachment_processing(interval '15 minutes', 100)), 1, 'stale processing attachments are requeued');
 select is((select extraction_status from notesdb.attachments where id = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee05'), 'queued', 'stale processing attachment returns to queued');
 select is((select count(*)::integer from pgmq.read('attachment-processing', 0, 100) where message->>'attachmentId' = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee05'), 1, 'stale processing recovery sends one attachment job');
+
+insert into notesdb.attachments (id, owner_id, note_id, object_path, staging_object_path, original_file_name, mime_type, size_bytes, storage_mode, staging_expires_at, extraction_status, updated_at)
+values ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeee06', (select id from auth.users where email = 'owner@qnotes.local'), 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01', 'legacy-test/stale-verifying.txt', 'legacy-test/staging/stale-verifying.txt', 'stale-verifying.txt', 'text/plain', 1, 'immutable', timezone('utc', now()) + interval '1 hour', 'verifying', timezone('utc', now()) - interval '1 hour');
+select is((public.qnotes_begin_attachment_verification((select id from auth.users where email = 'owner@qnotes.local'), 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee06')->>'status'), 'verifying', 'stale verification claims are recovered for a retry');
+select is((select extraction_status from notesdb.attachments where id = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee06'), 'verifying', 'recovered verification is claimable again');
+insert into notesdb.attachments (id, owner_id, note_id, object_path, staging_object_path, original_file_name, mime_type, size_bytes, storage_mode, staging_expires_at, extraction_status, updated_at)
+values ('eeeeeeee-eeee-eeee-eeee-eeeeeeeeee07', (select id from auth.users where email = 'owner@qnotes.local'), 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee01', 'legacy-test/stale-verifying-queue.txt', 'legacy-test/staging/stale-verifying-queue.txt', 'stale-verifying-queue.txt', 'text/plain', 1, 'immutable', timezone('utc', now()) + interval '1 hour', 'verifying', timezone('utc', now()) - interval '1 hour');
+select is(public.qnotes_requeue_stale_attachment_processing(interval '15 minutes', 100), 1, 'stale verification recovery is bounded');
+select is((select extraction_status from notesdb.attachments where id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeee07'), 'pending_upload', 'stale verification returns to pending upload instead of remaining stuck');
 
 update notesdb.attachments set extraction_status = 'processing' where id = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee02';
 select is((public.qnotes_complete_attachment_processing((select id from auth.users where email = 'owner@qnotes.local'), 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeee02', null::uuid, repeat('a', 64), '[]'::jsonb)->>'status'), 'integrity_conflict', 'processing rejects a null generation');
