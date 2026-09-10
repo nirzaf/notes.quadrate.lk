@@ -12,10 +12,17 @@ export function validateApiEndpoint(value, options = {}) {
   } catch {
     throw new TypeError('The API endpoint must be a valid URL.');
   }
-  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+  if (parsed.username || parsed.password || parsed.search || parsed.hash || value.includes('?') || value.includes('#')) {
     throw new TypeError('The API endpoint must not contain credentials, queries, or fragments.');
   }
-  if (/[\\\u0000-\u001f\u007f]/.test(value) || /\/(?:\.{1,2})(?:\/|$)/.test(value)) {
+  let pathSegments;
+  try {
+    const rawPath = value.match(/^[a-z][a-z\d+.-]*:\/\/[^/]*(.*)$/i)?.[1] ?? '';
+    pathSegments = [...rawPath.split('/'), ...parsed.pathname.split('/')].map((segment) => decodeURIComponent(segment));
+  } catch {
+    throw new TypeError('The API endpoint path is malformed.');
+  }
+  if (/[\\\u0000-\u001f\u007f]/.test(value) || pathSegments.some((segment) => segment === '.' || segment === '..')) {
     throw new TypeError('The API endpoint path is malformed.');
   }
   if (parsed.protocol === 'https:') return value;

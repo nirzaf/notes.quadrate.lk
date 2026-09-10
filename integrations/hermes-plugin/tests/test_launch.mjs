@@ -5,10 +5,17 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
+import { validateApiEndpoint } from '../endpoint-policy.mjs';
 
 const testDirectory = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(testDirectory, '../../..');
 const launcher = join(repoRoot, 'integrations', 'hermes-plugin', 'launch.mjs');
+
+test('standalone endpoint policy rejects empty delimiters and encoded dot segments', () => {
+  for (const value of ['https://example.test?', 'https://example.test#', 'https://example.test/functions/%2e%2e/qnotes-api']) {
+    assert.throws(() => validateApiEndpoint(value), /API endpoint/);
+  }
+});
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'qnotes-hermes-launch-'));

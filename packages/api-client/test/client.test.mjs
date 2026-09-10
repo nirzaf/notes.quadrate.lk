@@ -40,9 +40,12 @@ test('requires HTTPS or explicitly enabled exact loopback HTTP endpoints', async
     'http://example.test',
     'http://127.0.0.1.attacker.test',
     'https://example.test?token=secret',
+    'https://example.test?',
+    'https://example.test#',
     'https://user:password@example.test',
     'https://example.test/#fragment',
     'https://example.test/functions/../qnotes-api',
+    'https://example.test/functions/%2e%2e/qnotes-api',
   ]) {
     assert.throws(() => new QNotesClient({ baseUrl, getAccessToken: () => null }), /API endpoint/);
   }
@@ -123,7 +126,9 @@ test('keeps export cancellation active until the response body is consumed', asy
     allowInsecureLoopback: true,
     getAccessToken: () => null,
   });
-  const response = await client.exportWorkspace({ timeoutMs: 10 });
+  const controller = new AbortController();
+  const response = await client.exportWorkspace({ signal: controller.signal });
+  controller.abort();
   await assert.rejects(() => response.arrayBuffer(), (error) => error?.name === 'TimeoutError' || error?.name === 'AbortError');
 });
 
