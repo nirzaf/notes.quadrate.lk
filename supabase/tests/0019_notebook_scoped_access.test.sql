@@ -1,5 +1,5 @@
 begin;
-select plan(25);
+select plan(27);
 
 select has_table('notesdb', 'api_token_notebook_grants', 'token notebook grants exist');
 select has_column('notesdb', 'api_tokens', 'access_mode', 'tokens record the access mode');
