@@ -4,7 +4,7 @@ import { assertSupabase, appDbClient, serviceClient } from '../_shared/database.
 import { ApiError } from '../_shared/errors.ts';
 import { requireVaultStepUp, vaultAuthFromContext, requireVaultUserJwt } from '../_shared/vault-auth.ts';
 import { grantAllows, requireVaultAccess, vaultGrants } from '../_shared/vault-authorization.ts';
-import { recordVaultAuditEvent, recordVaultAuditFailure } from '../_shared/vault-audit.ts';
+import { recordVaultAuditFailure } from '../_shared/vault-audit.ts';
 import { hashVaultMutation } from '../_shared/vault-token.ts';
 import { generateVaultAgentToken, generateVaultApprovalToken, hashVaultAgentToken, hashVaultApprovalToken } from '../_shared/vault-token.ts';
 import { fetchAllRangePages } from './vault-agent-pagination.ts';
@@ -64,12 +64,12 @@ async function requireVaultOperationApproval(context: Context, auth: ReturnType<
     p_expected_version: spec.expectedVersion,
     p_request_hash: spec.requestHash,
     p_approval_hash: approvalHash,
+    p_request_id: context.get('requestId'),
   })));
   if (result.status !== 'ok') {
     await recordVaultAuditFailure(auth, 'access:denied', resource, `approval_${String(result.status ?? 'invalid')}`, { requestId: context.get('requestId') });
     throw new ApiError(403, 'VAULT_APPROVAL_INVALID', 'The Vault operation approval is invalid, expired, or already used.');
   }
-  await recordVaultAuditEvent(auth, 'approval:consume', resource, { requestId: context.get('requestId'), purpose: 'Vault operation approval consumed' });
 }
 
 export async function issueVaultOperationApproval(context: Context): Promise<Response> {
@@ -88,10 +88,9 @@ export async function issueVaultOperationApproval(context: Context): Promise<Res
     p_expected_version: input.expectedVersion,
     p_request_hash: input.requestHash,
     p_approval_hash: await hashVaultApprovalToken(approvalToken),
+    p_request_id: context.get('requestId'),
   })));
   if (result.status !== 'ok' || typeof result.expiresAt !== 'string') throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to issue a Vault operation approval.');
-  await recordVaultAuditEvent(auth, 'auth:step_up', { ownerId: auth.userId }, { requestId: context.get('requestId'), purpose: 'Vault step-up verified' });
-  await recordVaultAuditEvent(auth, 'approval:issue', { ownerId: auth.userId }, { requestId: context.get('requestId'), purpose: 'Vault operation approval issued' });
   return noStore(dataBody(context, { approvalToken, expiresAt: result.expiresAt }));
 }
 
@@ -477,10 +476,9 @@ export async function createVaultAgentToken(context: Context): Promise<Response>
   await requireVaultOperationApproval(context, auth, { action: 'token:issue', projectId: null, environmentId: null, secretId: null, expectedVersion: null, requestHash: await hashVaultApprovalRequest(approvalRequest) });
   const token = generateVaultAgentToken();
   const tokenHash = await hashVaultAgentToken(token);
-  const result = assertSupabase(await serviceClient.rpc('qnotes_create_vault_agent_token', { p_owner_id: auth.userId, p_name: input.name, p_token_prefix: token.slice(0, 12), p_token_hash: tokenHash, p_expires_at: input.expiresAt, p_grants: input.grants }));
+  const result = assertSupabase(await serviceClient.rpc('qnotes_create_vault_agent_token', { p_owner_id: auth.userId, p_name: input.name, p_token_prefix: token.slice(0, 12), p_token_hash: tokenHash, p_expires_at: input.expiresAt, p_grants: input.grants, p_request_id: context.get('requestId') }));
   const payload = record(result);
   if (!payload.id || !Array.isArray(payload.grants)) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to create Vault agent token.');
-  await recordVaultAuditEvent(auth, 'token:issue', { ownerId: auth.userId }, { requestId: context.get('requestId'), purpose: 'Vault agent token issued' });
   return noStore(dataBody(context, { token, metadata: tokenMetadata(payload), grants: payload.grants }, 201));
 }
 
@@ -489,17 +487,16 @@ export async function revokeVaultAgentToken(context: Context): Promise<Response>
   requireVaultUserJwt(auth);
   const tokenId = context.req.param('tokenId') ?? '';
   await requireVaultOperationApproval(context, auth, { action: 'token:revoke', projectId: null, environmentId: null, secretId: null, expectedVersion: null, requestHash: await hashVaultApprovalRequest({ operation: 'token-revoked', tokenId }) });
-  const result = record(assertSupabase(await serviceClient.rpc('qnotes_revoke_vault_agent_token', { p_owner_id: auth.userId, p_token_id: tokenId })));
+  const result = record(assertSupabase(await serviceClient.rpc('qnotes_revoke_vault_agent_token', { p_owner_id: auth.userId, p_token_id: tokenId, p_request_id: context.get('requestId') })));
   if (result.status === 'not_found') throw new ApiError(404, 'VAULT_AGENT_TOKEN_NOT_FOUND', 'The Vault agent token was not found.');
   if (result.status !== 'ok') throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to revoke Vault agent token.');
-  await recordVaultAuditEvent(auth, 'token:revoke', { ownerId: auth.userId }, { requestId: context.get('requestId'), purpose: 'Vault agent token revoked' });
   return dataBody(context, null);
 }
 
 export async function listVaultAudit(context: Context): Promise<Response> {
   const auth = vaultAuthFromContext(context);
   requireVaultUserJwt(auth);
-  const { data, error } = await appDbClient.from('vault_audit_events').select('id, actor_kind, actor_token_id, action, project_id, environment_id, secret_id, purpose, success, result_code, request_id, operation_id, policy_revision, retention_expires_at, occurred_at').eq('owner_id', auth.userId).order('occurred_at', { ascending: false }).limit(200);
+  const { data, error } = await appDbClient.from('vault_audit_events').select('id, actor_kind, actor_token_id, target_token_id, action, project_id, environment_id, secret_id, purpose, success, result_code, request_id, operation_id, policy_revision, retention_expires_at, occurred_at').eq('owner_id', auth.userId).order('occurred_at', { ascending: false }).limit(200);
   if (error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to list Vault audit events.');
   const rows = Array.isArray(data) ? data.map((row) => record(row)) : [];
   const actorTokenIds = [...new Set(rows
@@ -527,6 +524,7 @@ export async function listVaultAudit(context: Context): Promise<Response> {
       actorTokenId,
       actorTokenName: actorToken?.name ?? null,
       actorTokenPrefix: actorToken?.prefix ?? null,
+      targetTokenId: item.target_token_id ? String(item.target_token_id) : null,
       action: String(item.action) as VaultAuditAction,
       projectId: item.project_id ? String(item.project_id) : null,
       environmentId: item.environment_id ? String(item.environment_id) : null,
@@ -549,10 +547,9 @@ export async function replaceVaultAgentGrants(context: Context): Promise<Respons
   const tokenId = context.req.param('tokenId') ?? '';
   const validation = validateReplaceVaultAgentGrantsInput(await context.req.json());
   await requireVaultOperationApproval(context, auth, { action: 'grant:replace', projectId: null, environmentId: null, secretId: null, expectedVersion: null, requestHash: await hashVaultApprovalRequest({ operation: 'grants-replaced', tokenId, grants: validation.grants }) });
-  const result = assertSupabase(await serviceClient.rpc('qnotes_replace_vault_agent_grants', { p_owner_id: auth.userId, p_token_id: tokenId, p_grants: validation.grants }));
+  const result = assertSupabase(await serviceClient.rpc('qnotes_replace_vault_agent_grants', { p_owner_id: auth.userId, p_token_id: tokenId, p_grants: validation.grants, p_request_id: context.get('requestId') }));
   if (record(result).status === 'not_found') throw new ApiError(404, 'VAULT_AGENT_TOKEN_NOT_FOUND', 'The Vault agent token was not found.');
   if (record(result).status !== 'ok') throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to update Vault grants.');
-  await recordVaultAuditEvent(auth, 'grant:replace', { ownerId: auth.userId }, { requestId: context.get('requestId'), purpose: 'Vault agent grants replaced' });
   const grants = record(result).grants;
   if (!Array.isArray(grants)) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to update Vault grants.');
   return dataBody(context, grants.map((grant) => grantMetadata(record(grant))));

@@ -88,6 +88,7 @@ export type VaultAuditEvent = {
   actorTokenId: string | null;
   actorTokenName: string | null;
   actorTokenPrefix: string | null;
+  targetTokenId: string | null;
   action: VaultAuditAction;
   projectId: string | null;
   environmentId: string | null;

@@ -6,6 +6,7 @@ export interface VaultAuditResource {
   projectId?: string | null;
   environmentId?: string | null;
   secretId?: string | null;
+  targetTokenId?: string | null;
 }
 
 export interface VaultAuditDetails {
@@ -41,6 +42,7 @@ export function buildVaultAuditFailureRow(
     owner_id: auth.userId,
     actor_kind: auth.authKind === 'vault-agent' ? 'vault_agent' : 'user_jwt',
     actor_token_id: auth.tokenId ?? null,
+    target_token_id: nullable(resource.targetTokenId),
     action,
     project_id: nullable(resource.projectId),
     environment_id: nullable(resource.environmentId),
@@ -76,36 +78,12 @@ export async function recordVaultAuditFailure(
       p_result_code: row.result_code,
       p_request_id: row.request_id,
       p_operation_id: row.request_id,
+      p_target_token_id: row.target_token_id,
     });
     if (error) throw error;
   } catch {
     // Failure auditing is deliberately best effort and must not change the public response.
   }
-}
-
-export async function recordVaultAuditEvent(
-  auth: VaultAuthContext,
-  action: VaultAuditAction,
-  resource: VaultAuditResource,
-  details: VaultAuditDetails & { success?: boolean; resultCode?: string | null; operationId?: string | null } = {},
-  client?: VaultAuditInsertClient,
-): Promise<void> {
-  const auditClient = client ?? await defaultAuditClient();
-  const { error } = await auditClient.rpc('qnotes_vault_append_audit_event', {
-    p_owner_id: auth.userId,
-    p_actor_kind: auth.authKind === 'vault-agent' ? 'vault_agent' : 'user_jwt',
-    p_actor_token_id: auth.tokenId ?? null,
-    p_action: action,
-    p_project_id: resource.projectId ?? null,
-    p_environment_id: resource.environmentId ?? null,
-    p_secret_id: resource.secretId ?? null,
-    p_purpose: details.purpose ?? null,
-    p_success: details.success ?? true,
-    p_result_code: details.resultCode ?? 'ok',
-    p_request_id: details.requestId ?? null,
-    p_operation_id: details.operationId ?? details.requestId ?? null,
-  });
-  if (error) throw error;
 }
 
 export async function recordVaultAgentAccessDenied(

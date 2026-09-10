@@ -26,6 +26,7 @@ Deno.test('Vault failure audit payload contains only safe actor and resource met
     owner_id: auth.userId,
     actor_kind: 'vault_agent',
     actor_token_id: auth.tokenId,
+    target_token_id: null,
     action: 'secret:reveal',
     project_id: resource.projectId,
     environment_id: resource.environmentId,
