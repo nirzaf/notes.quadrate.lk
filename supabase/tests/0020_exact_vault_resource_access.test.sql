@@ -1,5 +1,5 @@
 begin;
-select plan(27);
+select plan(28);
 
 select ok(to_regprocedure('public.qnotes_vault_resolve_resource(uuid,uuid,text,text,uuid,text,uuid,text,uuid,text,uuid)') is not null, 'the exact Vault resource resolver exists');
 select ok((select p.prosecdef from pg_proc p where p.oid = 'public.qnotes_vault_resolve_resource(uuid,uuid,text,text,uuid,text,uuid,text,uuid,text,uuid)'::regprocedure), 'the exact Vault resource resolver is SECURITY DEFINER');
@@ -156,6 +156,11 @@ select is((public.qnotes_vault_authorize_actor(
   'f1600000-0000-4000-8000-000000000001', 'f1600000-0000-4000-8000-000000000002', 'f1600000-0000-4000-8000-000000001001',
   'f1600000-0000-4000-8000-000000000024'
 )->>'status'), 'access_denied', 'locked authorization rejects a secret deleted after resolution');
+select is((public.qnotes_vault_resolve_resource(
+  (select id from auth.users where email = 'owner@qnotes.local'), null, 'user_jwt', 'secret:delete',
+  null, null, null, null, 'f1600000-0000-4000-8000-000000001001', null,
+  'f1600000-0000-4000-8000-000000000025'
+)->>'status'), 'ok', 'delete receipt resolution retains a soft-deleted secret identity');
 select is((public.qnotes_vault_resolve_resource(
   (select id from auth.users where email = 'owner@qnotes.local'), null, 'user_jwt', 'secret:reveal',
   null, 'exact-project', null, 'stable', null, null,

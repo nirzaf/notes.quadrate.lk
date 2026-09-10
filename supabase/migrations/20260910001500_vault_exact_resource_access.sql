@@ -75,7 +75,8 @@ begin
   if p_secret_id is not null then
     select * into secret_row
     from notesdb.vault_secrets
-    where id = p_secret_id and owner_id = p_owner_id and deleted_at is null;
+    where id = p_secret_id and owner_id = p_owner_id
+      and (deleted_at is null or p_action = 'secret:delete');
     if not found then
       if p_actor_token_id is not null then
         perform public.qnotes_vault_record_denial(p_owner_id, p_actor_token_id, p_action, p_project_id, p_environment_id, p_secret_id, p_request_id, 'not_found');
