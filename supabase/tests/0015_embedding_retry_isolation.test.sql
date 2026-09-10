@@ -15,6 +15,16 @@ select ok(
     and has_function_privilege('service_role', 'public.qnotes_requeue_embedding_failures(integer)', 'EXECUTE'),
   'operator requeue is restricted to service_role'
 );
+insert into notesdb.notes (
+  id, owner_id, slug, title, content_markdown, content_plain, tags,
+  version, last_mutation_id, updated_by_device_id
+) values (
+  '88888888-8888-4888-8888-888888888801',
+  (select id from auth.users where email = 'owner@qnotes.local'),
+  'us26-synthetic-isolation', 'US26 Synthetic Isolation',
+  'synthetic-vector-marker', 'synthetic-vector-marker', '{}',
+  1, gen_random_uuid(), gen_random_uuid()
+);
 insert into notesdb.search_documents (
   id, owner_id, note_id, source_type, source_key, source_title, content,
   content_hash, position, embedding_status, embedding_error, embedding_attempts
@@ -29,16 +39,6 @@ update notesdb.search_documents set embedding_attempts = 1
 where id = '88888888-8888-4888-8888-888888888804';
 select is(public.qnotes_requeue_embedding_failures(100), 0, 'operator requeue leaves non-terminal failures for the normal retry budget');
 select is((select embedding_attempts from notesdb.search_documents where id = '88888888-8888-4888-8888-888888888804'), 1, 'non-terminal failure attempts are unchanged');
-insert into notesdb.notes (
-  id, owner_id, slug, title, content_markdown, content_plain, tags,
-  version, last_mutation_id, updated_by_device_id
-) values (
-  '88888888-8888-4888-8888-888888888801',
-  (select id from auth.users where email = 'owner@qnotes.local'),
-  'us26-synthetic-isolation', 'US26 Synthetic Isolation',
-  'synthetic-vector-marker', 'synthetic-vector-marker', '{}',
-  1, gen_random_uuid(), gen_random_uuid()
-);
 insert into notesdb.search_documents (
   id, owner_id, note_id, source_type, source_key, source_title, content,
   content_hash, position, embedding, embedding_status, embedding_model,
