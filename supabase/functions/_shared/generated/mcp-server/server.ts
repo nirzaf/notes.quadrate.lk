@@ -45,7 +45,7 @@ const filtersSchema = strictInput({
   unfiled: z.boolean().optional(),
 });
 const searchInputSchema = strictInput({
-  query: utf8AtMost(MAX_SEARCH_QUERY_LENGTH).min(1),
+  query: utf8AtMost(MAX_SEARCH_QUERY_LENGTH * 4).min(1).max(MAX_SEARCH_QUERY_LENGTH),
   mode: z.enum(['auto', 'keyword', 'semantic', 'hybrid']).optional(),
   limit: z.number().int().min(1).max(MAX_SEARCH_LIMIT).optional(),
   cursor: z.string().min(1).max(MAX_SEARCH_CURSOR_LENGTH).optional(),
@@ -55,9 +55,9 @@ const readContextInputSchema = strictInput({ documentId: z.string().uuid(), befo
 const blockInputSchema = strictInput({ noteRef: z.string().min(1).max(200), blockKey: z.string().min(1).max(MAX_BLOCK_KEY_LENGTH) });
 const noInputSchema = strictInput({});
 const publicShareInputSchema = strictInput({ noteId: z.string().uuid() });
-const captureInputSchema = strictInput({ title: z.string().min(1).max(MAX_TITLE_LENGTH), contentMarkdown: utf8AtMost(MAX_MARKDOWN_CODE_UNITS * 4), tags: z.array(z.string().min(1).max(MAX_TAG_LENGTH)).max(MAX_TAG_COUNT).optional(), slug: z.string().min(1).max(MAX_SLUG_LENGTH).optional(), notebookId: z.string().uuid().nullable().optional(), dedupeKey: z.string().min(1).max(MAX_DEDUPE_KEY_LENGTH).optional(), mutationId: z.string().uuid().optional() });
-const appendInputSchema = strictInput({ noteId: z.string().uuid(), contentMarkdown: utf8AtMost(MAX_MARKDOWN_CODE_UNITS * 4), expectedVersion: z.number().int().min(1).optional(), mutationId: z.string().uuid().optional() });
-const updateInputSchema = strictInput({ noteId: z.string().uuid(), title: z.string().min(1).max(MAX_TITLE_LENGTH), slug: z.string().min(1).max(MAX_SLUG_LENGTH), contentMarkdown: utf8AtMost(MAX_MARKDOWN_CODE_UNITS * 4), tags: z.array(z.string().min(1).max(MAX_TAG_LENGTH)).max(MAX_TAG_COUNT).optional(), expectedVersion: z.number().int().min(1), mutationId: z.string().uuid().optional() });
+const captureInputSchema = strictInput({ title: z.string().min(1).max(MAX_TITLE_LENGTH), contentMarkdown: utf8AtMost(MAX_MARKDOWN_CODE_UNITS * 4).max(MAX_MARKDOWN_CODE_UNITS), tags: z.array(z.string().min(1).max(MAX_TAG_LENGTH)).max(MAX_TAG_COUNT).optional(), slug: z.string().min(1).max(MAX_SLUG_LENGTH).optional(), notebookId: z.string().uuid().nullable().optional(), dedupeKey: z.string().min(1).max(MAX_DEDUPE_KEY_LENGTH).optional(), mutationId: z.string().uuid().optional() });
+const appendInputSchema = strictInput({ noteId: z.string().uuid(), contentMarkdown: utf8AtMost(MAX_MARKDOWN_CODE_UNITS * 4).max(MAX_MARKDOWN_CODE_UNITS), expectedVersion: z.number().int().min(1).optional(), mutationId: z.string().uuid().optional() });
+const updateInputSchema = strictInput({ noteId: z.string().uuid(), title: z.string().min(1).max(MAX_TITLE_LENGTH), slug: z.string().min(1).max(MAX_SLUG_LENGTH), contentMarkdown: utf8AtMost(MAX_MARKDOWN_CODE_UNITS * 4).max(MAX_MARKDOWN_CODE_UNITS), tags: z.array(z.string().min(1).max(MAX_TAG_LENGTH)).max(MAX_TAG_COUNT).optional(), expectedVersion: z.number().int().min(1), mutationId: z.string().uuid().optional() });
 const versionedDeleteInputSchema = strictInput({ noteId: z.string().uuid(), expectedVersion: z.number().int().min(1), mutationId: z.string().uuid().optional(), confirm: z.literal(true) });
 const moveInputSchema = strictInput({ noteId: z.string().uuid(), notebookId: z.string().uuid().nullable(), expectedVersion: z.number().int().min(1), mutationId: z.string().uuid().optional() });
 const vaultProjectInputSchema = strictInput({ project: z.string().min(1).max(MAX_VAULT_PROJECT_NAME_LENGTH) });
