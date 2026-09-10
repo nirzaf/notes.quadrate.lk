@@ -47,7 +47,7 @@ select ok((select not exists (select 1 from public.qnotes_keyword_search_scoped(
 select is((select count(*)::integer from public.qnotes_keyword_search_scoped((select id from auth.users where email = 'owner@qnotes.local'), 'us09-marker', 50, '{}'::jsonb, 0, 2, '{}'::uuid[], true)), 1, 'unfiled permission is explicit and independent');
 select is((select count(*)::integer from public.qnotes_search_freshness_scoped((select id from auth.users where email = 'owner@qnotes.local'), ARRAY['a9000000-0000-4000-8000-000000000001']::uuid[], false)), 1, 'freshness counts only authorized notebook documents');
 
-select is((select policy_revision from notesdb.api_tokens where token_hash = repeat('b', 64)), 2, 'policy revision records the grant creation');
+select is((select policy_revision from notesdb.api_tokens where token_hash = repeat('b', 64)), 2::bigint, 'policy revision records the grant creation');
 delete from notesdb.api_token_notebook_grants where token_id = (select id from notesdb.api_tokens where token_hash = repeat('b', 64));
 select ok((select policy_revision > 2 from notesdb.api_tokens where token_hash = repeat('b', 64)), 'grant revocation advances the policy revision');
 select is((select cardinality(notebook_ids) from public.qnotes_api_token_access((select id from notesdb.api_tokens where token_hash = repeat('b', 64)), (select id from auth.users where email = 'owner@qnotes.local'))), 0, 'revoked grants are absent from the next policy snapshot');
