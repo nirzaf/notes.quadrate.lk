@@ -359,7 +359,7 @@ begin
   if not found then
     perform public.qnotes_vault_append_audit_event(
       p_owner_id, 'user_jwt', null, 'grant:replace', null, null, null,
-      'Vault agent grants replaced', false, 'not_found', p_request_id, p_request_id, p_token_id
+      'Vault agent grants replace failed', false, 'not_found', p_request_id, p_request_id, p_token_id
     );
     return jsonb_build_object('status', 'not_found');
   end if;
@@ -396,7 +396,7 @@ begin
   if not found then
     perform public.qnotes_vault_append_audit_event(
       p_owner_id, 'user_jwt', null, 'token:revoke', null, null, null,
-      'Vault agent token revoked', false, 'not_found', p_request_id, p_request_id, p_token_id
+      'Vault agent token revoke failed', false, 'not_found', p_request_id, p_request_id, p_token_id
     );
     return jsonb_build_object('status', 'not_found');
   end if;
