@@ -103,7 +103,7 @@ begin
     where id = p_environment_id and owner_id = p_owner_id and archived_at is null;
     if not found then
       if p_actor_token_id is not null then
-        perform public.qnotes_vault_record_denial(p_owner_id, p_actor_token_id, p_action, p_project_id, p_environment_id, null, p_request_id, 'not_found');
+        perform public.qnotes_vault_record_denial(p_owner_id, p_actor_token_id, p_action, p_project_id, p_environment_id, p_secret_id, p_request_id, 'not_found');
         return jsonb_build_object('status', 'access_denied');
       end if;
       return jsonb_build_object('status', 'environment_not_found');
