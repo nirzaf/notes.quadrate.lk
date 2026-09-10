@@ -71,17 +71,17 @@ test('MCP create_public_share uses an exact one-day expiry and constructs the pu
   const result = await createPublicShareTool({
     async getNote(receivedNoteId) {
       assert.equal(receivedNoteId, noteId);
-      return { title: 'Release notes', contentMarkdown: '# Safe', id: noteId };
+      return { title: 'Release notes', contentMarkdown: '# Safe', id: noteId, version: 1 };
     },
     async createPublicShare(receivedNoteId, input) {
       received = { noteId: receivedNoteId, input };
       return { token, metadata: {} };
     },
-  }, { noteId }, { now: () => new Date('2026-09-07T12:34:56.789Z') });
+  }, { noteId, expectedVersion: 1, confirm: true }, { now: () => new Date('2026-09-07T12:34:56.789Z') });
 
   assert.deepEqual(received, {
     noteId,
-    input: { expiresAt: '2026-09-08T12:34:56.789Z' },
+    input: { expectedVersion: 1, expiresAt: '2026-09-08T12:34:56.789Z', confirm: true },
   });
   assert.deepEqual(result.structuredContent, {
     url: `https://notes.quadrate.lk/share#${token}`,
@@ -94,13 +94,13 @@ test('MCP create_public_share rejects sensitive notes before calling the share A
   let shareCalls = 0;
   await assert.rejects(() => createPublicShareTool({
     async getNote() {
-      return { title: 'Deployment', contentMarkdown: 'service_password: synthetic-secret-value', id: '550e8400-e29b-41d4-a716-446655440000' };
+      return { title: 'Deployment', contentMarkdown: 'service_password: synthetic-secret-value', id: '550e8400-e29b-41d4-a716-446655440000', version: 1 };
     },
     async createPublicShare() {
       shareCalls += 1;
       throw new Error('must not be called');
     },
-  }, { noteId: '550e8400-e29b-41d4-a716-446655440000' }), /sensitive credential material/);
+  }, { noteId: '550e8400-e29b-41d4-a716-446655440000', expectedVersion: 1, confirm: true }), /sensitive credential material/);
   assert.equal(shareCalls, 0);
 });
 
@@ -109,13 +109,13 @@ test('MCP create_public_share rejects qvt credentials in note Markdown before ca
   let shareCalls = 0;
   await assert.rejects(() => createPublicShareTool({
     async getNote() {
-      return { title: 'Deployment', contentMarkdown: `Use this credential: ${qvtToken}`, id: '550e8400-e29b-41d4-a716-446655440000' };
+      return { title: 'Deployment', contentMarkdown: `Use this credential: ${qvtToken}`, id: '550e8400-e29b-41d4-a716-446655440000', version: 1 };
     },
     async createPublicShare() {
       shareCalls += 1;
       throw new Error('must not be called');
     },
-  }, { noteId: '550e8400-e29b-41d4-a716-446655440000' }), /sensitive credential material/);
+  }, { noteId: '550e8400-e29b-41d4-a716-446655440000', expectedVersion: 1, confirm: true }), /sensitive credential material/);
   assert.equal(shareCalls, 0);
 });
 
@@ -124,13 +124,13 @@ test('MCP create_public_share rejects qvt credentials in the note title before c
   let shareCalls = 0;
   await assert.rejects(() => createPublicShareTool({
     async getNote() {
-      return { title: `Vault token ${qvtToken}`, contentMarkdown: '# Safe', id: '550e8400-e29b-41d4-a716-446655440000' };
+      return { title: `Vault token ${qvtToken}`, contentMarkdown: '# Safe', id: '550e8400-e29b-41d4-a716-446655440000', version: 1 };
     },
     async createPublicShare() {
       shareCalls += 1;
       throw new Error('must not be called');
     },
-  }, { noteId: '550e8400-e29b-41d4-a716-446655440000' }), /sensitive credential material/);
+  }, { noteId: '550e8400-e29b-41d4-a716-446655440000', expectedVersion: 1, confirm: true }), /sensitive credential material/);
   assert.equal(shareCalls, 0);
 });
 
@@ -145,7 +145,7 @@ test('MCP create_public_share rejects malformed note IDs before reading or publi
       calls += 1;
       throw new Error('must not be called');
     },
-  }, { noteId: 'not-a-uuid' }), /noteId must be a valid UUID/);
+  }, { noteId: 'not-a-uuid', expectedVersion: 1, confirm: true }), /noteId must be a valid UUID/);
   assert.equal(calls, 0);
 });
 
@@ -164,7 +164,7 @@ test('MCP protocol exposes and invokes create_public_share only in the share-cap
   }));
   const invalid = await client.callTool({ name: 'create_public_share', arguments: { noteId: 'not-a-uuid' } });
   assert.equal(invalid.isError, true);
-  const result = await client.callTool({ name: 'create_public_share', arguments: { noteId } });
+  const result = await client.callTool({ name: 'create_public_share', arguments: { noteId, expectedVersion: 1, confirm: true } });
   assert.deepEqual(received.noteId, noteId);
   assert.equal(typeof received.input.expiresAt, 'string');
   assert.equal(result.structuredContent.noteId, noteId);

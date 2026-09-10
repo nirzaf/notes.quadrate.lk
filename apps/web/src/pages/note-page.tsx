@@ -149,14 +149,14 @@ function LoadedNoteSession({ note, userId, search, queryKeys }: LoadedNoteSessio
   }, []);
   useEffect(() => { if (conflict) setConflictOpen(true); }, [conflict]);
   const autosave = useNoteAutosave({ note, onSaved, onConflict, readOnly: Boolean(note.deletedAt) });
-  const flushBeforeShare = useCallback(async () => {
-    if (!autosave.dirty && autosave.status !== 'saving' && autosave.status !== 'pending') return;
+  const flushBeforeShare = useCallback(async (): Promise<Note> => {
+    if (!autosave.dirty && autosave.status !== 'saving' && autosave.status !== 'pending') return noteRef.current;
     try {
-      await autosave.flush();
+      return await autosave.flush();
     } catch {
       throw new Error('Save the note successfully before creating a public link. Public links show only saved content.');
     }
-  }, [autosave]);
+  }, [autosave, noteRef]);
   const { create } = useCreateNote({
     notebookId: note.notebookId,
     onCreated: async (created) => { await refreshNoteCollections(queryClient, userId); requestEditorFocus(created.id); await navigate({ to: '/notes/$noteId', params: { noteId: created.id } }); },

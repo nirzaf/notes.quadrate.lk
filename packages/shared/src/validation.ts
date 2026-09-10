@@ -317,13 +317,14 @@ const ISO_DATE_TIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})
 
 export function validateCreatePublicShareInput(value: unknown): CreatePublicShareInput {
   if (!isRecord(value)) throw new QNotesValidationError('Request body must be an object.');
-  if (Object.keys(value).some((key) => key !== 'expiresAt')) throw new QNotesValidationError('Only expiresAt may be supplied.');
-  if (value.expiresAt === undefined || value.expiresAt === null) return { expiresAt: null };
+  if (Object.keys(value).some((key) => !['expectedVersion', 'expiresAt', 'confirm'].includes(key))) throw new QNotesValidationError('Only expectedVersion, expiresAt, and confirm may be supplied.');
+  if (typeof value.expectedVersion !== 'number' || !Number.isSafeInteger(value.expectedVersion) || value.expectedVersion < 1) throw new QNotesValidationError('expectedVersion must be a positive integer.');
+  if (value.confirm !== true) throw new QNotesValidationError('confirm must be true after reviewing the saved note.');
   if (typeof value.expiresAt !== 'string' || !ISO_DATE_TIME_PATTERN.test(value.expiresAt) || Number.isNaN(Date.parse(value.expiresAt))) {
-    throw new QNotesValidationError('expiresAt must be an ISO date or null.');
+    throw new QNotesValidationError('expiresAt must be a finite ISO date.');
   }
   const expiry = Date.parse(value.expiresAt);
   if (expiry <= Date.now()) throw new QNotesValidationError('expiresAt must be in the future.');
   if (expiry > Date.now() + MAX_PUBLIC_SHARE_EXPIRY_MS) throw new QNotesValidationError('expiresAt must be within one year.');
-  return { expiresAt: value.expiresAt };
+  return { expectedVersion: value.expectedVersion, expiresAt: value.expiresAt, confirm: true };
 }
