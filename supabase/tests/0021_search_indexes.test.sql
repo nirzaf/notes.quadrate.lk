@@ -1,5 +1,5 @@
 begin;
-select plan(7);
+select plan(8);
 
 select ok(exists (
   select 1 from pg_indexes
@@ -36,7 +36,7 @@ insert into notesdb.search_documents (
   id, owner_id, note_id, source_type, source_key, source_title, content,
   content_hash, position
 ) values
-  ('b1080000-0000-4000-8000-000000000001', (select id from auth.users where email = 'owner@qnotes.local'), 'a1080000-0000-4000-8000-000000000001', 'note_chunk', '%%%__', 'Literal wildcard fixture', 'wildcard content', 'search-index-wildcard-target', 0),
+  ('b1080000-0000-4000-8000-000000000001', (select id from auth.users where email = 'owner@qnotes.local'), 'a1080000-0000-4000-8000-000000000001', 'copy_block', '%%%__', 'Literal wildcard fixture', 'wildcard content', 'search-index-wildcard-target', 0),
   ('b1080000-0000-4000-8000-000000000002', (select id from auth.users where email = 'owner@qnotes.local'), 'a1080000-0000-4000-8000-000000000002', 'note_chunk', 'ordinary-key', 'ordinary title', 'ordinary content', 'search-index-wildcard-overmatch', 0),
   ('b1080000-0000-4000-8000-000000000003', (select id from auth.users where email = 'owner@qnotes.local'), 'a1080000-0000-4000-8000-000000000003', 'note_chunk', 'short-at-one', 'Short one', 'contains @@ marker one', 'search-index-short-one', 0),
   ('b1080000-0000-4000-8000-000000000004', (select id from auth.users where email = 'owner@qnotes.local'), 'a1080000-0000-4000-8000-000000000004', 'note_chunk', 'short-at-two', 'Short two', 'contains @@ marker two', 'search-index-short-two', 0),
@@ -46,6 +46,12 @@ select is(
   (select array_agg(source_key order by source_key) from public.qnotes_keyword_search((select id from auth.users where email = 'owner@qnotes.local'), '%%%__', 20)),
   array['%%%__']::text[],
   'wildcard characters are matched literally'
+);
+
+select is(
+  (select array_agg(source_key order by source_key) from public.qnotes_keyword_search((select id from auth.users where email = 'owner@qnotes.local'), 'Literal wildcard fixture', 20)),
+  array['%%%__']::text[],
+  'exact source titles match permitted search documents'
 );
 
 select is(
