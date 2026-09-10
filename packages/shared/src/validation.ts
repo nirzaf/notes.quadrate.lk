@@ -289,9 +289,11 @@ export function validateTokenInput(value: unknown): CreateApiTokenInput {
     if (!scopes.includes(scope as ApiTokenScope)) scopes.push(scope as ApiTokenScope);
   }
   if (value.expiresAt !== null && value.expiresAt !== undefined && (typeof value.expiresAt !== 'string' || Number.isNaN(Date.parse(value.expiresAt)))) throw new QNotesValidationError('expiresAt must be an ISO date or null.');
-  const rawAccess = value.access ?? (value.notebookIds !== undefined || value.allowUnfiled !== undefined
-    ? { mode: 'notebooks', notebookIds: value.notebookIds, allowUnfiled: value.allowUnfiled }
-    : { mode: 'account' });
+  const rawAccess = value.access === undefined
+    ? (value.notebookIds !== undefined || value.allowUnfiled !== undefined
+      ? { mode: 'notebooks', notebookIds: value.notebookIds, allowUnfiled: value.allowUnfiled }
+      : { mode: 'account' })
+    : value.access;
   if (!isRecord(rawAccess) || (rawAccess.mode !== 'account' && rawAccess.mode !== 'notebooks')) throw new QNotesValidationError('access.mode must be account or notebooks.');
   if (rawAccess.mode === 'account') {
     if (rawAccess.notebookIds !== undefined && (!Array.isArray(rawAccess.notebookIds) || rawAccess.notebookIds.length > 0)) throw new QNotesValidationError('Account-wide access cannot include notebook IDs.');
@@ -305,7 +307,7 @@ export function validateTokenInput(value: unknown): CreateApiTokenInput {
     const normalized = requireUUID(notebookId, 'notebookId');
     if (!notebookIds.includes(normalized)) notebookIds.push(normalized);
   }
-  const allowUnfiled = rawAccess.allowUnfiled ?? false;
+  const allowUnfiled = rawAccess.allowUnfiled === undefined ? false : rawAccess.allowUnfiled;
   if (typeof allowUnfiled !== 'boolean') throw new QNotesValidationError('access.allowUnfiled must be a boolean.');
   const access: ApiTokenAccess = { mode: 'notebooks', notebookIds, allowUnfiled };
   return { name: value.name.trim(), scopes, access, expiresAt: value.expiresAt === undefined ? null : value.expiresAt as string | null };

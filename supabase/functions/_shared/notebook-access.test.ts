@@ -30,6 +30,7 @@ test('search scope is intersected before retrieval and caller filters are remove
   assert.equal(plan.allowUnfiled, false);
   assert.deepEqual(plan.filters, { tags: ['operations'] });
   assert.equal(plan.empty, false);
+  assert.equal(scopedSearchPlan(auth, { notebookIds: ['00000000-0000-4000-8000-000000000003'] }).allowUnfiled, false);
   assert.equal(scopedSearchPlan(auth, { unfiled: true }).empty, true);
 });
 

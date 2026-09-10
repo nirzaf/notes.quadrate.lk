@@ -192,7 +192,7 @@ export async function updateNote(context: Context): Promise<Response> {
   const noteId = context.req.param('noteId');
   if (!isUUID(noteId)) throw new ApiError(422, 'VALIDATION_ERROR', 'noteId must be a valid UUID.');
   const input = validateUpdateNoteInput(await context.req.json());
-  const currentNote = await findAuthorizedNote(auth, noteId);
+  const currentNote = await findAuthorizedNote(auth, noteId, true);
   const tags = input.tags ?? currentNote.tags;
   const parsed = await parsedContent(input.contentMarkdown, input.title);
   const normalizedBody = { title: input.title, slug: input.slug, contentMarkdown: parsed.parsed.normalizedMarkdown, ...(input.tags === undefined ? {} : { tags: input.tags }), deviceId: input.deviceId, mutationId: input.mutationId };

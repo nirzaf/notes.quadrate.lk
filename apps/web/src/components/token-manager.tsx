@@ -84,7 +84,7 @@ export function TokenManager(): JSX.Element {
   const [profile, setProfile] = useState<IntegrationProfile>('read');
   const [vaultProfile, setVaultProfile] = useState<HermesVaultMcpProfile>('none');
   const [extraScopes, setExtraScopes] = useState<ApiTokenScope[]>([]);
-  const [accessMode, setAccessMode] = useState<'account' | 'notebooks'>('notebooks');
+  const [accessMode, setAccessMode] = useState<'account' | 'notebooks'>('account');
   const [selectedNotebookIds, setSelectedNotebookIds] = useState<string[]>([]);
   const [allowUnfiled, setAllowUnfiled] = useState(false);
   const [expiry, setExpiry] = useState<ExpiryChoice>('30d');
@@ -111,7 +111,7 @@ export function TokenManager(): JSX.Element {
   }, [toast, userId]);
   useEffect(() => {
     setTokens([]); setIssued(null); setVerification('idle'); setCreating(false);
-    setNotebooks([]); setSelectedNotebookIds([]); setAllowUnfiled(false);
+    setNotebooks([]); setAccessMode('account'); setSelectedNotebookIds([]); setAllowUnfiled(false);
     if (!userId) return undefined;
     const requestUserId = userId;
     const controller = new AbortController();

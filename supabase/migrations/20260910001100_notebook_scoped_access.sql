@@ -172,7 +172,7 @@ $$;
 
 -- Notebook-scoped search calls the existing ranked functions once per granted
 -- notebook and once for unfiled notes, then applies the global cap and page.
--- ponytail: bounded 1,000-candidate fanout; raise only after measured search
+-- ponytail: divide the 1,000-candidate budget across scopes; raise only after measured search
 -- pages need more than the existing service-role candidate ceiling.
 create or replace function public.qnotes_keyword_search_scoped(
   p_owner_id uuid,
@@ -197,11 +197,14 @@ as $$
     select notebook_id, false as unfiled from unnest(coalesce(p_notebook_ids, '{}'::uuid[])) as requested(notebook_id)
     union all
     select null::uuid, true where coalesce(p_allow_unfiled, false)
+  ), scope_budget as (
+    select greatest(1, floor(1000.0 / greatest(1, count(*)::numeric))::integer) as candidate_limit
+    from scopes
   ), candidates as (
     select result.*
     from scopes s
     cross join lateral public.qnotes_keyword_search(
-      p_owner_id, p_query, 1000,
+      p_owner_id, p_query, (select candidate_limit from scope_budget),
       coalesce(p_filters, '{}'::jsonb) || jsonb_build_object(
         'notebookIds', case when s.unfiled then '[]'::jsonb else jsonb_build_array(s.notebook_id) end,
         'unfiled', s.unfiled
@@ -251,11 +254,14 @@ as $$
     select notebook_id, false as unfiled from unnest(coalesce(p_notebook_ids, '{}'::uuid[])) as requested(notebook_id)
     union all
     select null::uuid, true where coalesce(p_allow_unfiled, false)
+  ), scope_budget as (
+    select greatest(1, floor(1000.0 / greatest(1, count(*)::numeric))::integer) as candidate_limit
+    from scopes
   ), candidates as (
     select result.*
     from scopes s
     cross join lateral public.qnotes_semantic_search(
-      p_owner_id, p_query, p_embedding, 1000,
+      p_owner_id, p_query, p_embedding, (select candidate_limit from scope_budget),
       coalesce(p_filters, '{}'::jsonb) || jsonb_build_object(
         'notebookIds', case when s.unfiled then '[]'::jsonb else jsonb_build_array(s.notebook_id) end,
         'unfiled', s.unfiled
@@ -306,11 +312,14 @@ as $$
     select notebook_id, false as unfiled from unnest(coalesce(p_notebook_ids, '{}'::uuid[])) as requested(notebook_id)
     union all
     select null::uuid, true where coalesce(p_allow_unfiled, false)
+  ), scope_budget as (
+    select greatest(1, floor(1000.0 / greatest(1, count(*)::numeric))::integer) as candidate_limit
+    from scopes
   ), candidates as (
     select result.*
     from scopes s
     cross join lateral public.qnotes_hybrid_search(
-      p_owner_id, p_query, p_embedding, 1000, p_rrf_k,
+      p_owner_id, p_query, p_embedding, (select candidate_limit from scope_budget), p_rrf_k,
       coalesce(p_filters, '{}'::jsonb) || jsonb_build_object(
         'notebookIds', case when s.unfiled then '[]'::jsonb else jsonb_build_array(s.notebook_id) end,
         'unfiled', s.unfiled
