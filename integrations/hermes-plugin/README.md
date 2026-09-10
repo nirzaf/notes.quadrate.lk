@@ -63,10 +63,34 @@ do not overwrite an existing Hermes configuration automatically.
 
 The launcher receives `QNOTES_URL`, the selected Notes token through
 `QNOTES_PLUGIN_TOKEN`, and an optional Vault token through
-`QNOTES_PLUGIN_VAULT_TOKEN`. The host's secret environment supplies the
-existing inputs `QNOTES_URL`, `QNOTES_READ_TOKEN`, `QNOTES_TOKEN`,
+`QNOTES_PLUGIN_VAULT_TOKEN`. It passes the selected profile variables and
+explicit runtime flags to the child. The host's secret environment supplies
+the existing inputs `QNOTES_URL`, `QNOTES_READ_TOKEN`, `QNOTES_TOKEN`,
 `QNOTES_WRITE_TOKEN`, and, only for selected Vault profiles, `QVAULT_TOKEN`.
 Do not configure `QVAULT_URL`.
+
+The child environment is an allowlist. On POSIX systems it may include
+`HOME`, `LANG`, `LC_ALL`, `LC_CTYPE`, `PATH`, `TMPDIR`, `TMP`, and `TEMP`; on
+Windows it may include those locale/temp values plus the standard user and
+system execution values (`APPDATA`, `COMSPEC`, `HOMEDRIVE`, `HOMEPATH`,
+`LOCALAPPDATA`, `PATHEXT`, `SYSTEMDRIVE`, `SYSTEMROOT`, `USERPROFILE`, and
+`WINDIR`). Cloud credentials, `NODE_OPTIONS`, `NODE_PATH`, Node extra CA
+settings, proxy variables, and certificate override variables are dropped.
+No proxy or CA override is approved by default; a deployment that needs one
+must add a named variable to the reviewed launcher allowlist and test it.
+
+The launcher starts the supplied absolute `.js` or `.mjs` artifact directly
+with the current Node executable and `shell: false`. Build the runtime from a
+reviewed QNotes commit and pin plugin installation with the full commit SHA.
+Where the delivery system supports artifact hashes, record the digest with
+that reviewed commit. The launcher validates the resolved file path and type;
+it does not claim to defeat a malicious process running as the same operating
+system user.
+
+Filtering happens when the child is spawned. It cannot undo code already
+preloaded into the launcher by its parent, so invoke the launcher from a
+controlled Hermes process and do not set Node preload/import overrides in that
+parent environment.
 
 ## Disposable-profile installation
 
