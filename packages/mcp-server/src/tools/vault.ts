@@ -4,6 +4,7 @@ import type {
   RevealVaultSecretInput,
   RevealVaultSecretsInput,
   RotateVaultSecretInput,
+  VaultMutationReceipt,
   VaultAction,
   VaultEnvironment,
   VaultProject,
@@ -12,12 +13,13 @@ import type {
 } from '@qnotes/shared';
 import { MAX_VAULT_BATCH_REVEAL, MAX_VAULT_BATCH_BYTES, MAX_VAULT_DESCRIPTION_LENGTH, MAX_VAULT_ENVIRONMENT_NAME_LENGTH, MAX_VAULT_PROJECT_NAME_LENGTH, MAX_VAULT_PURPOSE_LENGTH, MAX_VAULT_SECRET_BYTES, MAX_VAULT_SECRET_NAME_LENGTH } from '@qnotes/shared';
 import { toolResult } from './common.ts';
-import { vaultEnvironmentsSchema, vaultMetadataSchema, vaultProjectsSchema, vaultSecretBatchSchema, vaultSecretSchema, vaultSecretsSchema } from '../contracts.ts';
+import { vaultEnvironmentsSchema, vaultMetadataSchema, vaultMutationStatusSchema, vaultProjectsSchema, vaultSecretBatchSchema, vaultSecretSchema, vaultSecretsSchema } from '../contracts.ts';
 
 export interface VaultMcpClient {
   listProjects(): Promise<VaultProject[]>;
   listEnvironments(project: string): Promise<VaultEnvironment[]>;
   listSecrets(environmentId: string): Promise<VaultSecretMetadata[]>;
+  getMutationStatus(mutationId: string): Promise<VaultMutationReceipt>;
   listSecretsBySelector(project: string, environment: string): Promise<VaultSecretMetadata[]>;
   resolveEnvironment(project: string, environment: string, action: VaultAction): Promise<VaultResourceReference>;
   resolveSecret(input: { project: string; environment: string; name: string }, action: VaultAction): Promise<VaultResourceReference>;
@@ -28,7 +30,7 @@ export interface VaultMcpClient {
   revealSecrets(input: RevealVaultSecretsInput): Promise<unknown>;
 }
 
-export const VAULT_METADATA_TOOL_NAMES = ['vault_list_projects', 'vault_list_environments', 'vault_list_secrets'] as const;
+export const VAULT_METADATA_TOOL_NAMES = ['vault_list_projects', 'vault_list_environments', 'vault_list_secrets', 'vault_get_mutation_status'] as const;
 export const VAULT_REVEAL_TOOL_NAMES = [...VAULT_METADATA_TOOL_NAMES, 'vault_get_secret', 'vault_get_secrets'] as const;
 export const VAULT_WRITE_TOOL_NAMES = [...VAULT_METADATA_TOOL_NAMES, 'vault_create_secret', 'vault_rotate_secret', 'vault_delete_secret'] as const;
 
@@ -51,6 +53,20 @@ export async function vaultListSecretsTool(client: VaultMcpClient, args: { proje
   return toolResult({ items: listItems(await client.listSecretsBySelector(args.project, args.environment)) }, vaultSecretsSchema);
 }
 
+export async function vaultGetMutationStatusTool(client: VaultMcpClient, args: { mutationId: string }) {
+  return toolResult(await client.getMutationStatus(args.mutationId), vaultMutationStatusSchema);
+}
+
+async function priorMutation(client: VaultMcpClient, mutationId: string): Promise<VaultMutationReceipt | null> {
+  try {
+    return await client.getMutationStatus(mutationId);
+  } catch (error) {
+    const candidate = error as { status?: unknown; code?: unknown };
+    if (candidate.status === 404 || candidate.code === 'VAULT_MUTATION_NOT_FOUND') return null;
+    throw error;
+  }
+}
+
 export async function vaultGetSecretTool(client: VaultMcpClient, args: VaultRevealMcpInput) {
   if (args.confirmPlaintext !== true) throw new Error('confirmPlaintext must be true for Vault reveal.');
   if (!args.purpose?.trim()) throw new Error('purpose is required for Vault reveal.');
@@ -66,19 +82,35 @@ export async function vaultGetSecretsTool(client: VaultMcpClient, args: VaultBat
 }
 
 export async function vaultCreateSecretTool(client: VaultMcpClient, args: { project: string; environment: string; name: string; value: string; description?: string; mutationId: string }) {
+  const prior = await priorMutation(client, args.mutationId);
+  if (prior) {
+    if (prior.status === 'expired' || !prior.projectId || !prior.environmentId) throw new Error('The Vault mutation receipt has expired or has no usable resource identity.');
+    const input: CreateVaultSecretInput = { projectId: prior.projectId, environmentId: prior.environmentId, name: args.name, value: args.value, ...(args.description === undefined ? {} : { description: args.description }), mutationId: args.mutationId };
+    return toolResult(await client.createSecret(input), vaultMetadataSchema);
+  }
   const resource = await client.resolveEnvironment(args.project, args.environment, 'secret:write');
   const input: CreateVaultSecretInput = { projectId: resource.projectId, environmentId: resource.environmentId, name: args.name, value: args.value, ...(args.description === undefined ? {} : { description: args.description }), mutationId: args.mutationId };
   return toolResult(await client.createSecret(input), vaultMetadataSchema);
 }
 
 export async function vaultRotateSecretTool(client: VaultMcpClient, args: { project: string; environment: string; name: string; value: string; description?: string; expectedVersion: number; mutationId: string }) {
+  const input: RotateVaultSecretInput = { value: args.value, ...(args.description === undefined ? {} : { description: args.description }), expectedVersion: args.expectedVersion, mutationId: args.mutationId };
+  const prior = await priorMutation(client, args.mutationId);
+  if (prior) {
+    if (prior.status === 'expired' || !prior.secretId) throw new Error('The Vault mutation receipt has expired or has no usable secret identity.');
+    return toolResult(await client.rotateSecret(prior.secretId, input), vaultMetadataSchema);
+  }
   const resource = await client.resolveSecret({ project: args.project, environment: args.environment, name: args.name }, 'secret:write');
   if (!resource.secretId) throw new Error('The requested Vault secret was not found.');
-  const input: RotateVaultSecretInput = { value: args.value, ...(args.description === undefined ? {} : { description: args.description }), expectedVersion: args.expectedVersion, mutationId: args.mutationId };
   return toolResult(await client.rotateSecret(resource.secretId, input), vaultMetadataSchema);
 }
 
 export async function vaultDeleteSecretTool(client: VaultMcpClient, args: { project: string; environment: string; name: string; expectedVersion: number; mutationId: string; confirm: true }) {
+  const prior = await priorMutation(client, args.mutationId);
+  if (prior) {
+    if (prior.status === 'expired' || !prior.secretId) throw new Error('The Vault mutation receipt has expired or has no usable secret identity.');
+    return toolResult(await client.deleteSecret(prior.secretId, { expectedVersion: args.expectedVersion, mutationId: args.mutationId, confirm: true }), vaultMetadataSchema);
+  }
   const resource = await client.resolveSecret({ project: args.project, environment: args.environment, name: args.name }, 'secret:delete');
   if (!resource.secretId) throw new Error('The requested Vault secret was not found.');
   return toolResult(await client.deleteSecret(resource.secretId, { expectedVersion: args.expectedVersion, mutationId: args.mutationId, confirm: true }), vaultMetadataSchema);

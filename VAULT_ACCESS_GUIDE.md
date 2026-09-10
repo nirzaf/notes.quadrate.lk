@@ -87,6 +87,7 @@ audit metadata.
 | `GET` | `/vault/secrets/:secretId` | Read metadata only |
 | `PATCH`, `DELETE` | `/vault/secrets/:secretId` | Rotate or delete with expected version |
 | `POST` | `/vault/secrets/resolve` | Resolve one exact secret reference |
+| `GET` | `/vault/mutations/:mutationId` | Read one authorized, bounded mutation receipt |
 | `POST` | `/vault/secrets/reveal` | Reveal one value with purpose and server-side authorization |
 | `POST` | `/vault/secrets/reveal-batch` | Reveal an explicit bounded list with server-side authorization |
 | `GET`, `POST` | `/vault/agent-tokens` | List or create qvt tokens (JWT only) |
@@ -142,6 +143,22 @@ call the ID-based create, rotate, or delete operation. The reveal tools use
 the same exact selector rules. List tools remain explicit metadata discovery
 operations and apply their configured metadata grant before returning rows;
 they never return secret values.
+
+### Replay-safe mutation receipts
+
+Create, rotate, and delete requests keep the same UUID `mutationId` when a
+response is ambiguous. The server records the owner, operation, resource
+identity, expected version, canonical request hash, actor identity, and safe
+metadata result before returning success. A matching retry returns the retained
+metadata even when a delete has removed the active secret row. Reusing an ID
+with a different operation, resource, version, request hash, or expired receipt
+is rejected.
+
+Use `GET /vault/mutations/:mutationId` to recover a receipt after losing the
+original response. Receipts are owner-scoped, bounded, and never contain
+plaintext, ciphertext, token hashes, or raw agent tokens. Expired receipt
+metadata is removed by the bounded service-only maintenance function
+`qnotes_vault_purge_expired_mutation_receipts`.
 
 `GET /vault/agent-tokens` is a JWT-only administration request. Each token
 metadata item includes its effective `grants` array, with owner-scoped project,
@@ -209,7 +226,7 @@ the presence of `QNOTES_VAULT_TOKEN_PEPPER`; any `value` field is ignored and
 secret values are never logged. A linked `supabase db query` returns
 boolean-only checks for the `supabase_vault` extension, `vault`
 schema, all seven Agent Vault metadata tables, all current service-only Vault
-RPCs including exact resource resolution and batch reveal, and each RPC's denied `anon` and `authenticated`
+RPCs including exact resource resolution, mutation claim/receipt, and batch reveal, and each RPC's denied `anon` and `authenticated`
 execute privileges plus allowed `service_role` execute privilege.
 
 The command captures CLI stdout and stderr without logging them, rejects

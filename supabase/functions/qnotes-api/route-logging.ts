@@ -15,6 +15,7 @@ const ROUTES: Array<[RegExp, string]> = [
   [/^\/vault\/environments\/resolve$/, '/vault/environments/resolve'],
   [/^\/vault\/environments\/[^/]+\/secrets$/, '/vault/environments/:environmentId/secrets'],
   [/^\/vault\/secrets\/reveal-batch$/, '/vault/secrets/reveal-batch'],
+  [/^\/vault\/mutations\/[^/]+$/, '/vault/mutations/:mutationId'],
   [/^\/vault\/secrets\/resolve$/, '/vault/secrets/resolve'],
   [/^\/vault\/secrets\/[^/]+$/, '/vault/secrets/:secretId'],
   [/^\/vault\/agent-tokens\/[^/]+\/grants$/, '/vault/agent-tokens/:tokenId/grants'],

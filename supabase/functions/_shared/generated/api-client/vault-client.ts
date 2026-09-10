@@ -18,6 +18,7 @@ import type {
   VaultOperationApprovalInput,
   VaultOperationApprovalResult,
   VaultProject,
+  VaultMutationReceipt,
   VaultResourceReference,
   VaultSecretMetadata,
   VaultSecretReferenceInput,
@@ -64,6 +65,18 @@ function isEnvironment(value: unknown): value is VaultEnvironment {
   return isRecord(value) && hasExactKeys(value, ['id', 'projectId', 'slug', 'name', 'description', 'createdAt', 'updatedAt', 'archivedAt'])
     && isString(value.id) && isString(value.projectId) && isString(value.slug) && isString(value.name)
     && isNullableString(value.description) && isString(value.createdAt) && isString(value.updatedAt) && isNullableString(value.archivedAt);
+}
+
+function isMutationReceipt(value: unknown): value is VaultMutationReceipt {
+  return isRecord(value) && hasExactKeys(value, ['mutationId', 'operation', 'projectId', 'environmentId', 'secretId', 'expectedVersion', 'resultingVersion', 'createdAt', 'retentionExpiresAt', 'hashKeyVersion', 'status', 'result'])
+    && isString(value.mutationId) && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.mutationId)
+    && ['created', 'rotated', 'deleted'].includes(String(value.operation))
+    && isNullableUuid(value.projectId) && isNullableUuid(value.environmentId) && isNullableUuid(value.secretId)
+    && (value.expectedVersion === null || (isInteger(value.expectedVersion) && value.expectedVersion > 0))
+    && (value.resultingVersion === null || (isInteger(value.resultingVersion) && value.resultingVersion > 0))
+    && isString(value.createdAt) && isString(value.retentionExpiresAt) && isString(value.hashKeyVersion)
+    && ['complete', 'expired'].includes(String(value.status))
+    && (value.result === null || isSecretMetadata(value.result));
 }
 
 function isResourceReference(value: unknown): value is VaultResourceReference {
@@ -227,6 +240,10 @@ export class QVaultClient {
 
   listSecretsBySelector(project: string, environment: string, options: RequestOptions = {}): Promise<VaultSecretMetadata[]> {
     return this.request<unknown>(`/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/secrets`, {}, options).then((value) => listPayload(value, isSecretMetadata, 'secrets'));
+  }
+
+  getMutationStatus(mutationId: string, options: RequestOptions = {}): Promise<VaultMutationReceipt> {
+    return this.validated(`/mutations/${encodeURIComponent(mutationId)}`, isMutationReceipt, 'mutation status', {}, options);
   }
 
   createSecret(input: CreateVaultSecretInput, options: RequestOptions = {}): Promise<VaultSecretMetadata> {
