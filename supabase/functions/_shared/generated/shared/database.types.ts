@@ -680,10 +680,6 @@ export type Database = {
         Args: { p_stale_after?: string }
         Returns: number
       }
-      qnotes_requeue_stale_attachment_processing: {
-        Args: { p_limit?: number; p_stale_after?: string }
-        Returns: number
-      }
       qnotes_restore_note: {
         Args: {
           p_device_id: string
