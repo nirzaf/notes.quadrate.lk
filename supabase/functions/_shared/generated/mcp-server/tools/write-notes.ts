@@ -1,6 +1,7 @@
 import type { AppendNoteInput, CreateNoteInput, MoveNoteToNotebookInput, Note, UpdateNoteInput } from '@qnotes/shared';
 import type { CreateNoteOutcome, NoteMutationOutcome, NoteMutationResult } from '@qnotes/api-client';
 import { toolResult, type ReadQNotesClient } from './common.ts';
+import { captureAcknowledgmentSchema, mutationAcknowledgmentSchema } from '../contracts.ts';
 
 export interface WriteQNotesClient extends ReadQNotesClient {
   createNote(input: CreateNoteInput): Promise<Note>;
@@ -54,7 +55,7 @@ export async function captureNoteTool(client: WriteQNotesClient, args: { title: 
   const result = client.createNoteDetailed
     ? await client.createNoteDetailed(input)
     : { note: await client.createNote(input), outcome: 'created' as const };
-  return toolResult(acknowledgment(result.note, mutationId, result.outcome));
+  return toolResult(acknowledgment(result.note, mutationId, result.outcome), captureAcknowledgmentSchema);
 }
 
 export async function appendNoteTool(client: WriteQNotesClient, args: { noteId: string; contentMarkdown: string; expectedVersion?: number; deviceId?: string; mutationId?: string }, options?: WriteToolOptions) {
@@ -68,7 +69,7 @@ export async function appendNoteTool(client: WriteQNotesClient, args: { noteId: 
   const result = client.appendNoteDetailed
     ? await client.appendNoteDetailed(args.noteId, input)
     : { note: await client.appendNote(args.noteId, input), outcome: 'applied' as const };
-  return toolResult(acknowledgment(result.note, mutationId, result.outcome));
+  return toolResult(acknowledgment(result.note, mutationId, result.outcome), mutationAcknowledgmentSchema);
 }
 
 export async function updateNoteTool(client: WriteQNotesClient, args: { noteId: string; title: string; slug: string; contentMarkdown: string; tags?: string[]; expectedVersion: number; deviceId?: string; mutationId?: string }, options?: WriteToolOptions) {
@@ -85,7 +86,7 @@ export async function updateNoteTool(client: WriteQNotesClient, args: { noteId: 
   const result = client.updateNoteDetailed
     ? await client.updateNoteDetailed(args.noteId, input)
     : { note: await client.updateNote(args.noteId, input), outcome: 'applied' as const };
-  return toolResult(acknowledgment(result.note, mutationId, result.outcome));
+  return toolResult(acknowledgment(result.note, mutationId, result.outcome), mutationAcknowledgmentSchema);
 }
 
 export async function moveNoteToNotebookTool(client: WriteQNotesClient, args: { noteId: string; notebookId: string | null; expectedVersion: number; deviceId?: string; mutationId?: string }, options?: WriteToolOptions) {
@@ -97,7 +98,7 @@ export async function moveNoteToNotebookTool(client: WriteQNotesClient, args: { 
     mutationId,
   };
   const note = await client.moveNoteToNotebook(args.noteId, input);
-  return toolResult(acknowledgment(note, mutationId, 'applied'));
+  return toolResult(acknowledgment(note, mutationId, 'applied'), mutationAcknowledgmentSchema);
 }
 
 function requireConfirmation(confirm: boolean): void {
@@ -113,7 +114,7 @@ export async function deleteNoteTool(client: WriteQNotesClient, args: { noteId: 
   const result = client.deleteNoteDetailed
     ? await client.deleteNoteDetailed(args.noteId, input)
     : { note: await client.deleteNote(args.noteId, input), outcome: 'applied' as const };
-  return toolResult(acknowledgment(result.note, mutationId, result.outcome));
+  return toolResult(acknowledgment(result.note, mutationId, result.outcome), mutationAcknowledgmentSchema);
 }
 
 export async function restoreNoteTool(client: WriteQNotesClient, args: { noteId: string; expectedVersion: number; confirm: true; deviceId?: string; mutationId?: string }, options?: WriteToolOptions) {
@@ -123,5 +124,5 @@ export async function restoreNoteTool(client: WriteQNotesClient, args: { noteId:
   const result = client.restoreNoteDetailed
     ? await client.restoreNoteDetailed(args.noteId, input)
     : { note: await client.restoreNote(args.noteId, input), outcome: 'applied' as const };
-  return toolResult(acknowledgment(result.note, mutationId, result.outcome));
+  return toolResult(acknowledgment(result.note, mutationId, result.outcome), mutationAcknowledgmentSchema);
 }

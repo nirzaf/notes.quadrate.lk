@@ -50,3 +50,35 @@ test('Vault MCP reveal requires purpose and returns the fake value only for exac
   assert.equal(missingPurpose.isError, true);
   await client.close();
 });
+
+test('Vault list tools return object-shaped zero and many item pages', async () => {
+  const project = { id: 'project-1', slug: 'local', name: 'Local', description: null, createdAt: '2026-01-01', updatedAt: '2026-01-01', archivedAt: null };
+  const environment = { id: 'environment-1', projectId: 'project-1', slug: 'test', name: 'Test', description: null, createdAt: '2026-01-01', updatedAt: '2026-01-01', archivedAt: null };
+  const secret = { id: 'secret-1', projectId: 'project-1', environmentId: 'environment-1', name: 'KEY', description: null, version: 1, createdAt: '2026-01-01', updatedAt: '2026-01-01', rotatedAt: null, deletedAt: null };
+  const empty = await connected('metadata', protocolClient({
+    async listProjects() { return []; },
+  }));
+  const emptyProjects = await empty.client.callTool({ name: 'vault_list_projects', arguments: {} });
+  assert.deepEqual(emptyProjects.structuredContent, { items: [] });
+  assert.deepEqual(JSON.parse(emptyProjects.content[0].text), emptyProjects.structuredContent);
+  await empty.client.close();
+
+  const secondProject = { ...project, id: 'project-2', slug: 'shared', name: 'Shared' };
+  const secondEnvironment = { ...environment, id: 'environment-2', projectId: 'project-2', slug: 'stage', name: 'Stage' };
+  const secondSecret = { ...secret, id: 'secret-2', projectId: 'project-2', environmentId: 'environment-2', name: 'TOKEN' };
+  const { client } = await connected('metadata', protocolClient({
+    async listProjects() { return [project, secondProject]; },
+    async listEnvironments() { return [environment, secondEnvironment]; },
+    async listSecrets() { return [secret, secondSecret]; },
+  }));
+  const projects = await client.callTool({ name: 'vault_list_projects', arguments: {} });
+  const environments = await client.callTool({ name: 'vault_list_environments', arguments: { project: 'local' } });
+  const secrets = await client.callTool({ name: 'vault_list_secrets', arguments: { project: 'local', environment: 'test' } });
+  for (const result of [projects, environments, secrets]) {
+    assert.equal(result.isError, undefined);
+    assert.deepEqual(JSON.parse(result.content[0].text), result.structuredContent);
+    assert.equal(Array.isArray(result.structuredContent.items), true);
+    assert.equal(result.structuredContent.items.length, 2);
+  }
+  await client.close();
+});
