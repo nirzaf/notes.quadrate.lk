@@ -113,6 +113,11 @@ export interface Note {
   continuation?: ContentContinuation;
 }
 
+export interface PagedNote extends Omit<Note, 'contentPlain' | 'contentComplete'> {
+  contentComplete: boolean;
+  contentPlain?: never;
+}
+
 export interface NoteSummary {
   id: UUID;
   slug: string;
@@ -406,6 +411,7 @@ export interface SearchResponse extends SearchResponseMetadata {
   items: SearchResult[];
   index?: SearchIndexMetadata;
   nextCursor?: string | null;
+  truncated?: boolean;
 }
 export interface Attachment {
   id: UUID;

@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { QNotesClient, QVaultClient } from '@qnotes/api-client';
-import { MAX_AGENT_RESPONSE_MAX_BYTES, MAX_BLOCK_KEY_LENGTH, MAX_DEDUPE_KEY_LENGTH, MAX_MARKDOWN_CODE_UNITS, MAX_SEARCH_CURSOR_LENGTH, MAX_SEARCH_LIMIT, MAX_SEARCH_QUERY_LENGTH, MAX_SLUG_LENGTH, MAX_TAG_COUNT, MAX_TAG_LENGTH, MAX_TITLE_LENGTH, MAX_VAULT_BATCH_REVEAL, MAX_VAULT_DESCRIPTION_LENGTH, MAX_VAULT_ENVIRONMENT_NAME_LENGTH, MAX_VAULT_PROJECT_NAME_LENGTH, MAX_VAULT_PURPOSE_LENGTH, MAX_VAULT_SECRET_BYTES, MAX_VAULT_SECRET_NAME_LENGTH } from '@qnotes/shared';
+import { DEFAULT_MCP_CONTENT_MAX_BYTES, MAX_BLOCK_KEY_LENGTH, MAX_DEDUPE_KEY_LENGTH, MAX_MARKDOWN_CODE_UNITS, MAX_SEARCH_CURSOR_LENGTH, MAX_SEARCH_LIMIT, MAX_SEARCH_QUERY_LENGTH, MAX_SLUG_LENGTH, MAX_TAG_COUNT, MAX_TAG_LENGTH, MAX_TITLE_LENGTH, MAX_VAULT_BATCH_REVEAL, MAX_VAULT_DESCRIPTION_LENGTH, MAX_VAULT_ENVIRONMENT_NAME_LENGTH, MAX_VAULT_PROJECT_NAME_LENGTH, MAX_VAULT_PURPOSE_LENGTH, MAX_VAULT_SECRET_BYTES, MAX_VAULT_SECRET_NAME_LENGTH } from '@qnotes/shared';
 import { MCP_CONTRACT_VERSION, captureAcknowledgmentSchema, mutationAcknowledgmentSchema, noteBlockSchema, notebookListSchema, publicShareSchema, publicSharedNoteSchema, searchContextSchema, searchResponseSchema, strictInput, vaultEnvironmentsSchema, vaultMetadataSchema, vaultProjectsSchema, vaultSecretBatchSchema, vaultSecretSchema, vaultSecretsSchema } from './contracts.ts';
 import { getBlockTool } from './tools/get-block.ts';
 import { readNoteContextTool } from './tools/read-note-context.ts';
@@ -55,10 +55,10 @@ const contentReadInputShape = {
   offset: z.number().int().min(0).optional(),
   lineStart: z.number().int().min(1).optional(),
   lineEnd: z.number().int().min(1).optional(),
-  maxBytes: z.number().int().min(1).max(MAX_AGENT_RESPONSE_MAX_BYTES).optional(),
+  maxBytes: z.number().int().min(1).max(DEFAULT_MCP_CONTENT_MAX_BYTES).optional(),
   continuation: z.string().min(1).max(8192).optional(),
 };
-const readContextInputSchema = strictInput({ documentId: z.string().uuid(), before: z.number().int().min(0).max(5).optional(), after: z.number().int().min(0).max(5).optional(), maxTokens: z.number().int().min(1).max(4000).optional(), maxBytes: z.number().int().min(1).max(MAX_AGENT_RESPONSE_MAX_BYTES).optional(), continuation: z.string().max(8192).optional() });
+const readContextInputSchema = strictInput({ documentId: z.string().uuid(), before: z.number().int().min(0).max(5).optional(), after: z.number().int().min(0).max(5).optional(), maxTokens: z.number().int().min(1).max(4000).optional(), maxBytes: z.number().int().min(1).max(DEFAULT_MCP_CONTENT_MAX_BYTES).optional(), continuation: z.string().max(8192).optional() });
 const blockInputSchema = strictInput({ noteRef: z.string().min(1).max(200), blockKey: z.string().min(1).max(MAX_BLOCK_KEY_LENGTH), ...contentReadInputShape });
 const noInputSchema = strictInput({});
 // Keep the legacy shape parseable so deployed clients receive a safe migration error instead of a schema break.

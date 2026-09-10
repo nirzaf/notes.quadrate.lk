@@ -173,10 +173,11 @@ export async function getNote(context: Context): Promise<Response> {
       kind: 'note', noteId: note.id, noteVersion: note.version, sourceHash,
       rangeStart, rangeEnd: range.endOffset, nextOffset: slice.endOffset, principal: authPrincipal(auth), policyRevision: auth.policyRevision,
     }) : undefined;
+    const pagedNote = { ...note } as Omit<typeof note, 'contentPlain'> & { contentPlain?: string };
+    delete pagedNote.contentPlain;
     return {
-      ...note,
+      ...pagedNote,
       contentMarkdown: slice.content,
-      contentPlain: '',
       contentBytes: slice.endOffset - slice.startOffset,
       totalBytes: slice.totalBytes,
       offset: slice.startOffset,

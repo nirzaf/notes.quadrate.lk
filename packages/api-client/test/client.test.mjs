@@ -325,6 +325,16 @@ test('serializes bounded exact-read ranges for notes, blocks, and public shares'
   assert.deepEqual(JSON.parse(calls[2].init.body), { token: 'qns_' + 'A'.repeat(43), offset: 4, maxBytes: 1024 });
 });
 
+test('accepts paged note responses without claiming a full plain-text representation', async () => {
+  const full = notePayload({ contentMarkdown: 'page', contentPlain: 'full plain text' });
+  delete full.contentPlain;
+  full.contentComplete = false;
+  const client = new QNotesClient({ baseUrl: 'https://example.test', getAccessToken: () => null, fetchImplementation: async () => jsonResponse({ data: full }) });
+  const page = await client.getNote('note-1', { offset: 0 });
+  assert.equal(page.contentComplete, false);
+  assert.equal('contentPlain' in page, false);
+});
+
 test('preserves search items and response metadata inside the success data envelope', async () => {
   const response = {
     items: [{ id: 'document-1', documentId: 'document-1', noteId: 'note-1', noteVersion: 1, noteSlug: 'deployment', noteTitle: 'Deployment', sourceType: 'note_chunk', sourceId: null, sourceKey: 'section-1', sourceTitle: 'Deployment', headingPath: null, snippet: 'rollback', score: 1, keywordRank: 1, semanticRank: null, copyable: false, blockKey: null, language: null, attachmentId: null }],

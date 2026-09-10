@@ -25,13 +25,13 @@ function mockClient() {
     },
     async readNoteContext(documentId, params) {
       assert.equal(documentId, 'doc-1');
-      assert.deepEqual(params, { before: 1, after: 2, maxTokens: 900, maxBytes: 24576 });
+      assert.deepEqual(params, { before: 1, after: 2, maxTokens: 900, maxBytes: 15 * 1024 });
       return context;
     },
     async getBlock(noteRef, blockKey, options) {
       assert.equal(noteRef, 'note-1');
       assert.equal(blockKey, 'rollback');
-      assert.deepEqual(options, { maxBytes: 24576 });
+      assert.deepEqual(options, { maxBytes: 15 * 1024 });
       return { id: 'block-1', noteId: 'note-1', blockKey, blockType: 'command', title: 'Rollback', language: 'bash', content: 'docker compose down', position: 0, copyable: true, contentHash: 'hash' };
     },
   };
@@ -53,7 +53,7 @@ test('MCP read results enforce the complete duplicated wire envelope limit', asy
     async getBlock() {
       return { id: 'block-1', noteId: 'note-1', blockKey: 'large', blockType: 'code', title: null, language: 'text', content: 'x'.repeat(40_000), position: 0, copyable: true, contentHash: 'hash' };
     },
-  }, { noteRef: 'note-1', blockKey: 'large', maxBytes: 64 * 1024 }), /wire-byte limit/);
+  }, { noteRef: 'note-1', blockKey: 'large' }), /wire-byte limit/);
 });
 
 test('MCP read context forwards an opaque continuation only when supplied', async () => {
@@ -64,7 +64,7 @@ test('MCP read context forwards an opaque continuation only when supplied', asyn
       return context;
     },
   }, { documentId: 'doc-1', continuation: 'opaque-context-cursor' });
-  assert.deepEqual(received, { documentId: 'doc-1', params: { before: 1, after: 1, maxTokens: 1800, maxBytes: 24576, continuation: 'opaque-context-cursor' } });
+  assert.deepEqual(received, { documentId: 'doc-1', params: { before: 1, after: 1, maxTokens: 1800, maxBytes: 15 * 1024, continuation: 'opaque-context-cursor' } });
 });
 
 test('default MCP profile exposes only the read surface', () => {
@@ -232,6 +232,30 @@ test('MCP list_notebooks is available in the read profile and delegates to the A
   await client.close();
 });
 
+test('MCP collection results are bounded while keeping continuation metadata', async () => {
+  const searchItem = {
+    id: 'document-1', documentId: 'document-1', noteId: 'note-1', noteVersion: 1, noteSlug: 'note', noteTitle: 'Note',
+    sourceType: 'note_chunk', sourceId: null, sourceKey: 'body', sourceTitle: 'Body', headingPath: null,
+    snippet: 'x'.repeat(800), score: 1, keywordRank: 1, semanticRank: null, copyable: false, blockKey: null, language: null, attachmentId: null,
+  };
+  const { client } = await connectedProtocol('read', protocolClient({
+    async searchPost() {
+      return { items: Array.from({ length: 200 }, () => searchItem), queryId: 'query-1', modeUsed: 'keyword', degraded: false, nextCursor: 'search-after-1', timing: { embeddingMs: 0, retrievalMs: 1, totalMs: 1 } };
+    },
+    async listNotebooks() {
+      return { items: Array.from({ length: 500 }, (_, index) => ({ id: `notebook-${index}`, name: 'n'.repeat(80), createdAt: '2026-01-01', updatedAt: '2026-01-01' })) };
+    },
+  }));
+  const search = await client.callTool({ name: 'search_notes', arguments: { query: 'bounded' } });
+  assert.equal(search.structuredContent.truncated, true);
+  assert.equal(search.structuredContent.nextCursor, 'search-after-1');
+  assert.ok(search.structuredContent.items.length < 200);
+  const notebooks = await client.callTool({ name: 'list_notebooks', arguments: {} });
+  assert.equal(notebooks.structuredContent.truncated, true);
+  assert.ok(notebooks.structuredContent.items.length < 500);
+  await client.close();
+});
+
 test('MCP resolve_public_share is read-only and delegates to the public API-client operation', async () => {
   let receivedToken;
   let receivedOptions;
@@ -246,7 +270,7 @@ test('MCP resolve_public_share is read-only and delegates to the public API-clie
   }));
   const result = await client.callTool({ name: 'resolve_public_share', arguments: { token } });
   assert.equal(receivedToken, token);
-  assert.deepEqual(receivedOptions, { maxBytes: 24576 });
+  assert.deepEqual(receivedOptions, { maxBytes: 15 * 1024 });
   assert.deepEqual(result.structuredContent, sharedNote);
   await client.close();
 });

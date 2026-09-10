@@ -78,7 +78,7 @@ The native and hosted read-only MCP profiles expose the same public resolver as 
 }
 ```
 
-The tool delegates to the existing API-client resolver and returns bounded structured `title`, `contentMarkdown`, and `updatedAt` pages. Native MCP pages default to 24 KiB, including room for the text and structured representations within the 64 KiB serialized wire ceiling. Follow the returned continuation until `contentComplete` is `true`. It is read-only, does not require a private JWT, and does not expose attachments or workspace metadata. The native and optional hosted `share` profiles also expose `create_public_share` for an exact UUID note. Call it only after reading and reviewing the saved note version:
+The tool delegates to the existing API-client resolver and returns bounded structured `title`, `contentMarkdown`, and `updatedAt` pages. Native MCP content pages default to 15 KiB, reserving space for the duplicated text and structured representations within the 64 KiB serialized wire ceiling. Follow the returned continuation until `contentComplete` is `true`. It is read-only, does not require a private JWT, and does not expose attachments or workspace metadata. The native and optional hosted `share` profiles also expose `create_public_share` for an exact UUID note. Call it only after reading and reviewing the saved note version:
 
 ```json
 {

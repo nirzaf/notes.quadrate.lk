@@ -69,6 +69,7 @@ export const searchResponseSchema = z.object({
   timing: searchTiming,
   index: searchIndex.optional(),
   nextCursor: z.string().nullable().optional(),
+  truncated: z.boolean().optional(),
 }).strict();
 
 const contextSource = z.object({
@@ -153,6 +154,7 @@ export const noteBlockSchema = z.object({
 
 export const notebookListSchema = z.object({
   items: z.array(z.object({ id, name: z.string(), createdAt: date, updatedAt: date }).strict()),
+  truncated: z.boolean().optional(),
 }).strict();
 
 export const publicSharedNoteSchema = z.object({
@@ -183,9 +185,9 @@ export const mutationAcknowledgmentSchema = z.object({ ...acknowledgment, outcom
 const vaultProject = z.object({ id, slug: z.string(), name: z.string(), description: z.string().nullable(), createdAt: date, updatedAt: date, archivedAt: date.nullable() }).strict();
 const vaultEnvironment = z.object({ id, projectId: id, slug: z.string(), name: z.string(), description: z.string().nullable(), createdAt: date, updatedAt: date, archivedAt: date.nullable() }).strict();
 const vaultSecret = z.object({ id, projectId: id, environmentId: id, name: z.string(), description: z.string().nullable(), version: z.number().int().positive(), createdAt: date, updatedAt: date, rotatedAt: date.nullable(), deletedAt: date.nullable() }).strict();
-export const vaultProjectsSchema = z.object({ items: z.array(vaultProject) }).strict();
-export const vaultEnvironmentsSchema = z.object({ items: z.array(vaultEnvironment) }).strict();
-export const vaultSecretsSchema = z.object({ items: z.array(vaultSecret) }).strict();
+export const vaultProjectsSchema = z.object({ items: z.array(vaultProject), truncated: z.boolean().optional() }).strict();
+export const vaultEnvironmentsSchema = z.object({ items: z.array(vaultEnvironment), truncated: z.boolean().optional() }).strict();
+export const vaultSecretsSchema = z.object({ items: z.array(vaultSecret), truncated: z.boolean().optional() }).strict();
 export const vaultSecretSchema = z.object({ secretId: id, project: z.string(), environment: z.string(), name: z.string(), value: z.string(), version: z.number().int().positive(), updatedAt: date }).strict();
-export const vaultSecretBatchSchema = z.object({ items: z.array(vaultSecretSchema) }).strict();
+export const vaultSecretBatchSchema = z.object({ items: z.array(vaultSecretSchema), truncated: z.boolean().optional() }).strict();
 export const vaultMetadataSchema = vaultSecret;

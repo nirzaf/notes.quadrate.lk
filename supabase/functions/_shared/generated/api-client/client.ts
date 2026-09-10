@@ -10,6 +10,7 @@ import type {
   CreateNotebookInput,
   CreateNoteInput,
   Note,
+  PagedNote,
   Notebook,
   NoteBlock,
   NoteSummary,
@@ -88,6 +89,15 @@ export interface GetNoteParams extends ContentReadParams {
   includeDeleted?: boolean;
 }
 
+type FullNoteParams = RequestOptions & {
+  includeDeleted?: boolean;
+  offset?: never;
+  lineStart?: never;
+  lineEnd?: never;
+  maxBytes?: never;
+  continuation?: never;
+};
+
 export interface SearchParams extends RequestOptions {
   query: string;
   mode?: SearchMode;
@@ -160,9 +170,9 @@ function isContentContinuation(value: unknown): boolean {
     && (value.noteVersion === undefined || (typeof value.noteVersion === 'number' && Number.isSafeInteger(value.noteVersion) && value.noteVersion > 0));
 }
 
-function isNote(value: unknown): value is Note {
+function isNoteMetadata(value: unknown): value is Record<string, unknown> {
   return isRecord(value) && isString(value.id) && isString(value.slug) && isString(value.title)
-    && isString(value.contentMarkdown) && isString(value.contentPlain) && isStringArray(value.tags)
+    && isString(value.contentMarkdown) && isStringArray(value.tags)
     && isNullableString(value.notebookId) && typeof value.version === 'number' && Number.isSafeInteger(value.version)
     && isString(value.createdAt) && isString(value.updatedAt) && isNullableString(value.deletedAt)
     && (value.contentBytes === undefined || (typeof value.contentBytes === 'number' && Number.isSafeInteger(value.contentBytes) && value.contentBytes >= 0))
@@ -173,6 +183,18 @@ function isNote(value: unknown): value is Note {
     && (value.contentComplete === undefined || typeof value.contentComplete === 'boolean')
     && (value.sourceHash === undefined || isString(value.sourceHash))
     && (value.continuation === undefined || isContentContinuation(value.continuation));
+}
+
+function isNote(value: unknown): value is Note {
+  return isNoteMetadata(value) && isString(value.contentPlain);
+}
+
+function isPagedNote(value: unknown): value is PagedNote {
+  return isNoteMetadata(value) && !Object.prototype.hasOwnProperty.call(value, 'contentPlain') && typeof value.contentComplete === 'boolean';
+}
+
+function isNoteRead(value: unknown): value is Note | PagedNote {
+  return isNote(value) || isPagedNote(value);
 }
 
 function isNoteSummary(value: unknown): value is NoteSummary {
@@ -228,6 +250,7 @@ function isSearchResponse(value: unknown): value is SearchResponse {
     || (value.timing.serializationMs !== undefined && typeof value.timing.serializationMs !== 'number')
     || !Array.isArray(value.items) || !value.items.every(isSearchResult)) return false;
   if (value.nextCursor !== undefined && !isNullableString(value.nextCursor)) return false;
+  if (value.truncated !== undefined && typeof value.truncated !== 'boolean') return false;
   if (value.degradedReason !== undefined && !isString(value.degradedReason)) return false;
   if (value.index !== undefined) {
     if (!isRecord(value.index) || !isString(value.index.model) || typeof value.index.pendingDocuments !== 'number'
@@ -545,16 +568,19 @@ export class QNotesClient {
     return this.requestValidated(`/notes${queryString({ cursor: params.cursor, limit: params.limit, includeDeleted: params.includeDeleted, deletedOnly: params.deletedOnly, notebookId: params.notebookId, unfiled: params.unfiled, tag: params.tag })}`, (value): value is { items: NoteSummary[]; nextCursor: string | null } => isRecord(value) && Array.isArray(value.items) && value.items.every(isNoteSummary) && isNullableString(value.nextCursor), 'notes list', {}, params);
   }
 
-  listNotebooks(options: RequestOptions = {}): Promise<{ items: Notebook[] }> {
-    return this.requestValidated('/notebooks', (value): value is { items: Notebook[] } => isRecord(value) && Array.isArray(value.items) && value.items.every(isNotebook), 'notebooks list', {}, options);
+  listNotebooks(options: RequestOptions = {}): Promise<{ items: Notebook[]; truncated?: boolean }> {
+    return this.requestValidated('/notebooks', (value): value is { items: Notebook[]; truncated?: boolean } => isRecord(value) && Array.isArray(value.items) && value.items.every(isNotebook) && (value.truncated === undefined || typeof value.truncated === 'boolean'), 'notebooks list', {}, options);
   }
 
   createNotebook(input: CreateNotebookInput, options: RequestOptions = {}): Promise<Notebook> {
     return this.requestValidated('/notebooks', isNotebook, 'notebook', { method: 'POST', body: JSON.stringify(input) }, options);
   }
 
-  getNote(noteRef: string, params: GetNoteParams = {}): Promise<Note> {
-    return this.requestValidated(`/notes/${encodeURIComponent(noteRef)}${queryString({ includeDeleted: params.includeDeleted, offset: params.offset, lineStart: params.lineStart, lineEnd: params.lineEnd, maxBytes: params.maxBytes, continuation: params.continuation })}`, isNote, 'note', {}, params);
+  getNote(noteRef: string): Promise<Note>;
+  getNote(noteRef: string, params: FullNoteParams): Promise<Note>;
+  getNote(noteRef: string, params: GetNoteParams): Promise<Note | PagedNote>;
+  getNote(noteRef: string, params: GetNoteParams = {}): Promise<Note | PagedNote> {
+    return this.requestValidated(`/notes/${encodeURIComponent(noteRef)}${queryString({ includeDeleted: params.includeDeleted, offset: params.offset, lineStart: params.lineStart, lineEnd: params.lineEnd, maxBytes: params.maxBytes, continuation: params.continuation })}`, isNoteRead, 'note', {}, params);
   }
 
   createNote(input: CreateNoteInput, options: RequestOptions = {}): Promise<Note> {

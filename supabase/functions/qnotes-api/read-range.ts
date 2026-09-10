@@ -31,12 +31,13 @@ export function parseReadRange(values: Record<string, unknown>, defaultMaxBytes?
   if (lineStart !== undefined && lineEnd !== undefined && lineEnd < lineStart) throw new ApiError(422, 'VALIDATION_ERROR', 'lineEnd must be greater than or equal to lineStart.');
   if (offset !== undefined && (lineStart !== undefined || lineEnd !== undefined)) throw new ApiError(422, 'VALIDATION_ERROR', 'offset cannot be combined with a line range.');
   const rawMaxBytes = integer(values.maxBytes, 'maxBytes', 1);
-  const maxBytes = rawMaxBytes ?? defaultMaxBytes;
-  if (maxBytes !== undefined && maxBytes > MAX_AGENT_RESPONSE_MAX_BYTES) throw new ApiError(422, 'VALIDATION_ERROR', `maxBytes must be at most ${MAX_AGENT_RESPONSE_MAX_BYTES}.`);
   const continuation = values.continuation;
   if (continuation !== undefined && (typeof continuation !== 'string' || continuation.length === 0 || continuation.length > 8192)) {
     throw new ApiError(422, 'VALIDATION_ERROR', 'continuation must be an opaque token no longer than 8192 characters.');
   }
+  const hasRangeSelector = offset !== undefined || lineStart !== undefined || lineEnd !== undefined || continuation !== undefined;
+  const maxBytes = rawMaxBytes ?? defaultMaxBytes ?? (hasRangeSelector ? MAX_AGENT_RESPONSE_MAX_BYTES : undefined);
+  if (maxBytes !== undefined && maxBytes > MAX_AGENT_RESPONSE_MAX_BYTES) throw new ApiError(422, 'VALIDATION_ERROR', `maxBytes must be at most ${MAX_AGENT_RESPONSE_MAX_BYTES}.`);
   if (continuation && (offset !== undefined || lineStart !== undefined || lineEnd !== undefined)) throw new ApiError(422, 'VALIDATION_ERROR', 'continuation cannot be combined with offset or a line range.');
   return {
     ...(offset === undefined ? {} : { offset }),
@@ -62,7 +63,12 @@ export function resolveReadRange(value: string, request: ReadRangeRequest): Reso
 
 export function contentSlice(value: string, startOffset: number, endOffset: number, maxContentBytes: number): Utf8ContentSlice {
   const available = Math.max(0, endOffset - startOffset);
-  return sliceUtf8ByBytes(value, startOffset, Math.min(available, maxContentBytes));
+  try {
+    return sliceUtf8ByBytes(value, startOffset, Math.min(available, maxContentBytes));
+  } catch (error) {
+    if (error instanceof RangeError) throw new ApiError(422, 'VALIDATION_ERROR', 'The requested content range is invalid.');
+    throw error;
+  }
 }
 
 export function fitJsonContent<T>(value: string, range: ResolvedReadRange, build: (slice: Utf8ContentSlice, truncated: boolean) => T): T {

@@ -1,13 +1,13 @@
 import { ListResourcesRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ListResourcesRequest, ListResourcesResult, RequestId } from '@modelcontextprotocol/sdk/types.js';
-import type { Notebook, Note } from '@qnotes/shared';
+import type { Notebook, Note, PagedNote } from '@qnotes/shared';
 import { boundedMcpContentBytes, type ReadQNotesClient } from '../tools/common.ts';
 
 interface ResourceQNotesClient extends ReadQNotesClient {
-  listNotebooks(): Promise<{ items: Notebook[] }>;
+  listNotebooks(): Promise<{ items: Notebook[]; truncated?: boolean }>;
   listNotes(params?: { cursor?: string; limit?: number }): Promise<{ items: Array<{ id: string; slug: string; title: string }>; nextCursor: string | null }>;
-  getNote(noteRef: string, params?: { maxBytes?: number; offset?: number; lineStart?: number; lineEnd?: number; continuation?: string }): Promise<Note>;
+  getNote(noteRef: string, params?: { maxBytes?: number; offset?: number; lineStart?: number; lineEnd?: number; continuation?: string }): Promise<Note | PagedNote>;
 }
 
 type RequestHandler = (request: unknown, extra: unknown) => unknown | Promise<unknown>;

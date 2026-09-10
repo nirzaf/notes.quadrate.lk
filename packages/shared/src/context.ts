@@ -27,7 +27,8 @@ export interface ContextNoteSnapshot {
 
 export const DEFAULT_AGENT_RESPONSE_MAX_BYTES = 64 * 1024;
 export const MAX_AGENT_RESPONSE_MAX_BYTES = 64 * 1024;
-export const DEFAULT_MCP_CONTENT_MAX_BYTES = 24 * 1024;
+// A QNotes page is duplicated in the MCP text and structured envelopes.
+export const DEFAULT_MCP_CONTENT_MAX_BYTES = Math.floor((MAX_AGENT_RESPONSE_MAX_BYTES - 4 * 1024) / 4);
 
 export interface Utf8ContentSlice {
   content: string;
