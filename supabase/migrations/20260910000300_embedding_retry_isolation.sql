@@ -137,6 +137,7 @@ begin
     join notesdb.notes n on n.id = d.note_id and n.owner_id = d.owner_id and n.deleted_at is null
     where d.embedding_status = 'failed'
       and d.embedding_error in ('EMBEDDING_PROVIDER_TIMEOUT', 'EMBEDDING_FAILED')
+      and d.embedding_attempts >= 5
       and d.embedding_model = 'gte-small'
       and d.embedding_model_version = 'v2'
     order by d.id
