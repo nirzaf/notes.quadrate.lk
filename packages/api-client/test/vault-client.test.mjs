@@ -66,6 +66,21 @@ test('QVaultClient resolves exact Vault resources without list requests', async 
   ]);
 });
 
+test('QVaultClient lists secrets by the exact project and environment selector', async () => {
+  const calls = [];
+  const client = new QVaultClient({
+    baseUrl: 'https://example.test',
+    getAccessToken: () => 'qvt_test',
+    fetchImplementation: async (url, init) => {
+      calls.push({ url, init });
+      return jsonResponse([secret]);
+    },
+  });
+  assert.deepEqual(await client.listSecretsBySelector('slug:pearl-blanc', 'slug:production'), [secret]);
+  assert.equal(calls[0].url, 'https://example.test/vault/projects/slug%3Apearl-blanc/environments/slug%3Aproduction/secrets');
+  assert.equal(calls[0].init.headers.get('Authorization'), 'Bearer qvt_test');
+});
+
 test('QVaultClient keeps single-use Vault approvals in headers and validates the response', async () => {
   const calls = [];
   const client = new QVaultClient({

@@ -199,7 +199,8 @@ export function parseVaultSecretReference(value: unknown): VaultCanonicalSecretR
 
 function canonicalVaultResourceReference(value: unknown, field: string): string {
   const reference = parseVaultResourceReference(value, field, 80);
-  return reference.id ? `id:${reference.id}` : reference.slug as string;
+  const explicitSlug = typeof value === 'string' && value.trim().startsWith('slug:');
+  return reference.id ? `id:${reference.id}` : explicitSlug ? `slug:${reference.slug}` : reference.slug as string;
 }
 
 export function normalizeVaultProjectName(value: unknown): string {
@@ -250,10 +251,11 @@ function expectedVersion(value: unknown): number {
 function validateSelector(value: unknown): VaultSecretSelector {
   if (!record(value)) throw new QNotesValidationError('Each secret selector must be an object.');
   const secret = parseVaultSecretReference(value.name);
+  const explicitName = typeof value.name === 'string' && value.name.trim().startsWith('name:');
   return {
     project: canonicalVaultResourceReference(value.project, 'project reference'),
     environment: canonicalVaultResourceReference(value.environment, 'environment reference'),
-    name: secret.id ? `id:${secret.id}` : secret.name as string,
+    name: secret.id ? `id:${secret.id}` : explicitName ? `name:${secret.name}` : secret.name as string,
   };
 }
 

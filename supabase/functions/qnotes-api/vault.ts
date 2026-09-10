@@ -387,7 +387,7 @@ export async function listVaultEnvironments(context: Context): Promise<Response>
   const grants = auth.authKind === 'vault-agent' ? await vaultGrants(auth, 'metadata:read') : null;
   const projectWide = grants?.some((grant) => grant.project_id === projectId && grant.environment_id === null && grant.secret_id === null) ?? true;
   const environmentIds = grants
-    ? [...new Set(grants.filter((grant) => grant.project_id === projectId && grant.environment_id !== null).map((grant) => grant.environment_id as string))]
+    ? [...new Set(grants.filter((grant) => grant.project_id === projectId && grant.environment_id !== null && grant.secret_id === null).map((grant) => grant.environment_id as string))]
     : null;
   if (grants && !projectWide && environmentIds?.length === 0) return dataBody(context, []);
   const rows = await fetchAllRangePages(async (from, to) => {

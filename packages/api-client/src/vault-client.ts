@@ -225,6 +225,10 @@ export class QVaultClient {
     return this.request<unknown>(`/environments/${encodeURIComponent(environmentId)}/secrets`, {}, options).then((value) => listPayload(value, isSecretMetadata, 'secrets'));
   }
 
+  listSecretsBySelector(project: string, environment: string, options: RequestOptions = {}): Promise<VaultSecretMetadata[]> {
+    return this.request<unknown>(`/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/secrets`, {}, options).then((value) => listPayload(value, isSecretMetadata, 'secrets'));
+  }
+
   createSecret(input: CreateVaultSecretInput, options: RequestOptions = {}): Promise<VaultSecretMetadata> {
     return this.validated(`/environments/${encodeURIComponent(input.environmentId)}/secrets`, isSecretMetadata, 'secret metadata', { method: 'POST', body: JSON.stringify(input) }, options);
   }

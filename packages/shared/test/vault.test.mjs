@@ -45,6 +45,10 @@ test('Vault selectors distinguish IDs from slugs and preserve case-insensitive s
     secrets: [{ project: 'pearl-blanc', environment: 'production', name: `id:${mutationId}` }],
     purpose: 'immutable secret reference test',
   }).secrets[0], { project: 'pearl-blanc', environment: 'production', name: `id:${mutationId}` });
+  assert.deepEqual(validateRevealVaultSecretsInput({
+    secrets: [{ project: `slug:${projectId}`, environment: `slug:${environmentId}`, name: `name:${mutationId}` }],
+    purpose: 'explicit UUID-shaped selector test',
+  }).secrets[0], { project: `slug:${projectId}`, environment: `slug:${environmentId}`, name: `name:${mutationId}` });
 });
 
 test('Vault validators normalize safe metadata and preserve secret values only in secret inputs', () => {

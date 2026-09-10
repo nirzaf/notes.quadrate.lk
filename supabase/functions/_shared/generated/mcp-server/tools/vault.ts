@@ -18,6 +18,7 @@ export interface VaultMcpClient {
   listProjects(): Promise<VaultProject[]>;
   listEnvironments(project: string): Promise<VaultEnvironment[]>;
   listSecrets(environmentId: string): Promise<VaultSecretMetadata[]>;
+  listSecretsBySelector(project: string, environment: string): Promise<VaultSecretMetadata[]>;
   resolveEnvironment(project: string, environment: string, action: VaultAction): Promise<VaultResourceReference>;
   resolveSecret(input: { project: string; environment: string; name: string }, action: VaultAction): Promise<VaultResourceReference>;
   createSecret(input: CreateVaultSecretInput): Promise<VaultSecretMetadata>;
@@ -47,8 +48,7 @@ export async function vaultListEnvironmentsTool(client: VaultMcpClient, args: { 
 }
 
 export async function vaultListSecretsTool(client: VaultMcpClient, args: { project: string; environment: string }) {
-  const resource = await client.resolveEnvironment(args.project, args.environment, 'metadata:read');
-  return toolResult({ items: listItems(await client.listSecrets(resource.environmentId)) }, vaultSecretsSchema);
+  return toolResult({ items: listItems(await client.listSecretsBySelector(args.project, args.environment)) }, vaultSecretsSchema);
 }
 
 export async function vaultGetSecretTool(client: VaultMcpClient, args: VaultRevealMcpInput) {

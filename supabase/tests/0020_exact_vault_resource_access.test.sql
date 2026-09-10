@@ -1,5 +1,5 @@
 begin;
-select plan(21);
+select plan(22);
 
 select ok(to_regprocedure('public.qnotes_vault_resolve_resource(uuid,uuid,text,text,uuid,text,uuid,text,uuid,text,uuid)') is not null, 'the exact Vault resource resolver exists');
 select ok((select p.prosecdef from pg_proc p where p.oid = 'public.qnotes_vault_resolve_resource(uuid,uuid,text,text,uuid,text,uuid,text,uuid,text,uuid)'::regprocedure), 'the exact Vault resource resolver is SECURITY DEFINER');
@@ -7,6 +7,7 @@ select ok(has_function_privilege('service_role', 'public.qnotes_vault_resolve_re
 select ok(not has_function_privilege('anon', 'public.qnotes_vault_resolve_resource(uuid,uuid,text,text,uuid,text,uuid,text,uuid,text,uuid)', 'EXECUTE'), 'anon cannot execute the exact Vault resource resolver');
 select ok(not has_function_privilege('authenticated', 'public.qnotes_vault_resolve_resource(uuid,uuid,text,text,uuid,text,uuid,text,uuid,text,uuid)', 'EXECUTE'), 'authenticated cannot execute the exact Vault resource resolver directly');
 select ok(coalesce(array_to_string((select p.proconfig from pg_proc p where p.oid = 'public.qnotes_vault_resolve_resource(uuid,uuid,text,text,uuid,text,uuid,text,uuid,text,uuid)'::regprocedure), ','), '') like '%lock_timeout=5s%', 'the exact Vault resource resolver has a bounded lock wait');
+select is((public.qnotes_vault_resolve_resource((select id from auth.users where email = 'owner@qnotes.local'), null, 'user_jwt', null, 'f1600000-0000-4000-8000-000000000001'::uuid, null, null, null, null, null, gen_random_uuid())->>'status'), 'invalid_action', 'the exact Vault resolver rejects a null action');
 
 insert into notesdb.vault_projects (id, owner_id, slug, name)
 values ('f1600000-0000-4000-8000-000000000001', (select id from auth.users where email = 'owner@qnotes.local'), 'exact-project', 'Exact resource project');

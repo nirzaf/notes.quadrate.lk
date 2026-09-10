@@ -14,6 +14,7 @@ function protocolClient(overrides = {}) {
     async listProjects() { return { items: [] }; },
     async listEnvironments() { return { items: [] }; },
     async listSecrets() { return []; },
+    async listSecretsBySelector() { return []; },
     async resolveEnvironment() { return { projectId: 'project-1', environmentId: 'environment-1', secretId: null }; },
     async resolveSecret() { return { projectId: 'project-1', environmentId: 'environment-1', secretId: 'secret-1' }; },
     ...overrides,
@@ -75,6 +76,7 @@ test('Vault list tools return object-shaped zero and many item pages', async () 
     async listProjects() { return [project, secondProject]; },
     async listEnvironments() { return [environment, secondEnvironment]; },
     async listSecrets() { return [secret, secondSecret]; },
+    async listSecretsBySelector() { return [secret, secondSecret]; },
   }));
   const projects = await client.callTool({ name: 'vault_list_projects', arguments: {} });
   const environments = await client.callTool({ name: 'vault_list_environments', arguments: { project: 'local' } });
@@ -119,6 +121,9 @@ test('Vault MCP mutations resolve exact resources without enumerating parent col
   assert.equal(listEnvironmentCalls, 0);
   assert.equal(listSecretCalls, 0);
   assert.deepEqual(calls.map((call) => call.operation), ['resolveEnvironment', 'createSecret', 'resolveSecret', 'rotateSecret', 'resolveSecret', 'deleteSecret']);
+  assert.deepEqual(calls[0], { operation: 'resolveEnvironment', project: 'pearl-blanc', environment: 'production', action: 'secret:write' });
+  assert.deepEqual(calls[2], { operation: 'resolveSecret', input: { project: 'pearl-blanc', environment: 'production', name: 'KEY' }, action: 'secret:write' });
+  assert.deepEqual(calls[4], { operation: 'resolveSecret', input: { project: 'pearl-blanc', environment: 'production', name: 'KEY' }, action: 'secret:delete' });
   assert.deepEqual(calls[3], { operation: 'rotateSecret', receivedSecretId: secretId, input: { value: 'synthetic-rotated', expectedVersion: 1, mutationId: '990e8400-e29b-41d4-a716-446655440000' } });
   assert.deepEqual(calls[5], { operation: 'deleteSecret', receivedSecretId: secretId, input: { expectedVersion: 2, mutationId: 'aa0e8400-e29b-41d4-a716-446655440000', confirm: true } });
   await client.close();

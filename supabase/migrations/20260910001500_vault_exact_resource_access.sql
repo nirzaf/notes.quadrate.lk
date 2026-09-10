@@ -25,7 +25,7 @@ declare
   secret_row notesdb.vault_secrets%rowtype;
   authz jsonb;
 begin
-  if p_action not in ('metadata:read', 'secret:reveal', 'secret:write', 'secret:delete') then
+  if p_action is null or p_action not in ('metadata:read', 'secret:reveal', 'secret:write', 'secret:delete') then
     return jsonb_build_object('status', 'invalid_action');
   end if;
   if p_project_id is not null and p_project_slug is not null
