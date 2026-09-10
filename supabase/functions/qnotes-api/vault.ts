@@ -532,12 +532,20 @@ async function createVaultSecretForEnvironment(
 
 export async function createVaultSecret(context: Context): Promise<Response> {
   const auth = vaultAuthFromContext(context);
+  const environment = await findEnvironmentById(auth.userId, context.req.param('environmentId') ?? '');
+  const body = record(await context.req.json());
+  const bodyProjectId = typeof body.projectId === 'string' && isUUID(body.projectId) ? body.projectId : null;
+  const bodyEnvironmentId = typeof body.environmentId === 'string' && isUUID(body.environmentId) ? body.environmentId : null;
+  if (bodyProjectId && bodyEnvironmentId && (bodyProjectId !== String(environment.project_id) || bodyEnvironmentId !== String(environment.id))) {
+    throw new ApiError(422, 'VALIDATION_ERROR', 'projectId and environmentId must match the route resource.');
+  }
   const resource = await resolveVaultResource(context, auth, 'secret:write', { environmentId: context.req.param('environmentId') ?? '' }, 'environment');
-  const input = validateCreateVaultSecretInput({ ...(await context.req.json()), projectId: resource.projectId, environmentId: resource.environmentId });
+  const project = await findProject(auth.userId, String(environment.project_id));
+  const input = validateCreateVaultSecretInput({ ...body, projectId: resource.projectId, environmentId: resource.environmentId });
   const request = { operation: 'created', projectId: resource.projectId, environmentId: resource.environmentId, name: input.name, description: input.description ?? null, value: input.value };
   const replay = await replayVaultMutation(context, auth, 'created', input.mutationId, { projectId: resource.projectId, environmentId: resource.environmentId, secretId: null, expectedVersion: null }, await mutationRequestHashes(request));
   if (replay) return dataBody(context, await mapVaultMutation(context, auth, replay, 'create', { ownerId: auth.userId, projectId: resource.projectId, environmentId: resource.environmentId, secretId: null }));
-  return createVaultSecretForEnvironment(context, { id: resource.projectId }, { id: resource.environmentId }, input);
+  return createVaultSecretForEnvironment(context, project, environment, input);
 }
 
 export async function createVaultSecretBySelector(context: Context): Promise<Response> {

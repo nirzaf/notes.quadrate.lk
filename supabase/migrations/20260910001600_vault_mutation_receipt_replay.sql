@@ -173,8 +173,7 @@ declare
 begin
   select * into stored
   from notesdb.vault_mutations
-  where owner_id = p_owner_id and mutation_id = p_mutation_id
-  for update;
+  where owner_id = p_owner_id and mutation_id = p_mutation_id;
   if not found then
     return jsonb_build_object('status', 'not_found');
   end if;
