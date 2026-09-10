@@ -1,11 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  VAULT_ISOLATION,
   VAULT_READINESS_CHECKS,
   VAULT_READINESS_SQL,
   VAULT_TOKEN_PEPPER_NAME,
   assertReadinessChecksPassed,
   assertVaultTokenPepperPresent,
+  formatReadinessResult,
   parseReadinessChecks,
   parseSecretNames,
   verifyVaultReadiness,
@@ -85,12 +87,20 @@ test('uses only the pinned read-only Supabase primitives and verifies them in or
   });
 
   assert.equal(result.pepperPresent, true);
+  assert.deepEqual(result.isolation, VAULT_ISOLATION);
+  assert.equal(result.isolation.status, 'open_residual');
   assert.doesNotMatch(JSON.stringify(result), /synthetic-secret/);
+  assert.deepEqual(JSON.parse(formatReadinessResult(result)), {
+    pepperPresent: true,
+    checks,
+    isolation: VAULT_ISOLATION,
+  });
   assert.equal(calls.length, 2);
   assert.deepEqual(calls[0], ['exec', 'supabase', 'secrets', 'list', '--project-ref', 'ciyoandzjezgqxjpcrin', '--output-format', 'json']);
   assert.deepEqual(calls[1], ['exec', 'supabase', 'db', 'query', '--linked', '--project-ref', 'ciyoandzjezgqxjpcrin', '--output-format', 'json', VAULT_READINESS_SQL]);
   assert.match(VAULT_READINESS_SQL, /has_function_privilege/);
   assert.match(VAULT_READINESS_SQL, /qnotes_vault_rotate_secret\(uuid,uuid,text,text,bigint,uuid,text,text,uuid,uuid,text\)/);
+  assert.match(VAULT_READINESS_SQL, /qnotes_vault_rotate_secret\(uuid,uuid,text,text,bigint,uuid,text,uuid,uuid,text\)/);
   assert.match(VAULT_READINESS_SQL, /qnotes_vault_reveal_secrets\(uuid,jsonb,uuid,text,uuid,text\)/);
   assert.doesNotMatch(VAULT_READINESS_SQL, /\b(insert|update|delete|create|drop|alter)\b/i);
 });
