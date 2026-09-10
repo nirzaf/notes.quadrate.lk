@@ -24,16 +24,6 @@ where d.owner_id = '00000000-0000-4000-8000-000000000000'::uuid
 order by rank desc, d.id
 limit 51;
 
--- Exact source identifier path used by metadata and block lookups.
-explain (analyze, buffers, settings, format json)
-select d.id, d.note_id
-from notesdb.search_documents d
-join notesdb.notes n on n.id = d.note_id and n.owner_id = d.owner_id and n.deleted_at is null
-where d.owner_id = '00000000-0000-4000-8000-000000000000'::uuid
-  and lower(d.source_key) = 'deploy-key'
-order by d.id
-limit 51;
-
 -- Trigram path for misspellings and partial titles.
 explain (analyze, buffers, settings, format json)
 select d.id, greatest(similarity(lower(d.source_title), 'erp nxt production rollbak'), similarity(lower(d.content), 'erp nxt production rollbak')) as similarity
