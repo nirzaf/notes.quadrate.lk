@@ -73,7 +73,8 @@ alter table notesdb.vault_audit_outbox enable row level security;
 revoke all on table notesdb.vault_audit_events, notesdb.vault_audit_policy, notesdb.vault_audit_outbox from public, anon, authenticated, service_role;
 grant select on table notesdb.vault_audit_events to service_role;
 
-grant usage on schema public, notesdb, extensions to qnotes_vault_audit_maintenance;
+grant usage, create on schema public, notesdb to qnotes_vault_audit_maintenance;
+grant usage on schema extensions to qnotes_vault_audit_maintenance;
 grant select on table notesdb.vault_audit_policy to qnotes_vault_audit_maintenance;
 grant insert on table notesdb.vault_audit_events to qnotes_vault_audit_maintenance;
 grant select, insert, update, delete on table notesdb.vault_audit_outbox to qnotes_vault_audit_maintenance;
