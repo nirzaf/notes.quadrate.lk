@@ -230,14 +230,25 @@ begin
     new.embedding_model := 'gte-small';
     new.embedding_model_version := 'v2';
     new.embedding_error := null;
-    new.embedding_queued_at := coalesce(new.embedding_queued_at, timezone('utc', now()));
-    should_queue := tg_op = 'UPDATE' and (
-      input_changed
-      or model_changed
-      or (old.embedding_status is distinct from 'pending'
-        and old.embedding_status <> 'ready'
-        and coalesce(new.embedding_attempts, 0) = 0)
-    );
+    if tg_op = 'UPDATE'
+      and old.embedding_status = 'failed'
+      and not input_changed
+      and not model_changed
+      and coalesce(new.embedding_attempts, 0) >= 5
+    then
+      new.embedding_status := 'failed';
+      new.embedding_error := old.embedding_error;
+      new.embedding_queued_at := null;
+    else
+      new.embedding_queued_at := coalesce(new.embedding_queued_at, timezone('utc', now()));
+      should_queue := tg_op = 'UPDATE' and (
+        input_changed
+        or model_changed
+        or (old.embedding_status is distinct from 'pending'
+          and old.embedding_status <> 'ready'
+          and coalesce(new.embedding_attempts, 0) = 0)
+      );
+    end if;
   elsif new.embedding_status = 'failed' then
     new.embedding := null;
     new.embedding_model := 'gte-small';

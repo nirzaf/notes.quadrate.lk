@@ -111,7 +111,8 @@ begin
     should_enqueue := not found_document
       or (existing.embedding_status = 'failed'
         and existing.content_hash = content_hash
-        and coalesce(existing.embedding_attempts, 0) > 0);
+        and coalesce(existing.embedding_attempts, 0) > 0
+        and coalesce(existing.embedding_attempts, 0) < 5);
 
     insert into notesdb.search_documents (
       owner_id, note_id, source_type, source_id, source_key, source_title,
