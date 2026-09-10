@@ -64,8 +64,7 @@ export function scopedSearchPlan(auth: AuthContext, requested: SearchFilters): S
   if (isAccountWide(auth)) return { notebookIds: [], allowUnfiled: true, filters: requested, empty: false };
   const requestedIds = requested.notebookIds?.length ? requested.notebookIds : null;
   if (requestedIds && requested.unfiled === true) {
-    const notebookIds = auth.notebookIds.filter((id) => requestedIds.includes(id));
-    return { notebookIds, allowUnfiled: auth.allowUnfiled, filters: withoutScopeFilters(requested), empty: notebookIds.length === 0 && !auth.allowUnfiled };
+    return { notebookIds: [], allowUnfiled: false, filters: withoutScopeFilters(requested), empty: true };
   }
   if (requested.unfiled === true) return { notebookIds: [], allowUnfiled: auth.allowUnfiled, filters: withoutScopeFilters(requested), empty: !auth.allowUnfiled };
   const notebookIds = requestedIds ? auth.notebookIds.filter((id) => requestedIds.includes(id)) : [...auth.notebookIds];

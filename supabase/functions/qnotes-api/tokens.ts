@@ -4,6 +4,7 @@ import { authFromContext, requireUserJwt } from '../_shared/auth.ts';
 import { appDbClient, serviceClient } from '../_shared/database.ts';
 import { ApiError } from '../_shared/errors.ts';
 import { generatePersonalToken, hashPersonalToken, tokenPrefix } from '../_shared/token.ts';
+import { fetchAllRangePages } from './vault-agent-pagination.ts';
 
 function metadata(row: Record<string, unknown>, notebookIds?: string[]) {
   const accessRow = row.access && typeof row.access === 'object' && !Array.isArray(row.access) ? row.access as Record<string, unknown> : {};
@@ -33,12 +34,19 @@ export async function listTokens(context: Context): Promise<Response> {
   if (error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to list API tokens.');
   const rows = Array.isArray(data) ? data as Record<string, unknown>[] : [];
   const tokenIds = rows.map((row) => String(row.id));
-  const grants = tokenIds.length
-    ? await appDbClient.from('api_token_notebook_grants').select('token_id, notebook_id').eq('owner_id', auth.userId).in('token_id', tokenIds)
-    : { data: [], error: null };
-  if (grants.error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to list API token access grants.');
   const byToken = new Map<string, string[]>();
-  for (const grant of Array.isArray(grants.data) ? grants.data as Record<string, unknown>[] : []) {
+  const grants = tokenIds.length ? await fetchAllRangePages(async (from, to) => {
+    const result = await appDbClient.from('api_token_notebook_grants')
+      .select('token_id, notebook_id')
+      .eq('owner_id', auth.userId)
+      .in('token_id', tokenIds)
+      .order('token_id', { ascending: true })
+      .order('notebook_id', { ascending: true })
+      .range(from, to);
+    if (result.error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to list API token access grants.');
+    return Array.isArray(result.data) ? result.data as Record<string, unknown>[] : [];
+  }) : [];
+  for (const grant of grants) {
     const tokenId = String(grant.token_id);
     const ids = byToken.get(tokenId) ?? [];
     ids.push(String(grant.notebook_id));
