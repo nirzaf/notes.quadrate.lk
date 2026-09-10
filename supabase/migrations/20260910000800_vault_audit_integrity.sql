@@ -8,7 +8,7 @@ exception when duplicate_object then
 end
 $$;
 
-grant qnotes_vault_audit_maintenance to current_user;
+grant qnotes_vault_audit_maintenance to postgres;
 
 create table notesdb.vault_audit_policy (
   policy_id boolean primary key default true check (policy_id),
