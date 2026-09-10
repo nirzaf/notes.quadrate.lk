@@ -76,7 +76,15 @@ begin
     from notesdb.vault_secrets
     where id = p_secret_id and owner_id = p_owner_id
     for update;
-    if not found or secret_row.deleted_at is not null then
+    if not found then
+      perform public.qnotes_vault_record_denial(p_owner_id, p_actor_token_id, p_action, p_project_id, p_environment_id, p_secret_id, p_request_id, 'not_found');
+      if p_actor_token_id is not null then return jsonb_build_object('status', 'access_denied'); end if;
+      return jsonb_build_object('status', 'not_found');
+    end if;
+    -- Delete wrappers still need to reach their receipt lookup after a
+    -- completed soft delete so replays remain idempotent. Other actions must
+    -- fail closed for deleted resources.
+    if secret_row.deleted_at is not null and p_action <> 'secret:delete' then
       perform public.qnotes_vault_record_denial(p_owner_id, p_actor_token_id, p_action, p_project_id, p_environment_id, p_secret_id, p_request_id, 'not_found');
       if p_actor_token_id is not null then return jsonb_build_object('status', 'access_denied'); end if;
       return jsonb_build_object('status', 'not_found');
@@ -132,4 +140,3 @@ end;
 $$;
 
 revoke all on function public.qnotes_vault_authorize_actor(uuid, uuid, text, text, uuid, uuid, uuid, uuid) from public, anon, authenticated, service_role;
-grant execute on function public.qnotes_vault_authorize_actor(uuid, uuid, text, text, uuid, uuid, uuid, uuid) to service_role;
