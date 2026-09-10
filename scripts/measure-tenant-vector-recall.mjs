@@ -1,9 +1,11 @@
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createClient } from '@supabase/supabase-js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const PAGE_SIZE = 1000;
 const argument = (name) => {
   const index = process.argv.indexOf(name);
   return index >= 0 ? process.argv[index + 1] : undefined;
@@ -37,6 +39,38 @@ function requireUuid(value, name) {
   return value;
 }
 
+function embeddingInputHash(document) {
+  const input = [document.source_title, document.heading_path, document.content]
+    .map((value) => typeof value === 'string' ? value.trim() : '')
+    .filter(Boolean)
+    .join('\n\n');
+  return createHash('sha256').update(input).digest('hex');
+}
+
+function hasCurrentEmbeddingInput(document) {
+  return typeof document.embedding_input_hash === 'string'
+    && document.embedding_input_hash === embeddingInputHash(document);
+}
+
+async function readOwnerRows(db, table, columns, ownerId, applyFilters = (query) => query) {
+  const rows = [];
+  let offset = 0;
+  for (;;) {
+    let query = db.from(table)
+      .select(columns)
+      .eq('owner_id', ownerId)
+      .order('id', { ascending: true })
+      .range(offset, offset + PAGE_SIZE - 1);
+    const { data, error } = await applyFilters(query);
+    if (error) throw new Error('Local recall fixture ' + table + ' read failed: ' + error.message);
+    const page = Array.isArray(data) ? data : [];
+    if (!page.length) return rows;
+    rows.push(...page);
+    offset += page.length;
+    if (page.length < PAGE_SIZE) return rows;
+  }
+}
+
 async function main() {
   if (!process.argv.includes('--local-recall')) throw new Error('Refusing to measure outside the explicit --local-recall mode.');
   const local = JSON.parse(await readFile(join(root, '.tmp/local-env.json'), 'utf8'));
@@ -48,22 +82,23 @@ async function main() {
 
   const client = createClient(local.supabaseUrl, local.serviceRoleKey, { auth: { autoRefreshToken: false, persistSession: false } });
   const db = client.schema('notesdb');
-  const [documents, notes, blocks] = await Promise.all([
-    db.from('search_documents').select('id,note_id,source_type,source_key,embedding,embedding_mode,embedding_model,embedding_model_version,embedding_status,embedding_input_hash').eq('owner_id', ownerId).eq('embedding_status', 'ready').not('embedding', 'is', null).limit(10000),
-    db.from('notes').select('id,notebook_id,tags,deleted_at').eq('owner_id', ownerId).is('deleted_at', null).limit(10000),
-    db.from('note_blocks').select('note_id,block_key,language').eq('owner_id', ownerId).limit(10000),
+  const [documentRows, noteRows, blockRows] = await Promise.all([
+    readOwnerRows(db, 'search_documents', 'id,note_id,source_type,source_key,source_title,heading_path,content,embedding,embedding_mode,embedding_model,embedding_model_version,embedding_status,embedding_input_hash', ownerId, (query) => query.eq('embedding_status', 'ready').not('embedding', 'is', null)),
+    readOwnerRows(db, 'notes', 'id,notebook_id,tags,deleted_at', ownerId, (query) => query.is('deleted_at', null)),
+    readOwnerRows(db, 'note_blocks', 'id,note_id,block_key,language', ownerId),
   ]);
-  for (const response of [documents, notes, blocks]) if (response.error) throw new Error(`Local recall fixture read failed: ${response.error.message}`);
 
-  const noteById = new Map((notes.data ?? []).map((note) => [note.id, note]));
-  const blockLanguage = new Map((blocks.data ?? []).map((block) => [`${block.note_id}:${block.block_key}`, String(block.language ?? '').toLowerCase()]));
-  const providerRows = (documents.data ?? [])
+
+  const noteById = new Map(noteRows.map((note) => [note.id, note]));
+  const blockLanguage = new Map(blockRows.map((block) => [`${block.note_id}:${block.block_key}`, String(block.language ?? '').toLowerCase()]));
+  const providerRows = documentRows
     .filter((document) => document.embedding_mode === 'provider' && document.embedding_model === 'gte-small' && document.embedding_model_version === 'v2')
+    .filter(hasCurrentEmbeddingInput)
     .map((document) => ({ ...document, note: noteById.get(document.note_id) }))
     .filter((document) => document.note && !document.note.deleted_at)
     .map((document) => ({ ...document, embedding: parseVector(document.embedding) }));
   if (!providerRows.length) {
-    const syntheticCount = (documents.data ?? []).filter((document) => document.embedding_mode === 'synthetic-test-v1').length;
+    const syntheticCount = documentRows.filter((document) => document.embedding_mode === 'synthetic-test-v1').length;
     throw new Error(`No ready provider embeddings exist for owner ${ownerId}; found ${syntheticCount} synthetic rows. Run the probe with a local provider-backed embedding fixture.`);
   }
 

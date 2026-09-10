@@ -33,9 +33,10 @@ begin
       )
     );
 
+  perform set_config('enable_seqscan', case when p_exact then 'on' else 'off' end, true);
   perform set_config('enable_indexscan', case when p_exact then 'off' else 'on' end, true);
   perform set_config('enable_indexonlyscan', case when p_exact then 'off' else 'on' end, true);
-  perform set_config('enable_bitmapscan', case when p_exact then 'off' else 'on' end, true);
+  perform set_config('enable_bitmapscan', 'off', true);
 
   if p_exact then
     return 'exact';
@@ -168,7 +169,15 @@ declare
   candidate_count integer;
   candidate_limit integer;
   use_exact boolean;
+  old_enable_seqscan text;
+  old_enable_indexscan text;
+  old_enable_indexonlyscan text;
+  old_enable_bitmapscan text;
 begin
+  old_enable_seqscan := current_setting('enable_seqscan');
+  old_enable_indexscan := current_setting('enable_indexscan');
+  old_enable_indexonlyscan := current_setting('enable_indexonlyscan');
+  old_enable_bitmapscan := current_setting('enable_bitmapscan');
   candidate_count := public.qnotes_count_scoped_vector_candidates(
     p_owner_id,
     p_filters,
@@ -268,16 +277,67 @@ begin
       limit (select result_limit from params) offset (select result_offset from params);
 
     -- SET LOCAL remains transaction scoped; restore planner toggles before nested callers continue.
+    perform set_config('enable_seqscan', old_enable_seqscan, true);
     perform set_config('enable_indexscan', 'on', true);
-    perform set_config('enable_indexonlyscan', 'on', true);
-    perform set_config('enable_bitmapscan', 'on', true);
+    perform set_config('enable_indexscan', old_enable_indexscan, true);
+    perform set_config('enable_indexonlyscan', old_enable_indexonlyscan, true);
+    perform set_config('enable_bitmapscan', old_enable_bitmapscan, true);
   exception when others then
-    perform set_config('enable_indexscan', 'on', true);
-    perform set_config('enable_indexonlyscan', 'on', true);
-    perform set_config('enable_bitmapscan', 'on', true);
+    perform set_config('enable_seqscan', old_enable_seqscan, true);
+    perform set_config('enable_indexscan', old_enable_indexscan, true);
+    perform set_config('enable_indexonlyscan', old_enable_indexonlyscan, true);
+    perform set_config('enable_bitmapscan', old_enable_bitmapscan, true);
     raise;
   end;
 end;
+$$;
+
+create or replace function public.qnotes_semantic_search(
+  p_owner_id uuid,
+  p_query text,
+  p_embedding extensions.vector(384),
+  p_limit integer,
+  p_filters jsonb,
+  p_offset integer,
+  p_max_per_note integer
+) returns table (
+  id uuid, note_id uuid, note_slug text, note_title text, source_type text,
+  source_id uuid, source_key text, source_title text, heading_path text,
+  snippet text, score double precision, keyword_rank integer,
+  semantic_rank integer, block_key text, language text, attachment_id uuid
+)
+language sql
+security definer
+set search_path = public, extensions
+as $$
+  with requested as (
+    select
+      coalesce((select array_agg(item::uuid) from jsonb_array_elements_text(coalesce(p_filters->'notebookIds', '[]'::jsonb)) as items(item)), '{}'::uuid[]) as notebook_ids,
+      coalesce((p_filters->>'unfiled')::boolean, false) as unfiled
+  ),
+  scope as (
+    select
+      case
+        when requested.unfiled then '{}'::uuid[]
+        when cardinality(requested.notebook_ids) > 0 then requested.notebook_ids
+        else coalesce((select array_agg(n.id) from notesdb.notebooks n where n.owner_id = p_owner_id), '{}'::uuid[])
+      end as notebook_ids,
+      requested.unfiled as allow_unfiled
+    from requested
+  )
+  select scoped.*
+    from scope
+    cross join lateral public.qnotes_semantic_search_scoped(
+      p_owner_id,
+      p_query,
+      p_embedding,
+      p_limit,
+      p_filters,
+      p_offset,
+      p_max_per_note,
+      scope.notebook_ids,
+      scope.allow_unfiled
+    ) scoped;
 $$;
 
 create or replace function public.qnotes_measure_tenant_vector_recall(
@@ -304,12 +364,22 @@ declare
   ann_ms double precision;
   ann_mode text;
   overlap_count integer;
+  old_enable_seqscan text;
+  old_enable_indexscan text;
+  old_enable_indexonlyscan text;
+  old_enable_bitmapscan text;
+  measurement_settings jsonb;
 begin
-  if p_embedding is null or p_k is null or p_k < 1 or p_k > 50 then
-    raise exception using
-      errcode = '22023',
-      message = 'p_embedding is required and p_k must be between 1 and 50';
-  end if;
+  old_enable_seqscan := current_setting('enable_seqscan');
+  old_enable_indexscan := current_setting('enable_indexscan');
+  old_enable_indexonlyscan := current_setting('enable_indexonlyscan');
+  old_enable_bitmapscan := current_setting('enable_bitmapscan');
+  begin
+    if p_embedding is null or p_k is null or p_k < 1 or p_k > 50 then
+      raise exception using
+        errcode = '22023',
+        message = 'p_embedding is required and p_k must be between 1 and 50';
+    end if;
 
   select extversion
     into vector_version
@@ -376,6 +446,10 @@ begin
   exact_ms := extract(epoch from clock_timestamp() - exact_started) * 1000;
 
   ann_mode := public.qnotes_configure_hnsw_search(false);
+  perform set_config('enable_seqscan', 'off', true);
+  perform set_config('enable_indexscan', 'on', true);
+  perform set_config('enable_indexonlyscan', 'on', true);
+  perform set_config('enable_bitmapscan', 'off', true);
   ann_started := clock_timestamp();
 
   with filter_values as (
@@ -439,6 +513,19 @@ begin
     from unnest(exact_ids) exact_id
    where exact_id = any(ann_ids);
 
+  measurement_settings := jsonb_build_object(
+    'iterativeScan', current_setting('hnsw.iterative_scan', true),
+    'efSearch', current_setting('hnsw.ef_search', true),
+    'maxScanTuples', current_setting('hnsw.max_scan_tuples', true),
+    'scanMemMultiplier', current_setting('hnsw.scan_mem_multiplier', true),
+    'seqscanDisabled', current_setting('enable_seqscan') = 'off',
+    'indexscanEnabled', current_setting('enable_indexscan') = 'on'
+  );
+  perform set_config('enable_seqscan', old_enable_seqscan, true);
+  perform set_config('enable_indexscan', old_enable_indexscan, true);
+  perform set_config('enable_indexonlyscan', old_enable_indexonlyscan, true);
+  perform set_config('enable_bitmapscan', old_enable_bitmapscan, true);
+
   return jsonb_build_object(
     'k', p_k,
     'exactIds', exact_ids,
@@ -451,13 +538,15 @@ begin
     'annMs', ann_ms,
     'pgvectorVersion', vector_version,
     'annConfiguration', ann_mode,
-    'settings', jsonb_build_object(
-      'iterativeScan', current_setting('hnsw.iterative_scan', true),
-      'efSearch', current_setting('hnsw.ef_search', true),
-      'maxScanTuples', current_setting('hnsw.max_scan_tuples', true),
-      'scanMemMultiplier', current_setting('hnsw.scan_mem_multiplier', true)
-    )
+    'settings', measurement_settings
   );
+  exception when others then
+    perform set_config('enable_seqscan', old_enable_seqscan, true);
+    perform set_config('enable_indexscan', old_enable_indexscan, true);
+    perform set_config('enable_indexonlyscan', old_enable_indexonlyscan, true);
+    perform set_config('enable_bitmapscan', old_enable_bitmapscan, true);
+    raise;
+  end;
 end;
 $$;
 

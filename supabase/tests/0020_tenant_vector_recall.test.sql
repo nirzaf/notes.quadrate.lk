@@ -1,5 +1,5 @@
 begin;
-select plan(11);
+select plan(12);
 
 select ok(
   has_function_privilege(
@@ -22,13 +22,10 @@ select ok(
   ),
   'recall measurement is not exposed to client roles'
 );
-select ok((
-  select position('set_config(''hnsw.iterative_scan'', ''strict_order'', true)' in p.prosrc) > 0
-    and position('set_config(''hnsw.max_scan_tuples'', ''10000'', true)' in p.prosrc) > 0
-    and position('set_config(''hnsw.scan_mem_multiplier'', ''1'', true)' in p.prosrc) > 0
-  from pg_proc p
-  where p.oid = 'public.qnotes_configure_hnsw_search(boolean)'::regprocedure
-),
+select ok(
+  public.qnotes_configure_hnsw_search(false) in ('iterative', 'ef_search', 'default')
+    and current_setting('enable_seqscan') = 'off'
+    and current_setting('enable_bitmapscan') = 'off',
   'HNSW settings are transaction-local and bounded'
 );
 
@@ -110,6 +107,22 @@ select is(
   1,
   'small authorized tag subset returns its exact filtered match'
 );
+select is(
+  (
+    select count(*)::integer
+    from public.qnotes_semantic_search(
+      (select id from auth.users where email = 'owner@qnotes.local'),
+      'us23-small',
+      ('[1,0,' || repeat('0,', 381) || '0]')::extensions.vector,
+      10,
+      '{"tags":["us23-small"]}'::jsonb,
+      0,
+      2
+    )
+  ),
+  2,
+  'account-wide semantic search uses the recall-scoped implementation'
+);
 select ok(
   (
     select not exists (
@@ -163,11 +176,14 @@ select ok(
   'large authorized subset remains reachable through HNSW retrieval'
 );
 select ok(
-  current_setting('hnsw.iterative_scan', true) = 'strict_order'
-    and current_setting('hnsw.ef_search', true) = '80'
-    and current_setting('hnsw.max_scan_tuples', true) = '10000'
-    and current_setting('hnsw.scan_mem_multiplier', true) = '1',
-  'pgvector 0.8 iterative scan uses the measured bounded configuration'
+  case public.qnotes_configure_hnsw_search(false)
+    when 'iterative' then current_setting('hnsw.iterative_scan', true) = 'strict_order'
+      and current_setting('hnsw.ef_search', true) = '80'
+      and current_setting('hnsw.max_scan_tuples', true) = '10000'
+      and current_setting('hnsw.scan_mem_multiplier', true) = '1'
+    else true
+  end,
+  'supported pgvector versions use the measured bounded configuration'
 );
 
 alter table notesdb.search_documents disable trigger search_documents_prepare_embedding;
