@@ -68,7 +68,7 @@ export function scopedSearchPlan(auth: AuthContext, requested: SearchFilters): S
   }
   if (requested.unfiled === true) return { notebookIds: [], allowUnfiled: auth.allowUnfiled, filters: withoutScopeFilters(requested), empty: !auth.allowUnfiled };
   const notebookIds = requestedIds ? auth.notebookIds.filter((id) => requestedIds.includes(id)) : [...auth.notebookIds];
-  const allowUnfiled = requestedIds ? false : requested.unfiled === false ? false : auth.allowUnfiled;
+  const allowUnfiled = requestedIds ? false : auth.allowUnfiled;
   return { notebookIds, allowUnfiled, filters: withoutScopeFilters(requested), empty: notebookIds.length === 0 && !allowUnfiled };
 }
 
