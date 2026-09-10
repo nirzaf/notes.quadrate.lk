@@ -124,7 +124,7 @@ update notesdb.notes set deleted_at = timezone('utc', now()) where id = 'bbbbbbb
 select ok((select revoked_at is not null from notesdb.note_shares where token_hash = repeat('2', 64)), 'soft deleting a note revokes its snapshot');
 select is((select count(*)::integer from public.qnotes_resolve_note_share(repeat('2', 64))), 0, 'a deleted note cannot be resolved');
 update notesdb.notes set deleted_at = null where id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
-select is((select count(*)::integer from public.qnotes_resolve_note_share(repeat('j', 64))), 0, 'restoring a deleted note does not reactivate its snapshot');
+select is((select count(*)::integer from public.qnotes_resolve_note_share(repeat('2', 64))), 0, 'restoring a deleted note does not reactivate its snapshot');
 select is((public.qnotes_create_note_share(
   (select id from auth.users where email = 'owner@qnotes.local'),
   'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', 'qns_Uvwx1234', repeat('3', 64), timezone('utc', now()) + interval '1 hour',
@@ -135,9 +135,9 @@ select is((public.qnotes_create_note_share(
 select is((public.qnotes_revoke_note_share((select id from auth.users where email = 'owner@qnotes.local'), 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb')->>'status'), 'ok', 'an owner can revoke snapshots');
 select is((select count(*)::integer from public.qnotes_resolve_note_share(repeat('3', 64))), 0, 'a revoked snapshot does not resolve');
 
-select ok(not has_function_privilege('anon', 'public.qnotes_create_note_share(uuid,uuid,text,text,timestamptz,integer,text,text,text,text,boolean)', 'EXECUTE'), 'anon cannot execute the create snapshot RPC');
+select ok(not has_function_privilege('anon', 'public.qnotes_create_note_share(uuid,uuid,text,text,timestamptz,bigint,text,text,text,text,boolean)', 'EXECUTE'), 'anon cannot execute the create snapshot RPC');
 select ok(not has_function_privilege('authenticated', 'public.qnotes_resolve_note_share(text)', 'EXECUTE'), 'authenticated cannot execute the resolver RPC');
-select ok(has_function_privilege('service_role', 'public.qnotes_create_note_share(uuid,uuid,text,text,timestamptz,integer,text,text,text,text,boolean)', 'EXECUTE'), 'service_role can execute the create snapshot RPC');
+select ok(has_function_privilege('service_role', 'public.qnotes_create_note_share(uuid,uuid,text,text,timestamptz,bigint,text,text,text,text,boolean)', 'EXECUTE'), 'service_role can execute the create snapshot RPC');
 select ok(has_function_privilege('service_role', 'public.qnotes_resolve_note_share(text)', 'EXECUTE'), 'service_role can execute the resolver RPC');
 select ok(exists (select 1 from pg_trigger where tgrelid = 'notesdb.notes'::regclass and tgname = 'notes_revoke_share_on_delete'), 'note deletion trigger is installed');
 

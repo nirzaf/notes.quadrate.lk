@@ -3,7 +3,7 @@ export type PublicShareClassification = 'publishable' | 'sensitive';
 const SENSITIVE_CONTENT_PATTERNS = [
   /-----BEGIN(?: [A-Z0-9]+)? PRIVATE KEY-----/i,
   /\b(?:authorization|proxy-authorization)\s*:\s*bearer\s+\S+/i,
-  /\b(?:password|passwd|pwd|secret|api[_ -]?key|access[_ -]?token|auth[_ -]?token|bearer[_ -]?token|client[_ -]?secret|service[_ -]?(?:key|token|password|secret)|private[_ -]?key|encryption[_ -]?key|database[_ -]?url|connection[_ -]?string)\s*[:=]\s*['"]?[^\s'"`]+/i,
+  /(?:^|[^A-Za-z0-9])(?:password|passwd|pwd|secret|api[_ -]?key|access[_ -]?token|auth[_ -]?token|bearer[_ -]?token|client[_ -]?secret|service[_ -]?(?:key|token|password|secret)|private[_ -]?key|encryption[_ -]?key|database[_ -]?url|connection[_ -]?string)\s*[:=]\s*['"]?[^\s'"`]+/i,
   /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis|rediss|amqp|https?):\/\/[^\s'"`]+:[^\s'"`]+@/i,
   /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/,
   /\bAIza[0-9A-Za-z_-]{35}\b/,

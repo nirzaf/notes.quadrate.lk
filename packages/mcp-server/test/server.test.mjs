@@ -104,6 +104,20 @@ test('MCP create_public_share rejects sensitive notes before calling the share A
   assert.equal(shareCalls, 0);
 });
 
+test('MCP create_public_share rejects snake_case credential assignments before calling the share API', async () => {
+  let shareCalls = 0;
+  await assert.rejects(() => createPublicShareTool({
+    async getNote() {
+      return { title: 'Deployment', contentMarkdown: 'OPENAI_API_KEY=synthetic-secret-value', id: '550e8400-e29b-41d4-a716-446655440000', version: 1 };
+    },
+    async createPublicShare() {
+      shareCalls += 1;
+      throw new Error('must not be called');
+    },
+  }, { noteId: '550e8400-e29b-41d4-a716-446655440000', expectedVersion: 1, confirm: true }), /sensitive credential material/);
+  assert.equal(shareCalls, 0);
+});
+
 test('MCP create_public_share rejects qvt credentials in note Markdown before calling the share API', async () => {
   const qvtToken = `qvt_${'A'.repeat(43)}`;
   let shareCalls = 0;

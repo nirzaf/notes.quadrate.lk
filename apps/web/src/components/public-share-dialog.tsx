@@ -44,7 +44,7 @@ export function PublicShareDialog({ open, note, share, loading = false, onOpenCh
   const [expiry, setExpiry] = useState<ExpiryChoice>('7');
   const [createdLink, setCreatedLink] = useState<string | null>(null);
   const [createdMetadata, setCreatedMetadata] = useState<PublicShareMetadata | null>(null);
-  const [confirmed, setConfirmed] = useState(false);
+  const [confirmedVersion, setConfirmedVersion] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const openRef = useRef(open);
@@ -58,19 +58,28 @@ export function PublicShareDialog({ open, note, share, loading = false, onOpenCh
       setCreatedMetadata(null);
       setError(null);
       setBusy(false);
-      setConfirmed(false);
+      setConfirmedVersion(null);
     }
   }, [open]);
 
   useEffect(() => {
-    setConfirmed(false);
+    setConfirmedVersion(null);
   }, [note.id, note.version]);
 
   const create = async (): Promise<void> => {
+    const reviewedVersion = note.version;
+    if (confirmedVersion !== reviewedVersion) {
+      setError('Review and confirm the current saved note version before publishing.');
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
       const savedNote = await onBeforeCreate();
+      if (savedNote.version !== reviewedVersion) {
+        setConfirmedVersion(null);
+        throw new Error(`The note was saved as version ${savedNote.version}. Review that saved version and confirm again.`);
+      }
       const result = await api.createPublicShare(savedNote.id, { expectedVersion: savedNote.version, expiresAt: expiryDate(expiry), confirm: true });
       const publicUrl = new URL('/share', window.location.origin);
       publicUrl.hash = result.token;
@@ -130,7 +139,8 @@ export function PublicShareDialog({ open, note, share, loading = false, onOpenCh
     if (link) window.open(link, '_blank', 'noopener,noreferrer');
   };
 
-  const reviewConfirmation = <label className="q-integration-scope"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} disabled={busy} /><span><strong>Review saved version {note.version}</strong><small>Confirm that this private note version contains only content you approve for public access.</small></span></label>;
+  const confirmed = confirmedVersion === note.version;
+  const reviewConfirmation = <label className="q-integration-scope"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmedVersion(event.target.checked ? note.version : null)} disabled={busy} /><span><strong>Review saved version {note.version}</strong><small>Confirm that this private note version contains only content you approve for public access.</small></span></label>;
 
   return <Dialog open={open} onOpenChange={onOpenChange}>
     <DialogContent className="q-public-share-dialog">

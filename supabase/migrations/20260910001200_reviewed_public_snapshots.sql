@@ -2,7 +2,7 @@
 -- inaccessible until explicitly replaced; their old columns are preserved.
 
 alter table notesdb.note_shares
-  add column source_version integer,
+  add column source_version bigint,
   add column source_updated_at timestamptz,
   add column source_content_hash text,
   add column snapshot_title text,
@@ -11,8 +11,10 @@ alter table notesdb.note_shares
 
 alter table notesdb.note_shares
   add constraint note_shares_snapshot_fields_check check (
-    (source_version is null and source_updated_at is null and source_content_hash is null and snapshot_title is null and snapshot_content_markdown is null and classification is null)
-    or (expires_at is not null and source_version > 0 and source_updated_at is not null and source_content_hash ~ '^[a-f0-9]{64}$' and snapshot_title is not null and snapshot_content_markdown is not null and classification in ('publishable', 'sensitive'))
+    (
+      (source_version is null and source_updated_at is null and source_content_hash is null and snapshot_title is null and snapshot_content_markdown is null and classification is null)
+      or (expires_at is not null and source_version > 0 and source_updated_at is not null and source_content_hash ~ '^[a-f0-9]{64}$' and snapshot_title is not null and snapshot_content_markdown is not null and classification in ('publishable', 'sensitive'))
+    ) is true
   );
 
 drop index if exists notesdb.note_shares_one_active_key;
@@ -27,7 +29,7 @@ create or replace function public.qnotes_create_note_share(
   p_token_prefix text,
   p_token_hash text,
   p_expires_at timestamptz,
-  p_expected_version integer,
+  p_expected_version bigint,
   p_snapshot_title text,
   p_snapshot_content_markdown text,
   p_source_content_hash text,
@@ -120,7 +122,7 @@ as $$
   limit 1;
 $$;
 
-revoke all on function public.qnotes_create_note_share(uuid, uuid, text, text, timestamptz, integer, text, text, text, text, boolean) from public, anon, authenticated;
-grant execute on function public.qnotes_create_note_share(uuid, uuid, text, text, timestamptz, integer, text, text, text, text, boolean) to service_role;
+revoke all on function public.qnotes_create_note_share(uuid, uuid, text, text, timestamptz, bigint, text, text, text, text, boolean) from public, anon, authenticated;
+grant execute on function public.qnotes_create_note_share(uuid, uuid, text, text, timestamptz, bigint, text, text, text, text, boolean) to service_role;
 revoke all on function public.qnotes_resolve_note_share(text) from public, anon, authenticated;
 grant execute on function public.qnotes_resolve_note_share(text) to service_role;
