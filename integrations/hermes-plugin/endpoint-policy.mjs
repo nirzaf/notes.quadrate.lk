@@ -18,7 +18,7 @@ export function validateApiEndpoint(value, options = {}) {
   let pathSegments;
   try {
     const rawPath = value.match(/^[a-z][a-z\d+.-]*:\/\/[^/]*(.*)$/i)?.[1] ?? '';
-    pathSegments = [...rawPath.split('/'), ...parsed.pathname.split('/')].map((segment) => decodeURIComponent(segment));
+    pathSegments = [...decodeURIComponent(rawPath).split('/'), ...parsed.pathname.split('/').map((segment) => decodeURIComponent(segment))];
   } catch {
     throw new TypeError('The API endpoint path is malformed.');
   }

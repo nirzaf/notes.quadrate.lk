@@ -46,6 +46,7 @@ test('requires HTTPS or explicitly enabled exact loopback HTTP endpoints', async
     'https://example.test/#fragment',
     'https://example.test/functions/../qnotes-api',
     'https://example.test/functions/%2e%2e/qnotes-api',
+    'https://example.test/functions/%2f../qnotes-api',
   ]) {
     assert.throws(() => new QNotesClient({ baseUrl, getAccessToken: () => null }), /API endpoint/);
   }
