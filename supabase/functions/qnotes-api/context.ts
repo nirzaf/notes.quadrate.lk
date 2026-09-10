@@ -1,9 +1,10 @@
 import type { Context } from 'hono';
 import type { SearchContext, SearchContextContinuation, SearchSourceType } from '@qnotes/shared';
 import { boundContextSource, contextNoteChanged, contextTokenUsage, isUUID, takeContextSources, type ContextSourceInput } from '@qnotes/shared';
-import { authFromContext, requireScope } from '../_shared/auth.ts';
+import { authFromContext, requireScope, type AuthContext } from '../_shared/auth.ts';
 import { ApiError } from '../_shared/errors.ts';
 import { appDbClient } from '../_shared/database.ts';
+import { authPrincipal, canAccessNotebook, requireCursorPolicy } from '../_shared/notebook-access.ts';
 
 const DEFAULT_BEFORE = 1;
 const DEFAULT_AFTER = 1;
@@ -43,6 +44,7 @@ interface NoteRow {
   version: number;
   title: string;
   updated_at: string;
+  notebook_id: string | null;
 }
 
 function dataBody(context: Context, data: SearchContext): Response {
@@ -78,6 +80,8 @@ interface ContinuationPayload {
   noteVersion: number;
   sourceHash: string;
   nextOffset: number;
+  principal: string;
+  policyRevision: number;
 }
 
 function encodeContinuation(payload: ContinuationPayload): string {
@@ -99,6 +103,10 @@ function decodeContinuation(value: string): ContinuationPayload {
       || parsed.nextOffset < 0
       || typeof parsed.sourceHash !== 'string'
       || parsed.sourceHash.length === 0
+      || typeof parsed.principal !== 'string'
+      || typeof parsed.policyRevision !== 'number'
+      || !Number.isSafeInteger(parsed.policyRevision)
+      || parsed.policyRevision < 0
     ) throw new Error('invalid continuation');
     return {
       documentId: parsed.documentId,
@@ -106,6 +114,8 @@ function decodeContinuation(value: string): ContinuationPayload {
       noteVersion: parsed.noteVersion,
       sourceHash: parsed.sourceHash,
       nextOffset: parsed.nextOffset,
+      principal: parsed.principal,
+      policyRevision: parsed.policyRevision,
     };
   } catch {
     throw new ApiError(422, 'VALIDATION_ERROR', 'continuation is invalid or expired.');
@@ -151,22 +161,23 @@ async function loadDocument(userId: string, documentId: string): Promise<SearchD
   return data as unknown as SearchDocumentRow;
 }
 
-async function loadNote(userId: string, noteId: string): Promise<NoteRow> {
+async function loadNote(auth: AuthContext, noteId: string): Promise<NoteRow> {
   const { data, error } = await appDbClient
     .from('notes')
-    .select('id, version, title, updated_at')
+    .select('id, version, title, updated_at, notebook_id')
     .eq('id', noteId)
-    .eq('owner_id', userId)
+    .eq('owner_id', auth.userId)
     .is('deleted_at', null)
     .maybeSingle();
   if (error || !data) throw new ApiError(404, 'NOTE_NOT_FOUND', 'The owning note was not found.');
+  if (!canAccessNotebook(auth, data.notebook_id ? String(data.notebook_id) : null)) throw new ApiError(404, 'NOTE_NOT_FOUND', 'The owning note was not found.');
   return data as unknown as NoteRow;
 }
 
-async function loadNeighbors(userId: string, document: SearchDocumentRow, request: ContextRequest): Promise<{ previous: SearchDocumentRow[]; next: SearchDocumentRow[] }> {
+async function loadNeighbors(auth: AuthContext, document: SearchDocumentRow, request: ContextRequest): Promise<{ previous: SearchDocumentRow[]; next: SearchDocumentRow[] }> {
   if (document.source_type === 'note_metadata' || document.source_type === 'copy_block' || document.source_type === 'code_block') return { previous: [], next: [] };
-  const previousBase = appDbClient.from('search_documents').select('id, note_id, source_type, source_id, source_key, source_title, heading_path, content, content_hash, position, page_number').eq('owner_id', userId).eq('note_id', document.note_id).eq('source_type', document.source_type).lt('position', document.position);
-  const nextBase = appDbClient.from('search_documents').select('id, note_id, source_type, source_id, source_key, source_title, heading_path, content, content_hash, position, page_number').eq('owner_id', userId).eq('note_id', document.note_id).eq('source_type', document.source_type).gt('position', document.position);
+  const previousBase = appDbClient.from('search_documents').select('id, note_id, source_type, source_id, source_key, source_title, heading_path, content, content_hash, position, page_number').eq('owner_id', auth.userId).eq('note_id', document.note_id).eq('source_type', document.source_type).lt('position', document.position);
+  const nextBase = appDbClient.from('search_documents').select('id, note_id, source_type, source_id, source_key, source_title, heading_path, content, content_hash, position, page_number').eq('owner_id', auth.userId).eq('note_id', document.note_id).eq('source_type', document.source_type).gt('position', document.position);
   const previousScoped = document.source_id ? previousBase.eq('source_id', document.source_id) : previousBase.is('source_id', null);
   const nextScoped = document.source_id ? nextBase.eq('source_id', document.source_id) : nextBase.is('source_id', null);
   const [previousResult, nextResult] = await Promise.all([
@@ -184,19 +195,20 @@ async function loadNeighbors(userId: string, document: SearchDocumentRow, reques
   };
 }
 
-async function contextFor(userId: string, request: ContextRequest): Promise<SearchContext> {
+async function contextFor(auth: AuthContext, request: ContextRequest): Promise<SearchContext> {
   const continuation = request.continuation ? decodeContinuation(request.continuation) : null;
   if (continuation && continuation.documentId !== request.documentId) {
     throw new ApiError(422, 'VALIDATION_ERROR', 'continuation belongs to a different document.');
   }
-  const documentReference = await loadDocumentReference(userId, request.documentId);
+  if (continuation) requireCursorPolicy(auth, continuation.principal, continuation.policyRevision);
+  const documentReference = await loadDocumentReference(auth.userId, request.documentId);
   if (continuation && continuation.noteId !== documentReference.note_id) {
     throw new ApiError(422, 'VALIDATION_ERROR', 'continuation belongs to a different note.');
   }
-  const noteBefore = await loadNote(userId, documentReference.note_id);
-  const document = await loadDocument(userId, request.documentId);
-  const neighbors = continuation ? { previous: [], next: [] } : await loadNeighbors(userId, document, request);
-  const noteAfter = await loadNote(userId, document.note_id);
+  const noteBefore = await loadNote(auth, documentReference.note_id);
+  const document = await loadDocument(auth.userId, request.documentId);
+  const neighbors = continuation ? { previous: [], next: [] } : await loadNeighbors(auth, document, request);
+  const noteAfter = await loadNote(auth, document.note_id);
   if (contextNoteChanged({ version: noteBefore.version, updatedAt: noteBefore.updated_at }, { version: noteAfter.version, updatedAt: noteAfter.updated_at })) {
     throw new ApiError(409, 'NOTE_VERSION_CONFLICT', 'The note changed while context was being read. Retry the context request.', {
       currentVersion: noteAfter.version,
@@ -222,7 +234,7 @@ async function contextFor(userId: string, request: ContextRequest): Promise<Sear
   const nextOffset = offset + documentCharacters.slice(offset, offset + Array.from(center.content).length).length;
   const hasMore = nextOffset < documentCharacters.length;
   const nextContinuation: SearchContextContinuation | undefined = hasMore ? {
-    cursor: encodeContinuation({ documentId: document.id, noteId: noteAfter.id, noteVersion: noteAfter.version, sourceHash: document.content_hash, nextOffset }),
+    cursor: encodeContinuation({ documentId: document.id, noteId: noteAfter.id, noteVersion: noteAfter.version, sourceHash: document.content_hash, nextOffset, principal: authPrincipal(auth), policyRevision: auth.policyRevision }),
     noteVersion: noteAfter.version,
     sourceHash: document.content_hash,
     nextOffset,
@@ -258,7 +270,7 @@ export async function getNoteContext(context: Context): Promise<Response> {
   requireScope(auth, 'search:read');
   const query = context.req.query();
   const request = parseRequest(context.req.param('documentId'), { before: query.before, after: query.after, maxTokens: query.maxTokens, continuation: query.continuation });
-  return dataBody(context, await contextFor(auth.userId, request));
+  return dataBody(context, await contextFor(auth, request));
 }
 
 export async function postNoteContext(context: Context): Promise<Response> {
@@ -266,5 +278,5 @@ export async function postNoteContext(context: Context): Promise<Response> {
   requireScope(auth, 'search:read');
   const body = record(await context.req.json().catch(() => null));
   const request = parseRequest(body.documentId, { before: body.before, after: body.after, maxTokens: body.maxTokens, continuation: body.continuation });
-  return dataBody(context, await contextFor(auth.userId, request));
+  return dataBody(context, await contextFor(auth, request));
 }

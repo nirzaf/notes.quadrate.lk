@@ -123,16 +123,26 @@ export function assertSupabase<T>(result: { data: T; error: { message: string } 
   return result.data;
 }
 
-export function encodeCursor(value: { updatedAt: string; id: string }): string {
+export interface ResourceCursor {
+  updatedAt: string;
+  id: string;
+  principal?: string;
+  policyRevision?: number;
+}
+
+export function encodeCursor(value: ResourceCursor): string {
   return btoa(JSON.stringify(value)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
-export function decodeCursor(value: string): { updatedAt: string; id: string } {
+export function decodeCursor(value: string): ResourceCursor {
   try {
     const padded = value.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - value.length % 4) % 4);
     const parsed: unknown = JSON.parse(atob(padded));
     if (!parsed || typeof parsed !== 'object' || typeof (parsed as { updatedAt?: unknown }).updatedAt !== 'string' || typeof (parsed as { id?: unknown }).id !== 'string') throw new Error('invalid');
-    return parsed as { updatedAt: string; id: string };
+    const cursor = parsed as Partial<ResourceCursor>;
+    if (cursor.principal !== undefined && typeof cursor.principal !== 'string') throw new Error('invalid');
+    if (cursor.policyRevision !== undefined && (typeof cursor.policyRevision !== 'number' || !Number.isSafeInteger(cursor.policyRevision) || cursor.policyRevision < 0)) throw new Error('invalid');
+    return { updatedAt: cursor.updatedAt!, id: cursor.id!, ...(cursor.principal === undefined ? {} : { principal: cursor.principal }), ...(cursor.policyRevision === undefined ? {} : { policyRevision: cursor.policyRevision }) };
   } catch {
     throw new ApiError(422, 'VALIDATION_ERROR', 'cursor must be a valid opaque cursor.');
   }

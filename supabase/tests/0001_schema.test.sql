@@ -30,7 +30,7 @@ select is(
 );
 select is(
   (select array_agg(column_name order by ordinal_position)::text[] from information_schema.columns where table_schema = 'notesdb' and table_name = 'api_tokens'),
-  array['id','owner_id','name','token_prefix','token_hash','scopes','expires_at','last_used_at','revoked_at','created_at']::text[],
+  array['id','owner_id','name','token_prefix','token_hash','scopes','expires_at','last_used_at','revoked_at','created_at','access_mode','allow_unfiled','policy_revision']::text[],
   'api_tokens has the required columns'
 );
 

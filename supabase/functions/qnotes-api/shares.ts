@@ -4,7 +4,7 @@ import { authFromContext, requireScope } from '../_shared/auth.ts';
 import { appDbClient, assertSupabase, serviceClient } from '../_shared/database.ts';
 import { ApiError } from '../_shared/errors.ts';
 import { generateNoteShareToken, hashNoteShareToken, isValidNoteShareToken, noteShareTokenPrefix } from '../_shared/share-token.ts';
-import { findOwnedNote } from './notes.ts';
+import { findAuthorizedNote } from './notes.ts';
 
 const unavailableMessage = 'This shared note is unavailable. The link may be invalid, expired, or revoked.';
 
@@ -60,7 +60,7 @@ export async function getPublicShare(context: Context): Promise<Response> {
   const auth = authFromContext(context);
   requireScope(auth, 'shares:write');
   const noteId = ownerNoteId(context);
-  await findOwnedNote(auth.userId, noteId, true);
+  await findAuthorizedNote(auth, noteId, true);
   const result = await appDbClient.from('note_shares').select('id, note_id, token_prefix, expires_at, revoked_at, created_at').eq('owner_id', auth.userId).eq('note_id', noteId).is('revoked_at', null).order('created_at', { ascending: false }).limit(1).maybeSingle();
   if (result.error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to read public sharing settings.');
   return context.json({ data: result.data ? metadata(record(result.data)) : null });
@@ -70,7 +70,7 @@ export async function createPublicShare(context: Context): Promise<Response> {
   const auth = authFromContext(context);
   requireScope(auth, 'shares:write');
   const noteId = ownerNoteId(context);
-  const note = await findOwnedNote(auth.userId, noteId);
+  const note = await findAuthorizedNote(auth, noteId);
   let input;
   try {
     let body: unknown;
@@ -104,7 +104,7 @@ export async function revokePublicShare(context: Context): Promise<Response> {
   const auth = authFromContext(context);
   requireScope(auth, 'shares:write');
   const noteId = ownerNoteId(context);
-  await findOwnedNote(auth.userId, noteId, true);
+  await findAuthorizedNote(auth, noteId, true);
   assertSupabase(await serviceClient.rpc('qnotes_revoke_note_share', { p_owner_id: auth.userId, p_note_id: noteId }));
   return context.json({ data: null });
 }

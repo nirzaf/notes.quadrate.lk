@@ -1,5 +1,6 @@
 import type {
   ApiTokenMetadata,
+  ApiTokenAccess,
   Attachment,
   AppendNoteInput,
   CreateApiTokenInput,
@@ -240,7 +241,9 @@ function isSearchContextTokenBudget(value: unknown): boolean {
 function isSearchContextContinuation(value: unknown): boolean {
   return isRecord(value) && isString(value.cursor) && typeof value.noteVersion === 'number'
     && Number.isSafeInteger(value.noteVersion) && isString(value.sourceHash)
-    && typeof value.nextOffset === 'number' && Number.isSafeInteger(value.nextOffset) && value.nextOffset >= 0;
+    && typeof value.nextOffset === 'number' && Number.isSafeInteger(value.nextOffset) && value.nextOffset >= 0
+    && (value.principal === undefined || isString(value.principal))
+    && (value.policyRevision === undefined || (typeof value.policyRevision === 'number' && Number.isSafeInteger(value.policyRevision) && value.policyRevision >= 0));
 }
 
 function isSearchContext(value: unknown): value is SearchContext {
@@ -266,9 +269,14 @@ function isSyncPage(value: unknown): value is SyncPage {
     && isNullableString(change.deletedAt)) && isNullableString(value.nextCursor) && typeof value.hasMore === 'boolean';
 }
 
+function isTokenAccess(value: unknown): value is ApiTokenAccess {
+  return isRecord(value) && (value.mode === 'account' || value.mode === 'notebooks')
+    && isStringArray(value.notebookIds) && typeof value.allowUnfiled === 'boolean';
+}
+
 function isTokenMetadata(value: unknown): value is ApiTokenMetadata {
   return isRecord(value) && isString(value.id) && isString(value.name) && isString(value.tokenPrefix)
-    && isStringArray(value.scopes) && isNullableString(value.expiresAt) && isNullableString(value.lastUsedAt)
+    && isStringArray(value.scopes) && isTokenAccess(value.access) && isNullableString(value.expiresAt) && isNullableString(value.lastUsedAt)
     && isNullableString(value.revokedAt) && isString(value.createdAt);
 }
 
