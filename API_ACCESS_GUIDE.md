@@ -823,6 +823,23 @@ selector, bounded `purpose`, and `confirmPlaintext: true`; the API enforces
 the matching grant or verified human approval. Reveal responses write no
 plaintext to metadata or audit and return `Cache-Control: no-store`.
 
+Exact resource operations use `POST /vault/environments/resolve` and
+`POST /vault/secrets/resolve`. These service-mediated lookups return only the
+immutable project, environment, and optional secret IDs after checking the
+owner, actor, and requested action in one authorization transaction. They do
+not call list endpoints, so a qvt grant scoped to one secret can rotate,
+delete, reveal, or read that secret without a project enumeration grant. A
+denied lookup returns no resource metadata.
+
+Project and environment selectors accept case-insensitive slugs or immutable
+UUIDs. Unprefixed UUIDs are IDs; use `slug:<value>` for a UUID-shaped slug and
+`id:<uuid>` for an explicit ID. Secret-name lookup is case-insensitive against
+the active lower-cased uniqueness key, while the stored name casing is
+preserved. Use `name:<value>` for a UUID-shaped name. Duplicate display names
+are disambiguated by slug or immutable ID, and the resolver never selects the
+first match. The native MCP write and reveal tools apply these rules before
+calling ID-based Vault operations.
+
 The complete route table, limits, MCP profiles, and data-boundary rules are in
 [VAULT_ACCESS_GUIDE.md](VAULT_ACCESS_GUIDE.md). For the native adapter, set
 `QVAULT_TOKEN` and `QVAULT_MCP_PROFILE` explicitly, or choose the Vault profile

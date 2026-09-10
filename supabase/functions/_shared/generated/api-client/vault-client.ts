@@ -12,12 +12,15 @@ import type {
   RotateVaultSecretInput,
   VaultAgentGrant,
   VaultAgentTokenMetadata,
+  VaultAction,
   VaultAuditEvent,
   VaultEnvironment,
   VaultOperationApprovalInput,
   VaultOperationApprovalResult,
   VaultProject,
+  VaultResourceReference,
   VaultSecretMetadata,
+  VaultSecretReferenceInput,
 } from '@qnotes/shared';
 import { QNotesHttpError } from './http-error.ts';
 import type { QNotesClientOptions, RequestOptions } from './client.ts';
@@ -61,6 +64,17 @@ function isEnvironment(value: unknown): value is VaultEnvironment {
   return isRecord(value) && hasExactKeys(value, ['id', 'projectId', 'slug', 'name', 'description', 'createdAt', 'updatedAt', 'archivedAt'])
     && isString(value.id) && isString(value.projectId) && isString(value.slug) && isString(value.name)
     && isNullableString(value.description) && isString(value.createdAt) && isString(value.updatedAt) && isNullableString(value.archivedAt);
+}
+
+function isResourceReference(value: unknown): value is VaultResourceReference {
+  return isRecord(value) && hasExactKeys(value, ['projectId', 'environmentId', 'secretId'])
+    && isNullableUuid(value.projectId) && value.projectId !== null
+    && isNullableUuid(value.environmentId) && value.environmentId !== null
+    && isNullableUuid(value.secretId);
+}
+
+function isSecretResourceReference(value: unknown): value is VaultResourceReference {
+  return isResourceReference(value) && value.secretId !== null;
 }
 
 function isSecretMetadata(value: unknown): value is VaultSecretMetadata {
@@ -199,6 +213,10 @@ export class QVaultClient {
     return this.request<unknown>(`/projects/${encodeURIComponent(projectId)}/environments`, {}, options).then((value) => listPayload(value, isEnvironment, 'environments'));
   }
 
+  resolveEnvironment(project: string, environment: string, action: VaultAction, options: RequestOptions = {}): Promise<VaultResourceReference> {
+    return this.validated('/environments/resolve', isResourceReference, 'environment reference', { method: 'POST', body: JSON.stringify({ project, environment, action }) }, options);
+  }
+
   createEnvironment(projectId: string, input: Omit<CreateVaultEnvironmentInput, 'projectId'>, options: RequestOptions = {}): Promise<VaultEnvironment> {
     return this.validated(`/projects/${encodeURIComponent(projectId)}/environments`, isEnvironment, 'environment', { method: 'POST', body: JSON.stringify({ ...input, projectId }) }, options);
   }
@@ -207,12 +225,21 @@ export class QVaultClient {
     return this.request<unknown>(`/environments/${encodeURIComponent(environmentId)}/secrets`, {}, options).then((value) => listPayload(value, isSecretMetadata, 'secrets'));
   }
 
+  listSecretsBySelector(project: string, environment: string, options: RequestOptions = {}): Promise<VaultSecretMetadata[]> {
+    return this.request<unknown>(`/projects/${encodeURIComponent(project)}/environments/${encodeURIComponent(environment)}/secrets`, {}, options).then((value) => listPayload(value, isSecretMetadata, 'secrets'));
+  }
+
   createSecret(input: CreateVaultSecretInput, options: RequestOptions = {}): Promise<VaultSecretMetadata> {
     return this.validated(`/environments/${encodeURIComponent(input.environmentId)}/secrets`, isSecretMetadata, 'secret metadata', { method: 'POST', body: JSON.stringify(input) }, options);
   }
 
   getSecret(secretId: string, options: RequestOptions = {}): Promise<VaultSecretMetadata> {
     return this.validated(`/secrets/${encodeURIComponent(secretId)}`, isSecretMetadata, 'secret metadata', {}, options);
+  }
+
+  resolveSecret(input: VaultSecretReferenceInput, action: VaultAction, options: RequestOptions = {}): Promise<VaultResourceReference> {
+    const selector = 'secretId' in input ? { secretId: input.secretId } : input;
+    return this.validated('/secrets/resolve', isSecretResourceReference, 'secret reference', { method: 'POST', body: JSON.stringify({ ...selector, action }) }, options);
   }
 
   rotateSecret(secretId: string, input: RotateVaultSecretInput, options: RequestOptions = {}): Promise<VaultSecretMetadata> {

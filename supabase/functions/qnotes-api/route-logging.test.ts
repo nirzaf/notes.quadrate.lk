@@ -9,6 +9,8 @@ test('normalizes resource identifiers to route templates', () => {
   assert.equal(normalizeApiRoute('/api/search/documents/550e8400-e29b-41d4-a716-446655440000/context'), '/api/search/documents/:documentId/context');
   assert.equal(normalizeApiRoute('/public/share/resolve'), '/public/share/resolve');
   assert.equal(normalizeApiRoute('/api/import/workspace'), '/api/import/workspace');
+  assert.equal(normalizeApiRoute('/vault/environments/resolve'), '/vault/environments/resolve');
+  assert.equal(normalizeApiRoute('/vault/secrets/resolve'), '/vault/secrets/resolve');
   assert.equal(normalizeApiRoute('/api/private/550e8400-e29b-41d4-a716-446655440000'), '/api/*');
 });
 

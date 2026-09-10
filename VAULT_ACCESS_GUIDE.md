@@ -81,16 +81,67 @@ audit metadata.
 | --- | --- | --- |
 | `GET`, `POST` | `/vault/projects` | List or create projects |
 | `GET`, `POST` | `/vault/projects/:projectRef/environments` | List or create environments |
+| `POST` | `/vault/environments/resolve` | Resolve one exact project/environment reference |
 | `GET`, `POST` | `/vault/environments/:environmentId/secrets` | List or create secret metadata/value |
 | `GET`, `POST` | `/vault/projects/:projectRef/environments/:environmentRef/secrets` | Slug-based list/create |
 | `GET` | `/vault/secrets/:secretId` | Read metadata only |
 | `PATCH`, `DELETE` | `/vault/secrets/:secretId` | Rotate or delete with expected version |
+| `POST` | `/vault/secrets/resolve` | Resolve one exact secret reference |
 | `POST` | `/vault/secrets/reveal` | Reveal one value with purpose and server-side authorization |
 | `POST` | `/vault/secrets/reveal-batch` | Reveal an explicit bounded list with server-side authorization |
 | `GET`, `POST` | `/vault/agent-tokens` | List or create qvt tokens (JWT only) |
 | `DELETE` | `/vault/agent-tokens/:tokenId` | Revoke a qvt token |
 | `PATCH` | `/vault/agent-tokens/:tokenId/grants` | Replace grants |
 | `GET` | `/vault/audit` | Read audit metadata (JWT only) |
+
+### Exact resource resolution
+
+Exact Vault operations use the broker resolvers before an ID-based read or
+mutation. They do not enumerate a project, environment, or sibling secrets, so
+a qvt grant for one secret can be used without a project-wide metadata grant.
+The resolver response contains only `projectId`, `environmentId`, and, for a
+secret, `secretId`. A denied request does not include a `resource` object or
+any sibling metadata.
+
+`POST /vault/environments/resolve` accepts an environment selector and the
+requested `metadata:read` or `secret:write` action:
+
+```json
+{
+  "project": "project-slug-or-id",
+  "environment": "environment-slug-or-id",
+  "action": "secret:write"
+}
+```
+
+`POST /vault/secrets/resolve` accepts either a complete selector or an
+immutable secret ID and any Vault resource action:
+
+```json
+{ "project": "project-slug", "environment": "staging", "name": "API_KEY", "action": "secret:reveal" }
+```
+
+```json
+{ "secretId": "secret-id", "action": "secret:delete" }
+```
+
+Selectors follow these rules:
+
+- Project and environment references use a case-insensitive slug or an
+  immutable UUID. An unprefixed UUID means an ID. Use `slug:<value>` when a
+  slug itself has UUID shape, or `id:<uuid>` to make an ID reference explicit.
+- Secret names are matched case-insensitively against the active
+  lower-cased uniqueness key while the stored name casing remains unchanged.
+  Use `name:<value>` to force a UUID-shaped secret name, or `id:<uuid>` for a
+  direct secret reference.
+- Display names are never selectors. Duplicate display names are resolved by
+  their unique slug or immutable ID; no first-match selection is used.
+
+The native MCP write tools resolve the exact environment or secret and then
+call the ID-based create, rotate, or delete operation. The reveal tools use
+the same exact selector rules. List tools remain explicit metadata discovery
+operations and apply their configured metadata grant before returning rows;
+they never return secret values.
 
 `GET /vault/agent-tokens` is a JWT-only administration request. Each token
 metadata item includes its effective `grants` array, with owner-scoped project,
@@ -158,7 +209,7 @@ the presence of `QNOTES_VAULT_TOKEN_PEPPER`; any `value` field is ignored and
 secret values are never logged. A linked `supabase db query` returns
 boolean-only checks for the `supabase_vault` extension, `vault`
 schema, all seven Agent Vault metadata tables, all current service-only Vault
-RPCs including batch reveal, and each RPC's denied `anon` and `authenticated`
+RPCs including exact resource resolution and batch reveal, and each RPC's denied `anon` and `authenticated`
 execute privileges plus allowed `service_role` execute privilege.
 
 The command captures CLI stdout and stderr without logging them, rejects

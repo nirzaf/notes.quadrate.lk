@@ -17,7 +17,7 @@ import { inspectWorkspaceImport } from './imports.ts';
 import { listNotebooks, createNotebook } from './notebooks.ts';
 import { createPublicShare, getPublicShare, resolvePublicShare, revokePublicShare } from './shares.ts';
 import { authenticateVaultRequest, type VaultAuthContext } from '../_shared/vault-auth.ts';
-import { createVaultAgentToken, createVaultEnvironment, createVaultProject, createVaultSecret, createVaultSecretBySelector, deleteVaultSecret, getVaultSecret, issueVaultOperationApproval, listVaultAgentTokens, listVaultAudit, listVaultEnvironments, listVaultProjects, listVaultSecrets, listVaultSecretsBySelector, replaceVaultAgentGrants, revealVaultSecret, revealVaultSecrets, revokeVaultAgentToken, rotateVaultSecret } from './vault.ts';
+import { createVaultAgentToken, createVaultEnvironment, createVaultProject, createVaultSecret, createVaultSecretBySelector, deleteVaultSecret, getVaultSecret, issueVaultOperationApproval, listVaultAgentTokens, listVaultAudit, listVaultEnvironments, listVaultProjects, listVaultSecrets, listVaultSecretsBySelector, replaceVaultAgentGrants, resolveVaultEnvironment, resolveVaultSecret, revealVaultSecret, revealVaultSecrets, revokeVaultAgentToken, rotateVaultSecret } from './vault.ts';
 import { boundedRequest, RequestBodyTooLarge } from '../_shared/request-body.ts';
 import { enforceRequestBudget, MAX_API_REQUEST_BODY_BYTES, MAX_PUBLIC_SHARE_REQUEST_BODY_BYTES, MAX_VAULT_REQUEST_BODY_BYTES, requestClientPrincipal } from '../_shared/request-limits.ts';
 
@@ -187,6 +187,7 @@ app.get('/vault/projects', listVaultProjects);
 app.post('/vault/projects', createVaultProject);
 app.get('/vault/projects/:projectRef/environments', listVaultEnvironments);
 app.post('/vault/projects/:projectRef/environments', createVaultEnvironment);
+app.post('/vault/environments/resolve', resolveVaultEnvironment);
 app.get('/vault/environments/:environmentId/secrets', listVaultSecrets);
 app.post('/vault/environments/:environmentId/secrets', createVaultSecret);
 app.get('/vault/projects/:projectRef/environments/:environmentRef/secrets', listVaultSecretsBySelector);
@@ -194,6 +195,7 @@ app.post('/vault/projects/:projectRef/environments/:environmentRef/secrets', cre
 app.get('/vault/secrets/:secretId', getVaultSecret);
 app.patch('/vault/secrets/:secretId', rotateVaultSecret);
 app.delete('/vault/secrets/:secretId', deleteVaultSecret);
+app.post('/vault/secrets/resolve', resolveVaultSecret);
 app.post('/vault/secrets/reveal', revealVaultSecret);
 app.post('/vault/secrets/reveal-batch', revealVaultSecrets);
 app.post('/vault/approvals', issueVaultOperationApproval);

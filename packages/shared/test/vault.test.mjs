@@ -5,6 +5,8 @@ import {
   MAX_VAULT_BATCH_REVEAL,
   MAX_VAULT_SECRET_BYTES,
   isVaultAgentToken,
+  parseVaultResourceReference,
+  parseVaultSecretReference,
   normalizeVaultSecretName,
   validateCreateVaultProjectInput,
   validateCreateVaultSecretInput,
@@ -26,6 +28,27 @@ test('Vault contracts enforce bounded names, secret bytes, and exact qvt credent
   assert.equal(MAX_VAULT_SECRET_BYTES, 65_536);
   assert.equal(MAX_VAULT_BATCH_REVEAL, 20);
   assert.equal(MAX_VAULT_BATCH_BYTES, 262_144);
+});
+
+test('Vault selectors distinguish IDs from slugs and preserve case-insensitive secret lookup', () => {
+  assert.deepEqual(parseVaultResourceReference(' Pearl-Blanc ', 'project reference', 80), { slug: 'pearl-blanc' });
+  assert.deepEqual(parseVaultResourceReference(`id:${projectId.toUpperCase()}`, 'project reference', 80), { id: projectId });
+  assert.deepEqual(parseVaultResourceReference(`slug:${projectId}`, 'project reference', 80), { slug: projectId });
+  assert.deepEqual(parseVaultSecretReference(' name:cloudflare_api_token '), { name: 'cloudflare_api_token' });
+  assert.deepEqual(parseVaultSecretReference(`id:${mutationId.toUpperCase()}`), { id: mutationId });
+  assert.deepEqual(parseVaultSecretReference(`name:${mutationId}`), { name: mutationId });
+  assert.deepEqual(validateRevealVaultSecretsInput({
+    secrets: [{ project: projectId, environment: ' Production ', name: ' key ' }],
+    purpose: 'canonical reference test',
+  }).secrets[0], { project: `id:${projectId}`, environment: 'production', name: 'key' });
+  assert.deepEqual(validateRevealVaultSecretsInput({
+    secrets: [{ project: 'pearl-blanc', environment: 'production', name: `id:${mutationId}` }],
+    purpose: 'immutable secret reference test',
+  }).secrets[0], { project: 'pearl-blanc', environment: 'production', name: `id:${mutationId}` });
+  assert.deepEqual(validateRevealVaultSecretsInput({
+    secrets: [{ project: `slug:${projectId}`, environment: `slug:${environmentId}`, name: `name:${mutationId}` }],
+    purpose: 'explicit UUID-shaped selector test',
+  }).secrets[0], { project: `slug:${projectId}`, environment: `slug:${environmentId}`, name: `name:${mutationId}` });
 });
 
 test('Vault validators normalize safe metadata and preserve secret values only in secret inputs', () => {
