@@ -246,8 +246,10 @@ begin
       new.embedding_status := 'pending';
       new.embedding_error := null;
       should_queue := true;
-    else
+    elsif coalesce(new.embedding_attempts, 0) >= 5 then
       new.embedding_queued_at := null;
+    else
+      new.embedding_queued_at := coalesce(new.embedding_queued_at, timezone('utc', now()));
     end if;
   elsif new.embedding_status = 'ready' then
     if new.embedding is null

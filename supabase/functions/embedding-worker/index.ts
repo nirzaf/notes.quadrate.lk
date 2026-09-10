@@ -107,7 +107,12 @@ async function processMessage(message: { message_id: number; read_count: number;
     const expectedAttempt = modeMismatch ? 0 : Number(document.embedding_attempts ?? 0);
     const { data: claimed, error: claimError } = await appDbClient
       .from('search_documents')
-      .update({ embedding_status: 'pending', embedding_attempts: expectedAttempt + 1, embedding_mode: embeddingMode })
+      .update({
+        embedding_status: 'pending',
+        embedding_attempts: expectedAttempt + 1,
+        embedding_mode: embeddingMode,
+        embedding_queued_at: new Date().toISOString(),
+      })
       .eq('id', job.searchDocumentId)
       .eq('owner_id', job.ownerId)
       .eq('content_hash', job.contentHash)
@@ -133,6 +138,7 @@ async function processMessage(message: { message_id: number; read_count: number;
         .eq('embedding_mode', embeddingMode)
         .eq('embedding_attempts', MAX_PROVIDER_ATTEMPTS)
         .eq('embedding_status', 'pending')
+        .lte('embedding_queued_at', new Date(Date.now() - WORKER_VISIBILITY_LEASE_SECONDS * 1000).toISOString())
         .select('id')
         .maybeSingle();
       if (terminalError) throw terminalError;

@@ -1,5 +1,5 @@
 begin;
-select plan(10);
+select plan(14);
 
 select has_column('notesdb', 'search_documents', 'embedding_attempts', 'search documents track provider attempts separately from queue reads');
 select has_column('notesdb', 'search_documents', 'embedding_mode', 'search documents identify synthetic test vectors separately');
@@ -22,6 +22,53 @@ select ok(
   position('embedding_mode = ''provider''' in pg_get_functiondef('public.qnotes_hybrid_search(uuid,text,extensions.vector,integer,integer,jsonb,integer,integer)'::regprocedure)) > 0,
   'hybrid search excludes synthetic vectors'
 );
+
+insert into notesdb.notes (
+  id, owner_id, slug, title, content_markdown, content_plain, tags,
+  version, last_mutation_id, updated_by_device_id
+) values (
+  '88888888-8888-4888-8888-888888888801',
+  (select id from auth.users where email = 'owner@qnotes.local'),
+  'us26-synthetic-isolation', 'US26 Synthetic Isolation',
+  'synthetic-vector-marker', 'synthetic-vector-marker', '{}',
+  1, gen_random_uuid(), gen_random_uuid()
+);
+insert into notesdb.search_documents (
+  id, owner_id, note_id, source_type, source_key, source_title, content,
+  content_hash, position, embedding, embedding_status, embedding_model,
+  embedding_model_version, embedding_input_hash
+) values (
+  '88888888-8888-4888-8888-888888888802',
+  (select id from auth.users where email = 'owner@qnotes.local'),
+  '88888888-8888-4888-8888-888888888801', 'note_chunk', 'us26-synthetic',
+  'US26 Synthetic Isolation', 'synthetic-vector-marker', 'us26-synthetic-hash',
+  0, ('[' || repeat('0,', 383) || '0]')::extensions.vector, 'ready',
+  'gte-small', 'v2',
+  public.qnotes_embedding_input_hash('US26 Synthetic Isolation', null, 'synthetic-vector-marker')
+);
+update notesdb.search_documents
+set embedding_mode = 'synthetic-test-v1'
+where id = '88888888-8888-4888-8888-888888888802';
+select is((select count(*)::integer from public.qnotes_semantic_search(
+  (select id from auth.users where email = 'owner@qnotes.local'),
+  'synthetic-vector-marker', ('[' || repeat('0,', 383) || '0]')::extensions.vector,
+  10, '{}'::jsonb, 0, 2
+)), 0, 'provider semantic search excludes synthetic vectors');
+select is((select count(*)::integer from public.qnotes_semantic_search(
+  (select id from auth.users where email = 'owner@qnotes.local'),
+  'synthetic-vector-marker', ('[' || repeat('0,', 383) || '0]')::extensions.vector,
+  10, '{"embeddingMode":"synthetic-test-v1"}'::jsonb, 0, 2
+)), 1, 'explicit synthetic semantic search includes synthetic vectors');
+select is((select count(*)::integer from public.qnotes_hybrid_search(
+  (select id from auth.users where email = 'owner@qnotes.local'),
+  'synthetic-vector-marker', ('[' || repeat('0,', 383) || '0]')::extensions.vector,
+  10, 60
+)), 0, 'provider hybrid search excludes synthetic vectors');
+select is((select count(*)::integer from public.qnotes_hybrid_search(
+  (select id from auth.users where email = 'owner@qnotes.local'),
+  'synthetic-vector-marker', ('[' || repeat('0,', 383) || '0]')::extensions.vector,
+  10, 60, '{"embeddingMode":"synthetic-test-v1"}'::jsonb, 0, 2
+)), 1, 'explicit synthetic hybrid search includes synthetic vectors');
 
 select * from finish();
 rollback;
