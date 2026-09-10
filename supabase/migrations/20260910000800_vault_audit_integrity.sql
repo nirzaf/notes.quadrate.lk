@@ -8,6 +8,8 @@ exception when duplicate_object then
 end
 $$;
 
+grant qnotes_vault_audit_maintenance to current_user;
+
 create table notesdb.vault_audit_policy (
   policy_id boolean primary key default true check (policy_id),
   policy_revision text not null default 'vault-audit-v1' check (policy_revision ~ '^[a-z0-9][a-z0-9._-]{0,63}$'),
