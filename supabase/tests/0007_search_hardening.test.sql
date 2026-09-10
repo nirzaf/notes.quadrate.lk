@@ -1,5 +1,5 @@
 begin;
-select plan(37);
+select plan(38);
 
 -- Stable create input, including a title that falls back to note-untitled in
 -- the API, is idempotent even when the retry supplies a fresh candidate ID.
@@ -224,6 +224,11 @@ values
   ('77777777-7777-4777-8777-777777777747', (select id from auth.users where email = 'owner@qnotes.local'), '77777777-7777-4777-8777-777777777740', 'us11/unsupported/file.bin', 'unsupported.bin', 'application/octet-stream', 4, null, 'unsupported'),
   ('77777777-7777-4777-8777-777777777748', (select id from auth.users where email = 'owner@qnotes.local'), '77777777-7777-4777-8777-777777777740', 'us11/deleted/file.txt', 'deleted.txt', 'text/plain', 4, 'us11-deleted-checksum', 'deleted');
 update notesdb.attachments set deleted_at = '2026-01-03T00:00:00Z' where id = '77777777-7777-4777-8777-777777777748';
+select throws_ok(
+  $$select * from public.qnotes_repair_attachment_search(p_dry_run => false, p_batch_size => 100)$$,
+  'P0001', 'operation_id is required for mutating repair',
+  'mutating repair requires an explicit operation identity'
+);
 select ok((select count(*) = 1 and bool_and(action = 'would_requeue') from public.qnotes_repair_attachment_search('77777777-7777-4777-8777-777777777749', true, 100)), 'dry-run repair reports only active ready attachments missing search documents');
 select is((select action from public.qnotes_repair_attachment_search('77777777-7777-4777-8777-777777777749', false, 100)), 'requeued', 'approved repair requeues the missing attachment');
 select is((select count(*)::integer from pgmq.read('attachment-processing', 0, 100) where message->>'attachmentId' = '77777777-7777-4777-8777-777777777746' and message->>'repairOperationId' = '77777777-7777-4777-8777-777777777749'), 1, 'repair queue message carries the stable operation identity');

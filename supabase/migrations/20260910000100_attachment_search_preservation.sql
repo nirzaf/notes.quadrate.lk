@@ -227,7 +227,7 @@ grant execute on function public.qnotes_remove_attachment_search_documents() to 
 
 
 create or replace function public.qnotes_repair_attachment_search(
-  p_operation_id uuid default gen_random_uuid(),
+  p_operation_id uuid default null,
   p_dry_run boolean default true,
   p_batch_size integer default 100
 )
@@ -246,11 +246,13 @@ declare
   candidate record;
   inserted boolean;
 begin
-  if p_operation_id is null then
-    raise exception using message = 'operation_id is required';
-  end if;
   if p_dry_run is null then
     raise exception using message = 'dry_run is required';
+  end if;
+  if p_dry_run then
+    p_operation_id := coalesce(p_operation_id, gen_random_uuid());
+  elsif p_operation_id is null then
+    raise exception using message = 'operation_id is required for mutating repair';
   end if;
   if p_batch_size is null or p_batch_size < 1 or p_batch_size > 1000 then
     raise exception using message = 'batch_size must be between 1 and 1000';
