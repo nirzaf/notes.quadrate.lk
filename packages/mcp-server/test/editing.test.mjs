@@ -23,7 +23,8 @@ test('MCP editing tools preserve bounded discovery and caller-owned mutation ide
   const preview = await previewNoteSectionTool(client, { noteId: 'note-1', sectionId: 'section-1', expectedVersion: 2, expectedContentHash: 'a'.repeat(64), replacementMarkdown: 'changed', mutationId: '550e8400-e29b-41d4-a716-446655440005' }, { deviceId: '550e8400-e29b-41d4-a716-446655440002' });
   const patch = await patchNoteSectionTool(client, { noteId: 'note-1', sectionId: 'section-1', expectedVersion: 2, expectedContentHash: 'a'.repeat(64), replacementMarkdown: 'changed', mutationId: '550e8400-e29b-41d4-a716-446655440001' }, { deviceId: '550e8400-e29b-41d4-a716-446655440002' });
 
-  assert.equal(discovered.structuredContent.effectiveProfile, 'write');
+  assert.equal(discovered.structuredContent.effectiveProfile, 'read');
+  assert.deepEqual(discovered.structuredContent.supportedOperations, ['get_capabilities']);
   assert.deepEqual(listed.structuredContent, outline);
   assert.equal(status.structuredContent.status, 'committed');
   assert.deepEqual(changes.structuredContent, { changes: [], nextCursor: null, hasMore: false });

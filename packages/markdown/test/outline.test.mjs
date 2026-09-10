@@ -53,3 +53,9 @@ test('rejects a missing or stale section anchor before producing a patch', async
   await assert.rejects(() => patchMarkdownSection(markdown, 'section-missing', section.contentHash, 'replacement'), (error) => error instanceof MarkdownPatchError && error.code === 'SECTION_NOT_FOUND');
   await assert.rejects(() => patchMarkdownSection(markdown, section.sectionId, '0'.repeat(64), 'replacement'), (error) => error instanceof MarkdownPatchError && error.code === 'SECTION_HASH_MISMATCH');
 });
+
+test('ignores indented code headings and compacts skipped heading levels', async () => {
+  const outline = await getMarkdownOutline('    # code\n# Root\n### Child');
+  assert.deepEqual(outline.sections.map((section) => section.heading), ['Root', 'Child']);
+  assert.deepEqual(outline.sections[1]?.headingPath, ['Root', 'Child']);
+});

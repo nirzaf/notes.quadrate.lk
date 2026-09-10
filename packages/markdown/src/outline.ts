@@ -26,7 +26,7 @@ export class MarkdownPatchError extends Error {
 }
 
 function headingMatch(line: string): RegExpMatchArray | null {
-  return line.match(/^\s*(#{1,6})\s+(.+?)\s*#*\s*$/);
+  return line.match(/^ {0,3}(#{1,6})\s+(.+?)\s*#*\s*$/);
 }
 
 function isCopyOpening(line: string): boolean {
@@ -74,7 +74,7 @@ function collectHeadings(lines: string[]): Heading[] {
     const heading = match[2]?.trim() ?? '';
     headings.length = level - 1;
     headings[level - 1] = heading;
-    const headingPath = [...headings];
+    const headingPath = headings.filter((value): value is string => value !== undefined);
     const identity = `${level}\0${headingPath.join('\0')}`;
     const occurrence = occurrences.get(identity) ?? 0;
     occurrences.set(identity, occurrence + 1);
@@ -93,16 +93,27 @@ async function sectionRanges(markdown: string): Promise<{ normalized: string; li
   const lines = normalized.split('\n');
   const headings = collectHeadings(lines);
   const sections: SectionRange[] = [];
+  const boundaryIndexes = Array.from({ length: headings.length }, () => headings.length);
+  const openHeadings: number[] = [];
+  for (let index = 0; index < headings.length; index += 1) {
+    while (openHeadings.length > 0) {
+      const last = openHeadings[openHeadings.length - 1]!;
+      if (headings[last]!.level < headings[index]!.level) break;
+      boundaryIndexes[openHeadings.pop()!] = index;
+    }
+    openHeadings.push(index);
+  }
 
   for (let index = 0; index < headings.length; index += 1) {
     const heading = headings[index]!;
-    const nextSection = headings.slice(index + 1).find((candidate) => candidate.level <= heading.level);
-    const fullEnd = nextSection?.index === undefined ? lines.length - 1 : nextSection.index - 1;
-    const firstChild = headings.slice(index + 1).find((candidate) => candidate.index <= fullEnd && candidate.level > heading.level);
+    const boundaryIndex = boundaryIndexes[index] ?? headings.length;
+    const fullEnd = boundaryIndex < headings.length ? headings[boundaryIndex]!.index - 1 : lines.length - 1;
+    const nextHeading = headings[index + 1];
+    const firstChild = nextHeading && nextHeading.level > heading.level ? nextHeading : undefined;
     const bodyStart = heading.index + 1;
     const bodyEnd = firstChild ? firstChild.index - 1 : fullEnd;
     const content = bodyStart <= bodyEnd ? lines.slice(bodyStart, bodyEnd + 1).join('\n') : '';
-    const childCount = headings.slice(index + 1).filter((candidate) => candidate.index <= fullEnd && candidate.level > heading.level).length;
+    const childCount = boundaryIndex - index - 1;
     sections.push({
       sectionId: await sectionId(heading),
       level: heading.level,

@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import { deriveSlug, isUUID, MAX_PATCH_REPLACEMENT_BYTES, MAX_SEARCH_LIMIT, MAX_SYNC_LIMIT, normalizeSlug, QNotesValidationError, validateAppendNoteInput, validateCreateNoteInput, validateListNotesQuery, validateMoveNoteToNotebookInput, validatePatchNoteSectionInput, validateUpdateNoteInput, validateVersionedMutation, type ApiTokenScope, type CreateNoteInput, type PatchNoteSectionInput } from '@qnotes/shared';
+import { deriveSlug, isUUID, MAX_MARKDOWN_CODE_UNITS, MAX_PATCH_REPLACEMENT_BYTES, MAX_SEARCH_LIMIT, MAX_SYNC_LIMIT, normalizeSlug, QNotesValidationError, validateAppendNoteInput, validateCreateNoteInput, validateListNotesQuery, validateMoveNoteToNotebookInput, validatePatchNoteSectionInput, validateUpdateNoteInput, validateVersionedMutation, type ApiTokenScope, type CreateNoteInput, type PatchNoteSectionInput } from '@qnotes/shared';
 import { getMarkdownOutline, MarkdownParseError, MarkdownPatchError, parseMarkdown, patchMarkdownSection } from '@qnotes/markdown';
 import { authFromContext, requireScope } from '../_shared/auth.ts';
 import { ApiError } from '../_shared/errors.ts';
@@ -35,6 +35,7 @@ function noteFromRpc(value: unknown): ReturnType<typeof noteFromRow> {
 
 const ALL_API_SCOPES: ApiTokenScope[] = ['notes:read', 'notes:write', 'search:read', 'shares:write', 'attachments:read', 'attachments:write'];
 const MAX_OUTLINE_SECTIONS = 500;
+const MAX_OUTLINE_BLOCKS = 500;
 const WRITE_OPERATIONS = ['capture_note', 'append_note', 'update_note', 'preview_note_section', 'patch_note_section', 'delete_note', 'restore_note', 'move_note_to_notebook'];
 
 function hasScope(auth: ReturnType<typeof authFromContext>, scope: ApiTokenScope): boolean {
@@ -195,7 +196,8 @@ export async function getCapabilities(context: Context): Promise<Response> {
   const auth = authFromContext(context);
   const supportedOperations = ['get_capabilities', 'resolve_public_share'];
   if (hasScope(auth, 'search:read')) supportedOperations.push('search_notes', 'read_note_context');
-  if (hasScope(auth, 'notes:read')) supportedOperations.push('get_block', 'list_notebooks', 'list_note_changes', 'get_note_outline', 'get_mutation_status');
+  if (hasScope(auth, 'notes:read')) supportedOperations.push('get_block', 'list_notebooks', 'list_note_changes', 'get_note_outline');
+  if (hasScope(auth, 'notes:read') || hasScope(auth, 'notes:write')) supportedOperations.push('get_mutation_status');
   if (hasScope(auth, 'notes:write')) supportedOperations.push(...WRITE_OPERATIONS);
   if (hasScope(auth, 'shares:write')) supportedOperations.push('create_public_share');
   return dataBody(context, {
@@ -223,8 +225,8 @@ export async function getNoteOutline(context: Context): Promise<Response> {
     noteVersion: note.version,
     markdownHash: outline.markdownHash,
     sections: outline.sections.slice(0, MAX_OUTLINE_SECTIONS),
-    blocks: outline.blocks,
-    truncated: outline.sections.length > MAX_OUTLINE_SECTIONS,
+    blocks: outline.blocks.slice(0, MAX_OUTLINE_BLOCKS),
+    truncated: outline.sections.length > MAX_OUTLINE_SECTIONS || outline.blocks.length > MAX_OUTLINE_BLOCKS,
   });
 }
 
@@ -252,6 +254,7 @@ export async function previewNoteSection(context: Context): Promise<Response> {
     if (error instanceof MarkdownParseError) throw new ApiError(422, error.code, error.message, error.details);
     throw error;
   }
+  if (patchedMarkdown.length > MAX_MARKDOWN_CODE_UNITS) throw new ApiError(422, 'VALIDATION_ERROR', 'contentMarkdown is too large.');
   return dataBody(context, {
     noteId,
     currentVersion: currentNote.version,
@@ -312,6 +315,7 @@ export async function patchNoteSection(context: Context): Promise<Response> {
     if (error instanceof MarkdownPatchError) throw new ApiError(409, 'NOTE_SECTION_CONFLICT', 'The note section is stale or ambiguous.', { currentVersion: currentNote.version });
     throw error;
   }
+  if (patchedMarkdown.length > MAX_MARKDOWN_CODE_UNITS) throw new ApiError(422, 'VALIDATION_ERROR', 'contentMarkdown is too large.');
   const result = await applyNoteUpdate(auth.userId, noteId, {
     title: currentNote.title,
     slug: currentNote.slug,

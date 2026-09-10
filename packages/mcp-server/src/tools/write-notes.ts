@@ -26,7 +26,7 @@ export interface WriteToolOptions {
 
 const MCP_DEVICE_ID = crypto.randomUUID();
 
-function deviceId(args: { deviceId?: string }, options?: WriteToolOptions): string {
+export function deviceId(args: { deviceId?: string }, options?: WriteToolOptions): string {
   return args.deviceId ?? options?.deviceId ?? MCP_DEVICE_ID;
 }
 

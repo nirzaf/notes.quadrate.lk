@@ -2,21 +2,16 @@ import type { PatchNoteSectionInput, QNotesCapabilities, QNotesCapabilityProfile
 import { DEFAULT_SYNC_LIMIT } from '@qnotes/shared';
 import { capabilitiesSchema, mutationAcknowledgmentSchema, mutationStatusSchema, noteOutlineSchema, noteSectionPatchPreviewSchema, syncPageSchema } from '../contracts.ts';
 import { toolResult, type ReadQNotesClient } from './common.ts';
-import type { WriteQNotesClient, WriteToolOptions } from './write-notes.ts';
-
-const MCP_DEVICE_ID = crypto.randomUUID();
-
-function deviceId(args: { deviceId?: string }, options?: WriteToolOptions): string {
-  return args.deviceId ?? options?.deviceId ?? MCP_DEVICE_ID;
-}
+import { deviceId, type WriteQNotesClient, type WriteToolOptions } from './write-notes.ts';
 
 function acknowledgment(note: { id: string; title: string; version: number }, mutationId: string, outcome: 'applied' | 'idempotent') {
   return { noteId: note.id, title: note.title, resultingVersion: note.version, mutationId, outcome, uri: `qnotes://notes/${note.id}` };
 }
 
-export async function getCapabilitiesTool(client: ReadQNotesClient, profile: QNotesCapabilityProfile, supportedOperations: readonly string[]) {
+export async function getCapabilitiesTool(client: ReadQNotesClient, _profile: QNotesCapabilityProfile, supportedOperations: readonly string[]) {
   const capabilities = await client.getCapabilities();
-  const result: QNotesCapabilities = { ...capabilities, effectiveProfile: profile, supportedOperations: [...supportedOperations] };
+  const localOperations = new Set(supportedOperations);
+  const result: QNotesCapabilities = { ...capabilities, supportedOperations: capabilities.supportedOperations.filter((operation) => localOperations.has(operation)) };
   return toolResult(result, capabilitiesSchema);
 }
 
