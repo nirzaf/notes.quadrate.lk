@@ -647,7 +647,7 @@ begin
   for document_record in
     select d.id, d.note_id, d.owner_id, d.source_type, d.source_id,
       d.source_key, d.source_title, d.heading_path, d.content, d.content_hash,
-      d.position, d.page_number
+      d.position, d.page_number, d.embedding_input_hash
     from notesdb.search_documents d
     join notesdb.notes n on n.id = d.note_id and n.owner_id = d.owner_id and n.deleted_at is null
     where d.embedding_input_hash is distinct from public.qnotes_embedding_input_hash(d.source_title, d.heading_path, d.content)
@@ -673,6 +673,29 @@ begin
     -- documents; avoid holding a document row lock across that call.
     if not pg_try_advisory_xact_lock(hashtextextended(document_record.id::text, 0)) then
       continue;
+    end if;
+    if document_record.source_type <> 'attachment_chunk' then
+      -- Match note updates' note-then-document lock order, then refresh the
+      -- candidate after waiting so a stale snapshot cannot overwrite it.
+      perform 1
+      from notesdb.notes n
+      where n.id = document_record.note_id
+        and n.owner_id = document_record.owner_id
+        and n.deleted_at is null
+      for update;
+      if not found then
+        continue;
+      end if;
+      select d.id, d.note_id, d.owner_id, d.source_type, d.source_id,
+        d.source_key, d.source_title, d.heading_path, d.content, d.content_hash,
+        d.position, d.page_number, d.embedding_input_hash
+      into document_record
+      from notesdb.search_documents d
+      where d.id = document_record.id
+      for update;
+      if not found or document_record.embedding_input_hash is not distinct from public.qnotes_embedding_input_hash(document_record.source_title, document_record.heading_path, document_record.content) then
+        continue;
+      end if;
     end if;
     if octet_length(public.qnotes_embedding_input(document_record.source_title, document_record.heading_path, document_record.content)) > 496 then
       if document_record.source_type = 'attachment_chunk' and document_record.source_id is not null then
