@@ -229,11 +229,11 @@ test('keeps caller-owned share management authenticated and validates safe metad
     return jsonResponse({ data: metadata });
   } });
   assert.deepEqual(await client.getPublicShare('note-1'), metadata);
-  assert.deepEqual(await client.createPublicShare('note-1', { expiresAt: null }), { token: 'qns_A'.padEnd(47, 'a'), metadata });
+  assert.deepEqual(await client.createPublicShare('note-1', { expectedVersion: 2, expiresAt: '2026-02-01T00:00:00.000Z', confirm: true }), { token: 'qns_A'.padEnd(47, 'a'), metadata });
   await client.revokePublicShare('note-1');
   assert.equal(calls[0].url, 'https://example.test/api/notes/note-1/share');
   assert.equal(calls[0].init.headers.get('Authorization'), 'Bearer qnt_synthetic-share-token');
-  assert.deepEqual(JSON.parse(calls[1].init.body), { expiresAt: null });
+  assert.deepEqual(JSON.parse(calls[1].init.body), { expectedVersion: 2, expiresAt: '2026-02-01T00:00:00.000Z', confirm: true });
   assert.equal(calls[2].init.method, 'DELETE');
 });
 

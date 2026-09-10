@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import { isUUID, QNotesValidationError, validateCreatePublicShareInput } from '@qnotes/shared';
+import { classifyPublicShareContent, hashPublicShareContent, isUUID, QNotesValidationError, validateCreatePublicShareInput } from '@qnotes/shared';
 import { authFromContext, requireScope } from '../_shared/auth.ts';
 import { appDbClient, assertSupabase, serviceClient } from '../_shared/database.ts';
 import { ApiError } from '../_shared/errors.ts';
@@ -61,7 +61,7 @@ export async function getPublicShare(context: Context): Promise<Response> {
   requireScope(auth, 'shares:write');
   const noteId = ownerNoteId(context);
   await findAuthorizedNote(auth, noteId, true);
-  const result = await appDbClient.from('note_shares').select('id, note_id, token_prefix, expires_at, revoked_at, created_at').eq('owner_id', auth.userId).eq('note_id', noteId).is('revoked_at', null).order('created_at', { ascending: false }).limit(1).maybeSingle();
+  const result = await appDbClient.from('note_shares').select('id, note_id, token_prefix, expires_at, revoked_at, created_at').eq('owner_id', auth.userId).eq('note_id', noteId).is('revoked_at', null).not('snapshot_content_markdown', 'is', null).order('created_at', { ascending: false }).limit(1).maybeSingle();
   if (result.error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to read public sharing settings.');
   return context.json({ data: result.data ? metadata(record(result.data)) : null });
 }
@@ -84,6 +84,12 @@ export async function createPublicShare(context: Context): Promise<Response> {
     if (error instanceof QNotesValidationError) throw new ApiError(422, 'VALIDATION_ERROR', error.message);
     throw error;
   }
+  if (input.expectedVersion !== note.version) {
+    throw new ApiError(409, 'NOTE_VERSION_CONFLICT', 'The note changed after it was reviewed.', { currentVersion: note.version });
+  }
+  const classification = classifyPublicShareContent(note.title, note.contentMarkdown);
+  if (classification === 'sensitive') throw new ApiError(422, 'PUBLIC_SHARE_SENSITIVE', 'This note is classified as sensitive and cannot be publicly shared.');
+  const contentHash = await hashPublicShareContent(note.title, note.contentMarkdown);
   const token = generateNoteShareToken();
   const tokenHash = await hashNoteShareToken(token);
   const result = assertSupabase(await serviceClient.rpc('qnotes_create_note_share', {
@@ -92,9 +98,19 @@ export async function createPublicShare(context: Context): Promise<Response> {
     p_token_prefix: noteShareTokenPrefix(token),
     p_token_hash: tokenHash,
     p_expires_at: input.expiresAt,
+    p_expected_version: input.expectedVersion,
+    p_snapshot_title: note.title,
+    p_snapshot_content_markdown: note.contentMarkdown,
+    p_source_content_hash: contentHash,
+    p_classification: classification,
+    p_confirm: input.confirm,
   }));
   const data = record(result);
   if (data.status === 'not_found') throw new ApiError(404, 'NOTE_NOT_FOUND', 'The note was not found.');
+  if (data.status === 'version_conflict') throw new ApiError(409, 'NOTE_VERSION_CONFLICT', 'The note changed after it was reviewed.', { currentVersion: data.currentVersion });
+  if (data.status === 'not_confirmed') throw new ApiError(422, 'VALIDATION_ERROR', 'Explicit confirmation is required after reviewing the saved note.');
+  if (data.status === 'sensitive') throw new ApiError(422, 'PUBLIC_SHARE_SENSITIVE', 'This note is classified as sensitive and cannot be publicly shared.');
+  if (data.status === 'invalid_snapshot') throw new ApiError(422, 'VALIDATION_ERROR', 'The reviewed note snapshot was invalid.');
   if (data.status === 'invalid_expiry') throw new ApiError(422, 'VALIDATION_ERROR', 'expiresAt must be in the future and within one year.');
   if (data.status !== 'ok' || !data.share) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to create public share.');
   return context.json({ data: { token, metadata: metadata(record(data.share)) } }, 201);

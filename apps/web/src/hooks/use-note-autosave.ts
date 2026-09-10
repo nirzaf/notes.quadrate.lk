@@ -517,10 +517,11 @@ export function useNoteAutosave({ note, onSaved, onConflict, onDirtyChange, read
     coordinatorRef.current?.schedule(currentPayload());
   }, []);
 
-  const flush = useCallback(async () => {
+  const flush = useCallback(async (): Promise<Note> => {
     if (reconciliationBlockedRef.current) throw new Error('Resolve the note conflict before saving.');
     try {
       await (coordinatorRef.current?.flush() ?? Promise.resolve());
+      return authoritative.current;
     } catch (error: unknown) {
       await draftWriteChainRef.current;
       throw error;

@@ -87,14 +87,14 @@ Use `GET /api/tokens` to list token metadata and `DELETE /api/tokens/:tokenId` t
 
 ## Public note sharing
 
-Create a public read-only link from an authenticated owner session or a caller-owned personal token with `shares:write`. The raw `qns_...` value is generated from 32 random bytes, returned only by this response, and never stored. The database stores a short prefix plus a peppered, domain-separated HMAC-SHA-256 hash. `expiresAt` may be `null` or an ISO timestamp no more than one year in the future. A `shares:write` token can manage only notes belonging to its own token owner.
+Create a public read-only link from an authenticated owner session or a caller-owned personal token with `shares:write`. The raw `qns_...` value is generated from 32 random bytes, returned only by this response, and never stored. The database stores a short prefix plus a peppered, domain-separated HMAC-SHA-256 hash and an immutable snapshot of the reviewed note version. `expectedVersion` must match the saved note version, `confirm` must be `true`, and `expiresAt` must be a future ISO timestamp no more than one year ahead. A changed note returns a version conflict; sensitive-classified notes cannot be published. A `shares:write` token can manage only notes belonging to its own token owner.
 
 ```bash
 curl -fsS -X POST \
   -H "Authorization: Bearer $QNOTES_TOKEN" \
   -H 'Content-Type: application/json' \
   "$QNOTES_URL/api/notes/NOTE_UUID/share" \
-  --data '{"expiresAt":"2026-09-13T12:00:00.000Z"}'
+  --data '{"expectedVersion":7,"expiresAt":"2026-09-13T12:00:00.000Z","confirm":true}'
 ```
 
 The response contains `{ data: { token, metadata } }`. Build the user-facing URL by placing the token after `#`:
@@ -103,7 +103,7 @@ The response contains `{ data: { token, metadata } }`. Build the user-facing URL
 https://notes.quadrate.lk/share#qns_<secret>
 ```
 
-`GET /api/notes/:noteId/share` returns only safe metadata for the current active share: ID, note ID, prefix, expiry, revocation time, and creation time. `POST` rotates the previous active share and returns a new raw token. `DELETE /api/notes/:noteId/share` revokes the active share. Creating or rotating a share does not publish a draft; flush the note autosave first when using the web app.
+`GET /api/notes/:noteId/share` returns only safe metadata for the current active snapshot: ID, note ID, prefix, expiry, revocation time, and creation time. `POST` explicitly publishes the exact reviewed version and rotates the previous active snapshot. `DELETE /api/notes/:noteId/share` revokes the active snapshot. Creating or rotating a share does not publish a draft; flush the note autosave first when using the web app.
 
 Resolve a link without an `Authorization` header:
 
@@ -621,7 +621,7 @@ The default read profile exposes `search_notes`, `read_note_context`, `get_block
 `resolve_public_share` is the read-only MCP bridge for AI agents that already have a `qns_...` share secret. It delegates to the same unauthenticated `QNotesClient.resolvePublicShare` operation documented above and returns `title`, `contentMarkdown`, and `updatedAt`; it does not expose attachments or private metadata. The profiles are deliberately exact:
 
 - `read` (default): `search_notes`, `read_note_context`, `get_block`, `list_notebooks`, and `resolve_public_share`, plus the read-only resources.
-- `share`: every `read` tool plus `create_public_share`. The tool pre-reads the selected note, blocks recognizable credential material, and creates exactly a 24-hour link; it returns only the URL, note ID, and expiry. It has no note mutation tools.
+- `share`: every `read` tool plus `create_public_share`. Call it with the reviewed saved note's `expectedVersion` and `confirm: true`; the tool pre-reads that exact note, blocks recognizable credential material, and creates exactly a 24-hour link. The legacy `noteId`-only shape remains parseable but fails closed with a migration error. It returns only the URL, note ID, and expiry and has no note mutation tools.
 - `write`: every `read` tool plus `capture_note`, `append_note`, `update_note`, `delete_note`, `restore_note`, and `move_note_to_notebook`. Public-share creation is omitted unless explicitly enabled.
 
 The native `share` profile uses the same caller-owned personal token as its QNotes client, via `QNOTES_TOKEN` (or the read-token fallback `QNOTES_READ_TOKEN`), and that token must include `notes:read`, `search:read`, and `shares:write`. It never accepts or configures a shared owner JWT. The `write` profile keeps its existing `QNOTES_WRITE_TOKEN` behavior but omits `create_public_share` by default. To expose that tool in a write process, set `QNOTES_MCP_ENABLE_PUBLIC_SHARE=true` and use a caller-owned write token that includes `shares:write`; the flag is an explicit capability declaration, while API scopes still enforce the token boundary. Prefer the separate `share` profile when public sharing is the only write capability required. `mutationId` is optional in each write tool for compatibility, but a caller that may retry after an ambiguous transport result must supply the same mutation ID for the same logical operation. Keep the generated `QNOTES_MCP_DEVICE_ID` unchanged across process restarts; the existing owner-scoped `(owner_id, mutation_id)` receipt key plus the device ID in the request hash makes retry behavior durable across MCP processes. Omitted identity fields remain supported and receive fresh values, so those calls are new operations rather than durable retries. All write tools return a compact acknowledgment containing the note ID, title, resulting version, mutation ID, outcome, and note URI—never the full Markdown body. `capture_note` accepts optional `notebookId` and `dedupeKey`; its outcome distinguishes creation, an idempotent retry, and a deduplicated existing note. `append_note` preserves Markdown boundaries and uses the dedicated logical append endpoint, so a lost response can be retried without duplicating the addition. `update_note` preserves tags when `tags` is omitted and still requires the expected note version for a new update. `delete_note`, `restore_note`, and `move_note_to_notebook` require the expected version; deletion and restoration require `confirm: true`, deletion is soft-only, and there is no permanent purge tool. Public share revocation uses the same `shares:write` caller token through REST.

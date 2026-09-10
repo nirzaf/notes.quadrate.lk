@@ -78,7 +78,20 @@ The native and hosted read-only MCP profiles expose the same public resolver as 
 }
 ```
 
-The tool delegates to the existing API-client resolver and returns structured `title`, `contentMarkdown`, and `updatedAt` fields. It is read-only, does not require a private JWT, and does not expose attachments or workspace metadata. The native and optional hosted `share` profiles also expose `create_public_share` for an exact UUID note. That tool uses the same caller-owned `qnt_...` personal token as the rest of the MCP connection, pre-reads the title and Markdown, blocks obvious credential material without copying note content into errors or logs, and returns a `https://notes.quadrate.lk/share#qns_...` URL that expires exactly 24 hours after invocation. The token must include `shares:write`; no shared owner JWT or server-side share credential is used. The same `shares:write` token can manage that owner’s share through the REST get/create/revoke routes.
+The tool delegates to the existing API-client resolver and returns structured `title`, `contentMarkdown`, and `updatedAt` fields. It is read-only, does not require a private JWT, and does not expose attachments or workspace metadata. The native and optional hosted `share` profiles also expose `create_public_share` for an exact UUID note. Call it only after reading and reviewing the saved note version:
+
+```json
+{
+  "name": "create_public_share",
+  "arguments": {
+    "noteId": "00000000-0000-4000-8000-000000000001",
+    "expectedVersion": 7,
+    "confirm": true
+  }
+}
+```
+
+That tool uses the same caller-owned `qnt_...` personal token as the rest of the MCP connection, pre-reads the title and Markdown, blocks obvious credential material without copying note content into errors or logs, and returns a `https://notes.quadrate.lk/share#qns_...` URL that expires exactly 24 hours after invocation. The legacy `{ "noteId": "..." }` input remains parseable for deployed clients but fails closed with a migration error; the server never infers a reviewed version or creates a snapshot without `expectedVersion` and `confirm: true`. The token must include `shares:write`; no shared owner JWT or server-side share credential is used. The same `shares:write` token can manage that owner’s share through the REST get/create/revoke routes.
 
 ## Errors and security rules
 

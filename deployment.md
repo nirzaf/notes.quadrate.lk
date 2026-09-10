@@ -159,7 +159,7 @@ pnpm run test:unit
 pnpm exec supabase db push --linked --dry-run
 ```
 
-The current release includes the additive migrations through `20260909000100_agent_vault_rotate_replay_compat.sql`. Review them in the dry-run output before applying; the latest migrations add the isolated Agent Vault metadata plane, service-only RPCs, replay protections, bounded batch reveal, and unchanged pre-`expectedVersion` rotate replay compatibility alongside the caller-owned `shares:write` personal-token scope, the RLS-protected `notesdb.note_shares` table, service-only create/rotate/revoke/resolve RPCs, automatic share revocation on note soft-delete, and a service-only single-use hosted MCP authorization-code receipt. The preceding migrations add the transaction-safe logical append receipt for the REST API, CLI, and MCP write profile, while earlier migrations fix pagination and embedding queue races, preserve legacy RPC wrappers on the v2 contract, add restore dedupe conflict reporting, keep incompatible vectors out of semantic search, and add the daily stale-embedding recovery schedule.
+The current release includes the additive migrations through `20260910001200_reviewed_public_snapshots.sql`. Review them in the dry-run output before applying; the latest migrations add the isolated Agent Vault metadata plane, service-only RPCs, replay protections, bounded batch reveal, and unchanged pre-`expectedVersion` rotate replay compatibility alongside the caller-owned `shares:write` personal-token scope, the RLS-protected `notesdb.note_shares` table, reviewed version-bound immutable public snapshots, service-only create/rotate/revoke/resolve RPCs, automatic share revocation on note soft-delete, and a service-only single-use hosted MCP authorization-code receipt. The preceding migrations add the transaction-safe logical append receipt for the REST API, CLI, and MCP write profile, while earlier migrations fix pagination and embedding queue races, preserve legacy RPC wrappers on the v2 contract, add restore dedupe conflict reporting, keep incompatible vectors out of semantic search, and add the daily stale-embedding recovery schedule.
 
 ### 3. Apply pending production migrations
 
@@ -271,3 +271,10 @@ run the readiness gate above. Do not put it in `VITE_*`, browser storage, Git,
 or GitHub Actions secrets. This feature must not change qnt/qns Notes or
 hosted-MCP behavior, and the migrations must be reviewed and applied before
 frontend deployment.
+
+## Public snapshot release notes
+
+The `20260910001200_reviewed_public_snapshots.sql` migration adds reviewed,
+version-bound immutable public snapshots and the service-only create/resolve
+contract. It does not use Agent Vault or require `QNOTES_VAULT_TOKEN_PEPPER`;
+review and apply it before deploying the updated API or frontend.

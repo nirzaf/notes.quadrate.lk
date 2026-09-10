@@ -179,7 +179,7 @@ test('search and note editor remain accessible through edit and preview views', 
 test('public share view has no accessibility violations', async ({ page }) => {
   const session = await signInSession();
   const note = await createNoteApi(session.access_token, `Accessibility Share ${crypto.randomUUID()}`, '# Public accessibility fixture');
-  const share = await createPublicShareApi(session.access_token, note.id);
+  const share = await createPublicShareApi(session.access_token, note);
   await page.goto(`/share#${share.token}`);
   await expect(page.getByRole('heading', { name: note.title })).toBeVisible();
   await expect(page.locator('.q-attachment-panel')).toHaveCount(0);

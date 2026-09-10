@@ -26,7 +26,7 @@ test('renders a saved note publicly through the fragment without private API req
     '```',
   ].join('\n');
   const note = await createNoteApi(session.access_token, `Public view ${crypto.randomUUID()}`, publicMarkdown);
-  const share = await createPublicShareApi(session.access_token, note.id);
+  const share = await createPublicShareApi(session.access_token, note);
   const context = await browser.newContext();
   const page = await context.newPage();
   const functionRequests: string[] = [];
@@ -123,8 +123,8 @@ test('renders a saved note publicly through the fragment without private API req
 test('rotates and revokes links while keeping the old secret unusable', async () => {
   const session = await signInSession();
   const note = await createNoteApi(session.access_token, `Share rotation ${crypto.randomUUID()}`, 'Rotation body.');
-  const first = await createPublicShareApi(session.access_token, note.id);
-  const second = await createPublicShareApi(session.access_token, note.id);
+  const first = await createPublicShareApi(session.access_token, note);
+  const second = await createPublicShareApi(session.access_token, note);
   expect(second.token).not.toBe(first.token);
   expect((await resolvePublicShareApi(first.token)).response.status).toBe(404);
   expect((await resolvePublicShareApi(second.token)).response.status).toBe(200);
@@ -138,7 +138,7 @@ test('rotates and revokes links while keeping the old secret unusable', async ()
 test('soft deletion revokes a link permanently across restore', async () => {
   const session = await signInSession();
   const note = await createNoteApi(session.access_token, `Share delete ${crypto.randomUUID()}`, 'Deletion body.');
-  const share = await createPublicShareApi(session.access_token, note.id);
+  const share = await createPublicShareApi(session.access_token, note);
   const deleted = await apiJson(`/api/notes/${note.id}`, session.access_token, { method: 'DELETE', body: JSON.stringify({ expectedVersion: note.version, deviceId: crypto.randomUUID(), mutationId: crypto.randomUUID() }) });
   expect(deleted.response.status).toBe(200);
   expect((await resolvePublicShareApi(share.token)).response.status).toBe(404);
@@ -157,13 +157,13 @@ test('shares:write tokens manage only their owner shares and older qnt tokens re
   const oldTokenResponse = await apiJson('/api/tokens', session.access_token, { method: 'POST', body: JSON.stringify({ name: `share-boundary-old-${crypto.randomUUID()}`, scopes: ['notes:read'], expiresAt: null }) });
   const oldToken = String(data(oldTokenResponse.body).token);
   for (const method of ['GET', 'POST', 'DELETE'] as const) {
-    const denied = await apiJson(`/api/notes/${note.id}/share`, oldToken, { method, ...(method === 'POST' ? { body: JSON.stringify({ expiresAt: null }) } : {}) });
+    const denied = await apiJson(`/api/notes/${note.id}/share`, oldToken, { method, ...(method === 'POST' ? { body: JSON.stringify({ expectedVersion: note.version, expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), confirm: true }) } : {}) });
     expect(denied.response.status).toBe(403);
   }
 
   const shareTokenResponse = await apiJson('/api/tokens', session.access_token, { method: 'POST', body: JSON.stringify({ name: `share-boundary-${crypto.randomUUID()}`, scopes: ['shares:write'], expiresAt: null }) });
   const shareToken = String(data(shareTokenResponse.body).token);
-  const created = await apiJson(`/api/notes/${note.id}/share`, shareToken, { method: 'POST', body: JSON.stringify({ expiresAt: null }) });
+  const created = await apiJson(`/api/notes/${note.id}/share`, shareToken, { method: 'POST', body: JSON.stringify({ expectedVersion: note.version, expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), confirm: true }) });
   expect(created.response.status).toBe(201);
   const share = data(created.body);
   expect((await apiJson(`/api/notes/${note.id}/share`, shareToken)).response.status).toBe(200);
@@ -182,6 +182,7 @@ test('share dialog shows the raw link once and safe metadata after reopening', a
   await page.getByRole('button', { name: 'Share', exact: true }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
+  await dialog.getByRole('checkbox', { name: /Review saved version/ }).check();
   await dialog.getByRole('button', { name: 'Create public link' }).click();
   await expect(dialog).toContainText('Public link created');
   const rawLink = await dialog.locator('.q-public-share-link code').textContent();

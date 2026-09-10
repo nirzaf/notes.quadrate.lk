@@ -186,7 +186,7 @@ test('keeps Vault fixtures out of Notes archives, imports, and public shares', a
   const listedAgentToken = data<VaultAgentToken[]>(tokenListResponse.body).find((item) => item.id === fixture.agentToken.id);
   expect(Boolean(listedAgentToken?.grants.some((grant) => grant.projectId === fixture.project.id && grant.environmentId === fixture.environment.id && grant.secretId === fixture.secret.id && grant.action === 'secret:reveal'))).toBe(true);
 
-  const publicShare = await createPublicShareApi(source.access_token, note.id);
+  const publicShare = await createPublicShareApi(source.access_token, note);
   const archive = await exportWorkspace(source.access_token);
   const entries = archiveEntries(archive);
   const archiveText = decodedArchiveText(entries);
@@ -262,7 +262,7 @@ test('restores notebooks, tagged notes, and attachments without duplicating on r
     }),
   });
   expect(noteResponse.response.status).toBe(201);
-  const note = data<{ id: string; title: string }>(noteResponse.body);
+  const note = data<{ id: string; title: string; version: number }>(noteResponse.body);
 
   const bytes = new TextEncoder().encode('private recovery attachment');
   const requested = await apiJson('/api/attachments/upload-url', source.access_token, {
@@ -281,7 +281,7 @@ test('restores notebooks, tagged notes, and attachments without duplicating on r
   if (uploaded.error) throw uploaded.error;
   const finalized = await apiJson(`/api/attachments/${upload.attachment.id}/finalize`, source.access_token, { method: 'POST' });
   expect(finalized.response.status).toBe(200);
-  await createPublicShareApi(source.access_token, note.id);
+  await createPublicShareApi(source.access_token, note);
   const sourceToken = await apiJson('/api/tokens', source.access_token, {
     method: 'POST',
     body: JSON.stringify({ name: `Recovery token ${crypto.randomUUID()}`, scopes: ['notes:read'], expiresAt: null }),

@@ -198,32 +198,50 @@ export type Database = {
       }
       note_shares: {
         Row: {
+          classification: string | null
           created_at: string
           expires_at: string | null
           id: string
           note_id: string
           owner_id: string
           revoked_at: string | null
+          snapshot_content_markdown: string | null
+          snapshot_title: string | null
+          source_content_hash: string | null
+          source_updated_at: string | null
+          source_version: number | null
           token_hash: string
           token_prefix: string
         }
         Insert: {
+          classification?: string | null
           created_at?: string
           expires_at?: string | null
           id?: string
           note_id: string
           owner_id: string
           revoked_at?: string | null
+          snapshot_content_markdown?: string | null
+          snapshot_title?: string | null
+          source_content_hash?: string | null
+          source_updated_at?: string | null
+          source_version?: number | null
           token_hash: string
           token_prefix: string
         }
         Update: {
+          classification?: string | null
           created_at?: string
           expires_at?: string | null
           id?: string
           note_id?: string
           owner_id?: string
           revoked_at?: string | null
+          snapshot_content_markdown?: string | null
+          snapshot_title?: string | null
+          source_content_hash?: string | null
+          source_updated_at?: string | null
+          source_version?: number | null
           token_hash?: string
           token_prefix?: string
         }
@@ -481,9 +499,15 @@ export type Database = {
       }
       qnotes_create_note_share: {
         Args: {
-          p_expires_at: string | null
+          p_classification: string
+          p_confirm: boolean
+          p_expires_at: string
           p_note_id: string
           p_owner_id: string
+          p_expected_version: number
+          p_snapshot_content_markdown: string
+          p_snapshot_title: string
+          p_source_content_hash: string
           p_token_hash: string
           p_token_prefix: string
         }

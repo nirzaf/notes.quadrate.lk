@@ -6,18 +6,16 @@ import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 import { useToast } from './ui/toast';
 
-type ExpiryChoice = '1' | '7' | '30' | '90' | 'never';
+type ExpiryChoice = '1' | '7' | '30' | '90';
 
 const expiryOptions: Array<{ value: ExpiryChoice; label: string }> = [
   { value: '1', label: '1 day' },
   { value: '7', label: '7 days' },
   { value: '30', label: '30 days' },
   { value: '90', label: '90 days' },
-  { value: 'never', label: 'Never' },
 ];
 
-function expiryDate(choice: ExpiryChoice): string | null {
-  if (choice === 'never') return null;
+function expiryDate(choice: ExpiryChoice): string {
   const date = new Date();
   date.setDate(date.getDate() + Number(choice));
   return date.toISOString();
@@ -37,7 +35,7 @@ interface PublicShareDialogProps {
   share: PublicShareMetadata | null;
   loading?: boolean;
   onOpenChange: (open: boolean) => void;
-  onBeforeCreate: () => Promise<void>;
+  onBeforeCreate: () => Promise<Note>;
   onRefresh: () => Promise<unknown> | unknown;
 }
 
@@ -46,6 +44,7 @@ export function PublicShareDialog({ open, note, share, loading = false, onOpenCh
   const [expiry, setExpiry] = useState<ExpiryChoice>('7');
   const [createdLink, setCreatedLink] = useState<string | null>(null);
   const [createdMetadata, setCreatedMetadata] = useState<PublicShareMetadata | null>(null);
+  const [confirmedVersion, setConfirmedVersion] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const openRef = useRef(open);
@@ -59,15 +58,29 @@ export function PublicShareDialog({ open, note, share, loading = false, onOpenCh
       setCreatedMetadata(null);
       setError(null);
       setBusy(false);
+      setConfirmedVersion(null);
     }
   }, [open]);
 
+  useEffect(() => {
+    setConfirmedVersion(null);
+  }, [note.id, note.version]);
+
   const create = async (): Promise<void> => {
+    const reviewedVersion = note.version;
+    if (confirmedVersion !== reviewedVersion) {
+      setError('Review and confirm the current saved note version before publishing.');
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      await onBeforeCreate();
-      const result = await api.createPublicShare(note.id, { expiresAt: expiryDate(expiry) });
+      const savedNote = await onBeforeCreate();
+      if (savedNote.version !== reviewedVersion) {
+        setConfirmedVersion(null);
+        throw new Error(`The note was saved as version ${savedNote.version}. Review that saved version and confirm again.`);
+      }
+      const result = await api.createPublicShare(savedNote.id, { expectedVersion: savedNote.version, expiresAt: expiryDate(expiry), confirm: true });
       const publicUrl = new URL('/share', window.location.origin);
       publicUrl.hash = result.token;
       if (openRef.current) {
@@ -126,6 +139,9 @@ export function PublicShareDialog({ open, note, share, loading = false, onOpenCh
     if (link) window.open(link, '_blank', 'noopener,noreferrer');
   };
 
+  const confirmed = confirmedVersion === note.version;
+  const reviewConfirmation = <label className="q-integration-scope"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmedVersion(event.target.checked ? note.version : null)} disabled={busy} /><span><strong>Review saved version {note.version}</strong><small>Confirm that this private note version contains only content you approve for public access.</small></span></label>;
+
   return <Dialog open={open} onOpenChange={onOpenChange}>
     <DialogContent className="q-public-share-dialog">
       <DialogHeader>
@@ -144,7 +160,8 @@ export function PublicShareDialog({ open, note, share, loading = false, onOpenCh
           <div className="q-public-share-status"><Check size={18} aria-hidden="true" /><strong>A public link is active</strong></div>
           <dl className="q-public-share-details"><div><dt>Token prefix</dt><dd><code>{visibleShare?.tokenPrefix}</code></dd></div><div><dt>Expires</dt><dd>{visibleShare ? expiryLabel(visibleShare) : 'Unknown'}</dd></div></dl>
           <p className="q-warning">Anyone with the link can read this note until you revoke it or it expires.</p>
-          <div className="q-dialog-actions q-public-share-actions"><Button type="button" variant="outline" onClick={() => void create()} disabled={busy}><RotateCw size={15} aria-hidden="true" />Create new link</Button><Button type="button" variant="danger" onClick={() => void revoke()} disabled={busy}><Link2Off size={15} aria-hidden="true" />Revoke</Button></div>
+          {reviewConfirmation}
+          <div className="q-dialog-actions q-public-share-actions"><Button type="button" variant="outline" onClick={() => void create()} disabled={busy || !confirmed}><RotateCw size={15} aria-hidden="true" />Create new link</Button><Button type="button" variant="danger" onClick={() => void revoke()} disabled={busy}><Link2Off size={15} aria-hidden="true" />Revoke</Button></div>
         </div>}
       </> : <div className="q-public-share-create">
         <p className="q-small">The link contains a secret that is shown once. Choose how long it should remain usable.</p>
@@ -153,7 +170,8 @@ export function PublicShareDialog({ open, note, share, loading = false, onOpenCh
           {expiryOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
         </select>
         <p className="q-warning">Anyone with the link can read this note until you revoke it or it expires.</p>
-        <div className="q-dialog-actions"><Button type="button" onClick={() => void create()} disabled={busy}>{busy ? 'Creating…' : 'Create public link'}</Button></div>
+        {reviewConfirmation}
+        <div className="q-dialog-actions"><Button type="button" onClick={() => void create()} disabled={busy || !confirmed}>{busy ? 'Creating…' : 'Create public link'}</Button></div>
       </div>}
       {error ? <div className="q-error" role="alert">{error}</div> : null}
     </DialogContent>

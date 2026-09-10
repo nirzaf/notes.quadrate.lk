@@ -422,7 +422,9 @@ export interface PublicShareMetadata {
 }
 
 export interface CreatePublicShareInput {
-  expiresAt: ISODateTime | null;
+  expectedVersion: number;
+  expiresAt: ISODateTime;
+  confirm: true;
 }
 
 export interface CreatePublicShareResult {

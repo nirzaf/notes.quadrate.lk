@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildHermesMcpConfig } from '../dist/hermes.js';
 import { approximateContextTokens, boundContextContent, boundContextSource, contextNoteChanged, contextTokenUsage, takeContextSources } from '../dist/context.js';
-import { resolveAutoSearchMode, validateAppendNoteInput, validateCreateNoteInput, validateListNotesQuery, validateSearchRequest, validateTokenInput, validateUpdateNoteInput } from '../dist/validation.js';
+import { resolveAutoSearchMode, validateAppendNoteInput, validateCreateNoteInput, validateCreatePublicShareInput, validateListNotesQuery, validateSearchRequest, validateTokenInput, validateUpdateNoteInput } from '../dist/validation.js';
 
 test('auto mode uses keyword retrieval for identifiers and quoted phrases', () => {
   assert.equal(resolveAutoSearchMode('production-rollback'), 'keyword');
@@ -88,6 +88,14 @@ test('validates optional append versions and generates a parseable Hermes config
   });
   assert.deepEqual(config.mcp_servers.qnotes_write.tools.include, ['search_notes', 'read_note_context', 'get_block', 'list_notebooks', 'resolve_public_share', 'capture_note', 'append_note', 'update_note', 'delete_note', 'restore_note', 'move_note_to_notebook']);
   assert.throws(() => buildHermesMcpConfig({ profile: 'write', serverPath: '/repo/server.js' }), /stable UUID/);
+});
+
+test('requires explicit review of a finite saved version before public sharing', () => {
+  const input = { expectedVersion: 3, expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), confirm: true };
+  assert.deepEqual(validateCreatePublicShareInput(input), input);
+  assert.throws(() => validateCreatePublicShareInput({ ...input, confirm: false }), /confirm must be true/);
+  assert.throws(() => validateCreatePublicShareInput({ ...input, expectedVersion: 0 }), /positive integer/);
+  assert.throws(() => validateCreatePublicShareInput({ ...input, expiresAt: null }), /finite ISO date/);
 });
 
 test('accepts the least-privilege share scope and generates a share MCP profile', () => {
