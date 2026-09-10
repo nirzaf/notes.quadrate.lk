@@ -134,7 +134,8 @@ select public.qnotes_sync_note_content(
 select ok(
   (select count(*) > 1 and bool_and(block_key = 'block-1')
    from notesdb.search_documents
-   where note_id = 'a2500000-0000-4000-8000-000000000001'),
+   where note_id = 'a2500000-0000-4000-8000-000000000001'
+     and source_type = 'code_block'),
   'oversized code chunks retain their parent block for language-filtered search'
 );
 with input as (
