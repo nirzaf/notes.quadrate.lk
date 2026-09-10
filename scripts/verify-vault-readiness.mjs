@@ -56,6 +56,11 @@ export const VAULT_RPC_CHECKS = [
     signature: 'uuid,uuid,uuid,text,uuid,text',
   },
   {
+    id: 'resolve_resource',
+    name: 'qnotes_vault_resolve_resource',
+    signature: 'uuid,uuid,text,text,uuid,text,uuid,text,uuid,text,uuid',
+  },
+  {
     id: 'create_agent_token',
     name: 'qnotes_create_vault_agent_token',
     signature: 'uuid,text,text,text,timestamptz,jsonb,uuid',

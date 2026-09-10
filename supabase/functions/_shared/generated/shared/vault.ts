@@ -1,4 +1,5 @@
 import { QNotesValidationError } from './errors.ts';
+import { isUUID } from './validation.ts';
 
 export type VaultAction = 'metadata:read' | 'secret:reveal' | 'secret:write' | 'secret:delete';
 export type VaultAuditAction = VaultAction | 'secret:use' | 'token:issue' | 'token:revoke' | 'grant:replace' | 'auth:step_up' | 'approval:issue' | 'approval:consume' | 'access:denied' | 'admin:recovery';
@@ -44,6 +45,12 @@ export type VaultEnvironment = {
   createdAt: string;
   updatedAt: string;
   archivedAt: string | null;
+};
+
+export type VaultResourceReference = {
+  projectId: string;
+  environmentId: string;
+  secretId: string | null;
 };
 
 export type VaultSecretMetadata = {
@@ -109,6 +116,7 @@ export type CreateVaultSecretInput = { projectId: string; environmentId: string;
 export type RotateVaultSecretInput = { value: string; description?: string | null; expectedVersion: number; mutationId: string };
 export type DeleteVaultSecretInput = { expectedVersion: number; mutationId: string; confirm: true };
 export type VaultSecretSelector = { project: string; environment: string; name: string };
+export type VaultSecretReferenceInput = VaultSecretSelector | { secretId: string };
 export type RevealVaultSecretInput = VaultSecretSelector & { purpose: string };
 export type RevealVaultSecretsInput = { secrets: VaultSecretSelector[]; purpose: string };
 export type RevealVaultSecretResult = { secretId: string; project: string; environment: string; name: string; value: string; version: number; updatedAt: string };
@@ -154,6 +162,44 @@ export function normalizeVaultSlug(value: unknown, fallbackName?: string): strin
   const candidate = value === undefined ? fallbackName?.trim().toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9_-]/g, '').replace(/-+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) : value;
   if (typeof candidate !== 'string' || !VAULT_SLUG_PATTERN.test(candidate)) throw new QNotesValidationError('Vault slugs must start with a lowercase letter or number and contain only lowercase letters, numbers, hyphens, and underscores.');
   return candidate;
+}
+
+export type VaultCanonicalReference = { id?: string; slug?: string };
+export type VaultCanonicalSecretReference = { id?: string; name?: string };
+
+export function parseVaultResourceReference(value: unknown, field: string, maxLength: number): VaultCanonicalReference {
+  if (typeof value !== 'string') throw new QNotesValidationError(`${field} must be a string.`);
+  const reference = value.trim();
+  const explicitId = reference.startsWith('id:');
+  const explicitSlug = reference.startsWith('slug:');
+  const candidate = explicitId || explicitSlug ? reference.slice(reference.indexOf(':') + 1) : reference;
+  if (!candidate) throw new QNotesValidationError(`${field} must not be empty.`);
+  if (explicitId || (!explicitSlug && isUUID(candidate))) {
+    if (!isUUID(candidate)) throw new QNotesValidationError(`${field} must use a valid UUID after id:.`);
+    return { id: candidate.toLowerCase() };
+  }
+  const slug = candidate.toLowerCase();
+  if (slug.length > maxLength || !/^[a-z0-9][a-z0-9_-]{0,79}$/.test(slug)) throw new QNotesValidationError(`${field} must be a valid Vault slug.`);
+  return { slug };
+}
+
+export function parseVaultSecretReference(value: unknown): VaultCanonicalSecretReference {
+  if (typeof value !== 'string') throw new QNotesValidationError('secret name must be a string.');
+  const reference = value.trim();
+  const explicitId = reference.startsWith('id:');
+  const explicitName = reference.startsWith('name:');
+  const candidate = explicitId || explicitName ? reference.slice(reference.indexOf(':') + 1) : reference;
+  if (!candidate) throw new QNotesValidationError('secret reference must not be empty.');
+  if (explicitId || (!explicitName && isUUID(candidate))) {
+    if (!isUUID(candidate)) throw new QNotesValidationError('secret reference must use a valid UUID after id:.');
+    return { id: candidate.toLowerCase() };
+  }
+  return { name: normalizeVaultSecretName(candidate) };
+}
+
+function canonicalVaultResourceReference(value: unknown, field: string): string {
+  const reference = parseVaultResourceReference(value, field, 80);
+  return reference.id ? `id:${reference.id}` : reference.slug as string;
 }
 
 export function normalizeVaultProjectName(value: unknown): string {
@@ -203,7 +249,12 @@ function expectedVersion(value: unknown): number {
 
 function validateSelector(value: unknown): VaultSecretSelector {
   if (!record(value)) throw new QNotesValidationError('Each secret selector must be an object.');
-  return { project: normalizeVaultSlug(value.project), environment: normalizeVaultSlug(value.environment), name: normalizeVaultSecretName(value.name) };
+  const secret = parseVaultSecretReference(value.name);
+  return {
+    project: canonicalVaultResourceReference(value.project, 'project reference'),
+    environment: canonicalVaultResourceReference(value.environment, 'environment reference'),
+    name: secret.id ? `id:${secret.id}` : secret.name as string,
+  };
 }
 
 export function validateCreateVaultProjectInput(value: unknown): CreateVaultProjectInput {

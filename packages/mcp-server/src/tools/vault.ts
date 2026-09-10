@@ -4,8 +4,10 @@ import type {
   RevealVaultSecretInput,
   RevealVaultSecretsInput,
   RotateVaultSecretInput,
+  VaultAction,
   VaultEnvironment,
   VaultProject,
+  VaultResourceReference,
   VaultSecretMetadata,
 } from '@qnotes/shared';
 import { MAX_VAULT_BATCH_REVEAL, MAX_VAULT_BATCH_BYTES, MAX_VAULT_DESCRIPTION_LENGTH, MAX_VAULT_ENVIRONMENT_NAME_LENGTH, MAX_VAULT_PROJECT_NAME_LENGTH, MAX_VAULT_PURPOSE_LENGTH, MAX_VAULT_SECRET_BYTES, MAX_VAULT_SECRET_NAME_LENGTH } from '@qnotes/shared';
@@ -16,6 +18,8 @@ export interface VaultMcpClient {
   listProjects(): Promise<VaultProject[]>;
   listEnvironments(project: string): Promise<VaultEnvironment[]>;
   listSecrets(environmentId: string): Promise<VaultSecretMetadata[]>;
+  resolveEnvironment(project: string, environment: string, action: VaultAction): Promise<VaultResourceReference>;
+  resolveSecret(input: { project: string; environment: string; name: string }, action: VaultAction): Promise<VaultResourceReference>;
   createSecret(input: CreateVaultSecretInput): Promise<VaultSecretMetadata>;
   rotateSecret(secretId: string, input: RotateVaultSecretInput): Promise<VaultSecretMetadata>;
   deleteSecret(secretId: string, input: DeleteVaultSecretInput): Promise<VaultSecretMetadata>;
@@ -42,24 +46,9 @@ export async function vaultListEnvironmentsTool(client: VaultMcpClient, args: { 
   return toolResult({ items: listItems(await client.listEnvironments(args.project)) }, vaultEnvironmentsSchema);
 }
 
-async function findEnvironment(client: VaultMcpClient, project: string, environment: string): Promise<VaultEnvironment> {
-  const environments = listItems(await client.listEnvironments(project));
-  const found = environments.find((item) => item.slug === environment || item.name === environment);
-  if (!found) throw new Error('The requested Vault environment was not found.');
-  return found;
-}
-
-async function findSecret(client: VaultMcpClient, project: string, environment: string, name: string): Promise<VaultSecretMetadata> {
-  const environmentRecord = await findEnvironment(client, project, environment);
-  const secrets = listItems(await client.listSecrets(environmentRecord.id));
-  const found = secrets.find((item) => item.name === name);
-  if (!found) throw new Error('The requested Vault secret was not found.');
-  return found;
-}
-
 export async function vaultListSecretsTool(client: VaultMcpClient, args: { project: string; environment: string }) {
-  const environment = await findEnvironment(client, args.project, args.environment);
-  return toolResult({ items: listItems(await client.listSecrets(environment.id)) }, vaultSecretsSchema);
+  const resource = await client.resolveEnvironment(args.project, args.environment, 'metadata:read');
+  return toolResult({ items: listItems(await client.listSecrets(resource.environmentId)) }, vaultSecretsSchema);
 }
 
 export async function vaultGetSecretTool(client: VaultMcpClient, args: VaultRevealMcpInput) {
@@ -77,20 +66,22 @@ export async function vaultGetSecretsTool(client: VaultMcpClient, args: VaultBat
 }
 
 export async function vaultCreateSecretTool(client: VaultMcpClient, args: { project: string; environment: string; name: string; value: string; description?: string; mutationId: string }) {
-  const environment = await findEnvironment(client, args.project, args.environment);
-  const input: CreateVaultSecretInput = { projectId: environment.projectId, environmentId: environment.id, name: args.name, value: args.value, ...(args.description === undefined ? {} : { description: args.description }), mutationId: args.mutationId };
+  const resource = await client.resolveEnvironment(args.project, args.environment, 'secret:write');
+  const input: CreateVaultSecretInput = { projectId: resource.projectId, environmentId: resource.environmentId, name: args.name, value: args.value, ...(args.description === undefined ? {} : { description: args.description }), mutationId: args.mutationId };
   return toolResult(await client.createSecret(input), vaultMetadataSchema);
 }
 
 export async function vaultRotateSecretTool(client: VaultMcpClient, args: { project: string; environment: string; name: string; value: string; description?: string; expectedVersion: number; mutationId: string }) {
-  const secret = await findSecret(client, args.project, args.environment, args.name);
+  const resource = await client.resolveSecret({ project: args.project, environment: args.environment, name: args.name }, 'secret:write');
+  if (!resource.secretId) throw new Error('The requested Vault secret was not found.');
   const input: RotateVaultSecretInput = { value: args.value, ...(args.description === undefined ? {} : { description: args.description }), expectedVersion: args.expectedVersion, mutationId: args.mutationId };
-  return toolResult(await client.rotateSecret(secret.id, input), vaultMetadataSchema);
+  return toolResult(await client.rotateSecret(resource.secretId, input), vaultMetadataSchema);
 }
 
 export async function vaultDeleteSecretTool(client: VaultMcpClient, args: { project: string; environment: string; name: string; expectedVersion: number; mutationId: string; confirm: true }) {
-  const secret = await findSecret(client, args.project, args.environment, args.name);
-  return toolResult(await client.deleteSecret(secret.id, { expectedVersion: args.expectedVersion, mutationId: args.mutationId, confirm: true }), vaultMetadataSchema);
+  const resource = await client.resolveSecret({ project: args.project, environment: args.environment, name: args.name }, 'secret:delete');
+  if (!resource.secretId) throw new Error('The requested Vault secret was not found.');
+  return toolResult(await client.deleteSecret(resource.secretId, { expectedVersion: args.expectedVersion, mutationId: args.mutationId, confirm: true }), vaultMetadataSchema);
 }
 
 export const vaultToolLimits = {

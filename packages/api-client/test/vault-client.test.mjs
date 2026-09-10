@@ -33,6 +33,39 @@ test('QVaultClient sends qvt authorization only to isolated Vault routes', async
   assert.equal(calls[0].url.includes('/api/'), false);
 });
 
+test('QVaultClient resolves exact Vault resources without list requests', async () => {
+  const calls = [];
+  const client = new QVaultClient({
+    baseUrl: 'https://example.test',
+    getAccessToken: () => 'qvt_test',
+    fetchImplementation: async (url, init) => {
+      calls.push({ url, init });
+      return jsonResponse({ projectId: project.id, environmentId: environment.id, secretId: url.endsWith('/environments/resolve') ? null : secret.id });
+    },
+  });
+
+  assert.deepEqual(await client.resolveEnvironment('pearl-blanc', 'production', 'secret:write'), {
+    projectId: project.id,
+    environmentId: environment.id,
+    secretId: null,
+  });
+  assert.deepEqual(await client.resolveSecret({ project: 'pearl-blanc', environment: 'production', name: 'CLOUDFLARE_API_TOKEN' }, 'secret:delete'), {
+    projectId: project.id,
+    environmentId: environment.id,
+    secretId: secret.id,
+  });
+  assert.deepEqual(await client.resolveSecret({ secretId: secret.id }, 'metadata:read'), {
+    projectId: project.id,
+    environmentId: environment.id,
+    secretId: secret.id,
+  });
+  assert.deepEqual(calls.map(({ url, init }) => ({ url, method: init.method, body: JSON.parse(init.body) })), [
+    { url: 'https://example.test/vault/environments/resolve', method: 'POST', body: { project: 'pearl-blanc', environment: 'production', action: 'secret:write' } },
+    { url: 'https://example.test/vault/secrets/resolve', method: 'POST', body: { project: 'pearl-blanc', environment: 'production', name: 'CLOUDFLARE_API_TOKEN', action: 'secret:delete' } },
+    { url: 'https://example.test/vault/secrets/resolve', method: 'POST', body: { secretId: secret.id, action: 'metadata:read' } },
+  ]);
+});
+
 test('QVaultClient keeps single-use Vault approvals in headers and validates the response', async () => {
   const calls = [];
   const client = new QVaultClient({

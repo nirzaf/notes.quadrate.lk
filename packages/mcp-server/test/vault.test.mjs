@@ -14,6 +14,8 @@ function protocolClient(overrides = {}) {
     async listProjects() { return { items: [] }; },
     async listEnvironments() { return { items: [] }; },
     async listSecrets() { return []; },
+    async resolveEnvironment() { return { projectId: 'project-1', environmentId: 'environment-1', secretId: null }; },
+    async resolveSecret() { return { projectId: 'project-1', environmentId: 'environment-1', secretId: 'secret-1' }; },
     ...overrides,
   };
 }
@@ -83,5 +85,41 @@ test('Vault list tools return object-shaped zero and many item pages', async () 
     assert.equal(Array.isArray(result.structuredContent.items), true);
     assert.equal(result.structuredContent.items.length, 2);
   }
+  await client.close();
+});
+
+test('Vault MCP mutations resolve exact resources without enumerating parent collections', async () => {
+  const projectId = '550e8400-e29b-41d4-a716-446655440000';
+  const environmentId = '660e8400-e29b-41d4-a716-446655440000';
+  const secretId = '770e8400-e29b-41d4-a716-446655440000';
+  const metadata = { id: secretId, projectId, environmentId, name: 'KEY', description: null, version: 2, createdAt: '2026-01-01', updatedAt: '2026-01-02', rotatedAt: '2026-01-02', deletedAt: null };
+  const calls = [];
+  let listEnvironmentCalls = 0;
+  let listSecretCalls = 0;
+  const { client } = await connected('write', protocolClient({
+    async listEnvironments() { listEnvironmentCalls += 1; throw new Error('parent enumeration must not be used'); },
+    async listSecrets() { listSecretCalls += 1; throw new Error('sibling enumeration must not be used'); },
+    async resolveEnvironment(project, environment, action) {
+      calls.push({ operation: 'resolveEnvironment', project, environment, action });
+      return { projectId, environmentId, secretId: null };
+    },
+    async resolveSecret(input, action) {
+      calls.push({ operation: 'resolveSecret', input, action });
+      return { projectId, environmentId, secretId };
+    },
+    async createSecret(input) { calls.push({ operation: 'createSecret', input }); return metadata; },
+    async rotateSecret(receivedSecretId, input) { calls.push({ operation: 'rotateSecret', receivedSecretId, input }); return metadata; },
+    async deleteSecret(receivedSecretId, input) { calls.push({ operation: 'deleteSecret', receivedSecretId, input }); return { ...metadata, deletedAt: '2026-01-03' }; },
+  }));
+
+  await client.callTool({ name: 'vault_create_secret', arguments: { project: 'pearl-blanc', environment: 'production', name: 'KEY', value: 'synthetic', mutationId: '880e8400-e29b-41d4-a716-446655440000' } });
+  await client.callTool({ name: 'vault_rotate_secret', arguments: { project: 'pearl-blanc', environment: 'production', name: 'KEY', value: 'synthetic-rotated', expectedVersion: 1, mutationId: '990e8400-e29b-41d4-a716-446655440000' } });
+  await client.callTool({ name: 'vault_delete_secret', arguments: { project: 'pearl-blanc', environment: 'production', name: 'KEY', expectedVersion: 2, mutationId: 'aa0e8400-e29b-41d4-a716-446655440000', confirm: true } });
+
+  assert.equal(listEnvironmentCalls, 0);
+  assert.equal(listSecretCalls, 0);
+  assert.deepEqual(calls.map((call) => call.operation), ['resolveEnvironment', 'createSecret', 'resolveSecret', 'rotateSecret', 'resolveSecret', 'deleteSecret']);
+  assert.deepEqual(calls[3], { operation: 'rotateSecret', receivedSecretId: secretId, input: { value: 'synthetic-rotated', expectedVersion: 1, mutationId: '990e8400-e29b-41d4-a716-446655440000' } });
+  assert.deepEqual(calls[5], { operation: 'deleteSecret', receivedSecretId: secretId, input: { expectedVersion: 2, mutationId: 'aa0e8400-e29b-41d4-a716-446655440000', confirm: true } });
   await client.close();
 });
