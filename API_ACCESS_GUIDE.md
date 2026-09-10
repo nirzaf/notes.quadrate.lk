@@ -315,6 +315,84 @@ curl -fsS --get \
 
 The context response contains `noteId`, `noteVersion`, `documentId`, stable URI, title, heading path, bounded `content`, `previous` and `next` neighboring chunks, `updatedAt`, `sourceType`, `sourceId`, `sourceKey`, `sourceTitle`, and attachment `pageNumber` when applicable. It also includes `contentBytes`, `totalBytes`, `offset`, `nextOffset`, `truncated`, `contentComplete`, `neighborsTruncated`, an approximate-token `tokenBudget`, the center `sourceHash`, and additive `previousSources`/`nextSources` entries with independent document IDs, source keys, hashes, versions, and attachment/page provenance. The legacy `previous` and `next` string arrays remain as empty compatibility fields; use the canonical provenance-bearing `previousSources` and `nextSources` entries for neighboring content. When `truncated` is true for the center content, follow `continuation.cursor` by passing it as `continuation` on the next context request. The cursor is bound to the document, note version, source hash, token principal, and notebook-policy revision and must be requested again after an edit or access-grant change. The route enforces ownership and notebook grants, excludes deleted notes, and keeps neighbors within the same note source; attachment neighbors are restricted to the same attachment. If the owning note changes during the read, the route returns a retriable `NOTE_VERSION_CONFLICT` instead of claiming that the context is internally consistent. `maxBytes` measures the complete serialized JSON response, including the `{ data: ... }` envelope, and an approximate token budget remains enforced separately.
 
+### Capability discovery and incremental editing
+
+Agents can discover the effective token scopes, supported operations, and
+response limits before selecting a workflow:
+
+```bash
+curl -fsS \
+  -H "Authorization: Bearer $QNOTES_TOKEN" \
+  "$QNOTES_URL/api/capabilities"
+```
+
+`GET /api/capabilities` returns `schemaVersion: 1`, the effective `read`,
+`share`, or `write` profile, the caller's scopes, operation names, and the
+server limits for search results, context tokens, change pages, outline
+sections, and section replacement bytes. A Supabase user JWT reports the
+scopes available to that authenticated user; a personal token reports its
+own scopes.
+
+Use an outline before editing a note. It returns deterministic section IDs,
+1-based line ranges, heading paths, section content hashes, child counts, and
+block identifiers/hashes. It never returns section or block bodies, and the
+outline is capped at 500 sections:
+
+```bash
+curl -fsS \
+  -H "Authorization: Bearer $QNOTES_TOKEN" \
+  "$QNOTES_URL/api/notes/NOTE_UUID/outline"
+```
+
+Patch one section by sending the section ID, the outline's `noteVersion`, the
+section's `contentHash`, replacement Markdown, and stable device and mutation
+IDs:
+
+Before writing, use the same request shape with
+`POST /api/notes/NOTE_UUID/section/preview`. The preview checks the version,
+section hash, anchor, and replacement parsing without creating a mutation
+receipt or changing the note. It returns the current version and hash,
+replacement byte count, candidate Markdown hash, and `wouldChange` flag. The
+write remains a separate explicit `PATCH` request.
+
+```bash
+curl -fsS -X PATCH \
+  -H "Authorization: Bearer $QNOTES_TOKEN" \
+  -H 'Content-Type: application/json' \
+  "$QNOTES_URL/api/notes/NOTE_UUID/section" \
+  --data '{
+    "sectionId": "section-REPLACE_WITH_OUTLINE_ID",
+    "expectedVersion": 7,
+    "expectedContentHash": "REPLACE_WITH_SECTION_SHA256",
+    "replacementMarkdown": "Updated body\n- Keep the unrelated sections",
+    "deviceId": "11111111-1111-4111-8111-111111111111",
+    "mutationId": "22222222-2222-4222-8222-222222222222"
+  }'
+```
+
+The section patch is an exact optimistic mutation. The API rejects a stale
+note version, missing section, ambiguous section ID, or changed section hash
+with `409` and writes nothing. The existing note transaction updates the
+authoritative Markdown, parsed blocks, and search documents together. The
+response contains the updated note and
+`x-qnotes-mutation-outcome: applied | idempotent`.
+
+If the patch response is lost, retry the same request with the original
+`deviceId` and `mutationId`. A separate status lookup returns only mutation
+metadata, so it is safe to use for recovery:
+
+```bash
+curl -fsS \
+  -H "Authorization: Bearer $QNOTES_TOKEN" \
+  "$QNOTES_URL/api/mutations/22222222-2222-4222-8222-222222222222"
+```
+
+`GET /api/sync` remains the bounded, owner- and notebook-authorized change
+enumeration surface. Use its opaque cursor to discover changed note IDs and
+versions, then outline and patch the exact note. Delete and public-share
+operations still require their existing explicit confirmation and policy
+boundaries.
+
 ### Create, update, and organize notes
 
 Create a note with `notes:write`. `slug`, `contentMarkdown`, `tags`, `notebookId`, and `dedupeKey` are optional; omitted values default to a deterministic derived slug, an empty body, an unfiled note, and no dedupe key:
@@ -614,7 +692,7 @@ console.log(response.items);
 console.log(response.timing);
 ```
 
-The client exposes `listNotes`, `listNotebooks`, `createNotebook`, `getNote`, `createNote`, `createNoteDetailed`, `updateNote`, `updateNoteDetailed`, `appendNote`, `appendNoteDetailed`, `moveNoteToNotebook`, `deleteNote`, `deleteNoteDetailed`, `restoreNote`, `restoreNoteDetailed`, `listBlocks`, `getBlock`, `search`, `searchPost`, `readNoteContext`, `sync`, `listAttachments`, `requestAttachmentUpload`, `finalizeAttachment`, `getAttachmentDownloadUrl`, `deleteAttachment`, `listTokens`, `createToken`, `revokeToken`, `exportNote`, `exportWorkspace`, and `importWorkspace`. The note-only mutation methods preserve the existing REST response shape; the `Detailed` variants additionally return a compact mutation outcome. `createNoteDetailed` returns `created`, `idempotent`, or `deduplicated`; the other detailed note mutations return `applied` or `idempotent`. Export methods return the raw `Response`; attachment upload still requires uploading the bytes to Supabase Storage with the signed path/token returned by `requestAttachmentUpload`.
+The client exposes `listNotes`, `listNotebooks`, `createNotebook`, `getNote`, `getCapabilities`, `getNoteOutline`, `createNote`, `createNoteDetailed`, `updateNote`, `updateNoteDetailed`, `patchNoteSection`, `appendNote`, `appendNoteDetailed`, `moveNoteToNotebook`, `deleteNote`, `deleteNoteDetailed`, `restoreNote`, `restoreNoteDetailed`, `getMutationStatus`, `listBlocks`, `getBlock`, `search`, `searchPost`, `readNoteContext`, `sync`, `listAttachments`, `requestAttachmentUpload`, `finalizeAttachment`, `getAttachmentDownloadUrl`, `deleteAttachment`, `listTokens`, `createToken`, `revokeToken`, `exportNote`, `exportWorkspace`, and `importWorkspace`. The note-only mutation methods preserve the existing REST response shape; the `Detailed` variants additionally return a compact mutation outcome. `createNoteDetailed` returns `created`, `idempotent`, or `deduplicated`; the other detailed note mutations return `applied` or `idempotent`. Export methods return the raw `Response`; attachment upload still requires uploading the bytes to Supabase Storage with the signed path/token returned by `requestAttachmentUpload`.
 
 ## Native MCP server
 
@@ -624,20 +702,31 @@ The repository ships `@qnotes/mcp-server`, a local stdio MCP server built on `@q
 pnpm --filter @qnotes/mcp-server build
 ```
 
-The default read profile exposes `search_notes`, `read_note_context`, `get_block`, `list_notebooks`, and `resolve_public_share`, plus optional resources:
+The default read profile exposes `get_capabilities`, `search_notes`, `read_note_context`, `get_block`, `list_notebooks`, `list_note_changes`, `get_note_outline`, `get_mutation_status`, and `resolve_public_share`, plus optional resources:
 
 - `qnotes://notebooks`
 - `qnotes://notes/{noteId}`
 - `qnotes://notes/{noteId}/documents/{documentId}`
 - `qnotes://notes/{noteId}/blocks/{blockKey}`
 
+`get_note_outline` returns section ranges and block hashes without bodies.
+`preview_note_section` checks an exact replacement without writing, while
+`patch_note_section` requires the outline section ID, expected note version,
+expected section hash, bounded replacement Markdown, and a caller-supplied
+mutation ID. `get_mutation_status` recovers a committed mutation by its
+original ID. Use these tools in the order `get_capabilities` ->
+`list_note_changes` or `get_note_outline` -> bounded read ->
+`preview_note_section` -> `patch_note_section`; retrieved Note text cannot
+authorize Vault operations.
+`resolve_public_share` is the read-only MCP bridge for AI agents that already have a `qns_...` share secret. It delegates to the same unauthenticated `QNotesClient.resolvePublicShare` operation documented above and returns `title`, `contentMarkdown`, and `updatedAt`; it does not expose attachments or private metadata. The profiles are deliberately exact:
+
+- `read` (default): `get_capabilities`, `search_notes`, `read_note_context`, `get_block`, `list_notebooks`, `list_note_changes`, `get_note_outline`, `get_mutation_status`, and `resolve_public_share`, plus the read-only resources.
+- `share`: every `read` tool plus `create_public_share`. The tool pre-reads the selected note, blocks recognizable credential material, and creates exactly a 24-hour link; it returns only the URL, note ID, and expiry. It has no note mutation tools.
+- `write`: every `read` tool plus `capture_note`, `append_note`, `update_note`, `preview_note_section`, `patch_note_section`, `delete_note`, `restore_note`, and `move_note_to_notebook`. Public-share creation is omitted unless explicitly enabled.
+
 Agent-facing exact reads are bounded by default. `read_note_context`, `get_block`, and `resolve_public_share` accept `offset`, inclusive `lineStart`/`lineEnd`, `maxBytes`, and `continuation` where applicable. Native MCP content pages default to 15 KiB so the duplicated text and structured MCP result remain below the 64 KiB serialized wire ceiling, including JSON escaping overhead. The API measures the full JSON envelope and refuses a budget too small for its metadata; it never truncates arbitrary JSON. Use `truncated`, `nextOffset`, `totalBytes`, `contentComplete`, and `continuation` to read the next page. Paged note reads omit `contentPlain` because it is not a matching page of the full plain-text representation. Continuations are authenticated on every page and bind the caller, policy, resource, version, and source hash.
 
-`resolve_public_share` is the read-only MCP bridge for AI agents that already have a `qns_...` share secret. It delegates to the same unauthenticated `QNotesClient.resolvePublicShare` operation documented above and returns bounded `title`, `contentMarkdown`, and `updatedAt` pages; it does not expose attachments or private metadata. The profiles are deliberately exact:
-
-- `read` (default): `search_notes`, `read_note_context`, `get_block`, `list_notebooks`, and `resolve_public_share`, plus the read-only resources.
-- `share`: every `read` tool plus `create_public_share`. Call it with the reviewed saved note's `expectedVersion` and `confirm: true`; the tool pre-reads that exact note, blocks recognizable credential material, and creates exactly a 24-hour link. The legacy `noteId`-only shape remains parseable but fails closed with a migration error. It returns only the URL, note ID, and expiry and has no note mutation tools.
-- `write`: every `read` tool plus `capture_note`, `append_note`, `update_note`, `delete_note`, `restore_note`, and `move_note_to_notebook`. Public-share creation is omitted unless explicitly enabled.
+`resolve_public_share` is the read-only MCP bridge for AI agents that already have a `qns_...` share secret. It delegates to the same unauthenticated `QNotesClient.resolvePublicShare` operation documented above and returns bounded `title`, `contentMarkdown`, and `updatedAt` pages; it does not expose attachments or private metadata.
 
 The native `share` profile uses the same caller-owned personal token as its QNotes client, via `QNOTES_TOKEN` (or the read-token fallback `QNOTES_READ_TOKEN`), and that token must include `notes:read`, `search:read`, and `shares:write`. It never accepts or configures a shared owner JWT. The `write` profile keeps its existing `QNOTES_WRITE_TOKEN` behavior but omits `create_public_share` by default. To expose that tool in a write process, set `QNOTES_MCP_ENABLE_PUBLIC_SHARE=true` and use a caller-owned write token that includes `shares:write`; the flag is an explicit capability declaration, while API scopes still enforce the token boundary. Prefer the separate `share` profile when public sharing is the only write capability required. `mutationId` is optional in each write tool for compatibility, but a caller that may retry after an ambiguous transport result must supply the same mutation ID for the same logical operation. Keep the generated `QNOTES_MCP_DEVICE_ID` unchanged across process restarts; the existing owner-scoped `(owner_id, mutation_id)` receipt key plus the device ID in the request hash makes retry behavior durable across MCP processes. Omitted identity fields remain supported and receive fresh values, so those calls are new operations rather than durable retries. All write tools return a compact acknowledgment containing the note ID, title, resulting version, mutation ID, outcome, and note URI—never the full Markdown body. `capture_note` accepts optional `notebookId` and `dedupeKey`; its outcome distinguishes creation, an idempotent retry, and a deduplicated existing note. `append_note` preserves Markdown boundaries and uses the dedicated logical append endpoint, so a lost response can be retried without duplicating the addition. `update_note` preserves tags when `tags` is omitted and still requires the expected note version for a new update. `delete_note`, `restore_note`, and `move_note_to_notebook` require the expected version; deletion and restoration require `confirm: true`, deletion is soft-only, and there is no permanent purge tool. Public share revocation uses the same `shares:write` caller token through REST.
 
@@ -663,10 +752,14 @@ mcp_servers:
     supports_parallel_tool_calls: true
     tools:
       include:
+        - get_capabilities
         - search_notes
         - read_note_context
         - get_block
         - list_notebooks
+        - list_note_changes
+        - get_note_outline
+        - get_mutation_status
         - resolve_public_share
       prompts: false
 
@@ -684,14 +777,20 @@ mcp_servers:
     supports_parallel_tool_calls: false
     tools:
       include:
+        - get_capabilities
         - search_notes
         - read_note_context
         - get_block
         - list_notebooks
+        - list_note_changes
+        - get_note_outline
+        - get_mutation_status
         - resolve_public_share
         - capture_note
         - append_note
         - update_note
+        - preview_note_section
+        - patch_note_section
         - delete_note
         - restore_note
         - move_note_to_notebook
@@ -710,10 +809,14 @@ mcp_servers:
     supports_parallel_tool_calls: false
     tools:
       include:
+        - get_capabilities
         - search_notes
         - read_note_context
         - get_block
         - list_notebooks
+        - list_note_changes
+        - get_note_outline
+        - get_mutation_status
         - resolve_public_share
         - create_public_share
       prompts: false
@@ -733,7 +836,17 @@ Gemini Spark can connect to the hosted read-only MCP endpoint:
 https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-mcp
 ```
 
-By default, the endpoint exposes `search_notes`, `read_note_context`, and `get_block`, plus the read-only `qnotes://...` resources. It accepts a personal `qnt_...` token in the `Authorization: Bearer ...` header; the least-privilege read token profile is `notes:read, search:read`. A deployment explicitly configured with `QNOTES_MCP_PROFILE=share` selects the share profile, and the authenticated caller’s own OAuth-resolved personal token must additionally have `shares:write` to use `create_public_share`; there is no server-side owner or share credential. Write note tools are never exposed by hosted MCP. Absent or unknown `QNOTES_MCP_PROFILE` values remain read-only.
+By default, the endpoint exposes `get_capabilities`, `search_notes`,
+`read_note_context`, `get_block`, `list_notebooks`, `list_note_changes`,
+`get_note_outline`, `get_mutation_status`, and the read-only
+`qnotes://...` resources. It accepts a personal `qnt_...` token in the
+`Authorization: Bearer ...` header; the least-privilege read token profile is
+`notes:read, search:read`. A deployment explicitly configured with
+`QNOTES_MCP_PROFILE=share` selects the share profile, and the authenticated
+caller’s own OAuth-resolved personal token must additionally have
+`shares:write` to use `create_public_share`; there is no shared owner or share
+credential. Write note tools are never exposed by hosted MCP. Absent or
+unknown `QNOTES_MCP_PROFILE` values remain read-only.
 
 To connect it in Gemini Spark, open Connected Apps, enter the endpoint under **Custom apps for Spark**, and choose **Next**. The endpoint supports Gemini’s standard dynamic OAuth client registration and PKCE flow. When the QNotes authorization page opens, paste the personal `qnt_...` token created in Integrations and choose **Approve & Connect**. The server issues Gemini an encrypted, opaque read-only OAuth bearer token; the raw personal token is not placed in the authorization URL, and no write profile is available. Google’s current custom-app flow and its security warning are documented in [Gemini Spark’s custom-app instructions](https://support.google.com/gemini/answer/17209137). If Gemini falls back to **Advanced Settings**, use `qnotes-gemini` as the Client ID and leave Client secret empty; the authorization page still requests the personal token. The token is shown in full only once, so revoke it from [Personal API tokens](https://notes.quadrate.lk/settings/tokens) if it is exposed or no longer needed. The hosted endpoint accepts Google’s OAuth redirect hosts only.
 
@@ -746,10 +859,14 @@ All `/api` routes except health require a bearer credential. The public share re
 | Method | Route | Scope / credential |
 | --- | --- | --- |
 | `GET` | `/api/health` | None |
+| `GET` | `/api/capabilities` | Authenticated caller |
 | `GET` | `/api/notes` | `notes:read` |
+| `GET` | `/api/notes/:noteRef/outline` | `notes:read` |
 | `GET` | `/api/notes/:noteRef` | `notes:read` |
 | `POST` | `/api/notes` | `notes:write` |
 | `PATCH` | `/api/notes/:noteId` | `notes:write` |
+| `POST` | `/api/notes/:noteId/section/preview` | `notes:write` |
+| `PATCH` | `/api/notes/:noteId/section` | `notes:write` |
 | `POST` | `/api/notes/:noteId/append` | `notes:write` |
 | `PATCH` | `/api/notes/:noteId/notebook` | `notes:write` |
 | `DELETE` | `/api/notes/:noteId` | `notes:write` |
@@ -765,6 +882,7 @@ All `/api` routes except health require a bearer credential. The public share re
 | `GET` | `/api/search/documents/:documentId/context` | `search:read` |
 | `POST` | `/api/context` | `search:read` |
 | `GET` | `/api/sync` | `notes:read` |
+| `GET` | `/api/mutations/:mutationId` | `notes:read` or `notes:write` |
 | `GET` | `/api/notes/:noteRef/attachments` | `attachments:read` |
 | `POST` | `/api/attachments/upload-url` | `attachments:write` |
 | `POST` | `/api/attachments/:attachmentId/finalize` | `attachments:write` |
@@ -787,7 +905,9 @@ All `/api` routes except health require a bearer credential. The public share re
 - `401 TOKEN_EXPIRED`: the personal token expiry has passed.
 - `403 INSUFFICIENT_SCOPE`: the personal token does not include the required scope, or a token-management route was called with a personal token instead of a Supabase JWT.
 - `404 NOTE_NOT_FOUND`, `NOTEBOOK_NOT_FOUND`, or `ATTACHMENT_NOT_FOUND`: the resource is missing or belongs to another owner.
+- `404 MUTATION_NOT_FOUND`: no committed mutation receipt with that ID is visible to the caller.
 - `409 NOTE_VERSION_CONFLICT`: for a new logical write, re-read the note and retry intentionally with its current version and a new mutation ID; for an ambiguous append response, retry the same logical request with the original mutation ID first.
+- `409 NOTE_SECTION_CONFLICT`: the section ID is missing or ambiguous, or its content hash no longer matches; obtain a fresh outline before starting a new patch.
 - `409 NOTE_SLUG_CONFLICT`: choose a slug not used by another active note.
 - `409 NOTE_DEDUPE_CONFLICT`: another active note already uses the dedupe key of a note being restored.
 - `409 NOTEBOOK_NAME_CONFLICT`: choose a notebook name not used by another notebook for the owner.

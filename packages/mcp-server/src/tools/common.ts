@@ -1,5 +1,5 @@
 import { DEFAULT_MCP_CONTENT_MAX_BYTES } from '@qnotes/shared';
-import type { NoteBlock, SearchContext, SearchRequest, SearchResponse } from '@qnotes/shared';
+import type { MutationStatus, NoteBlock, NoteOutline, QNotesCapabilities, SearchContext, SearchRequest, SearchResponse, SyncPage } from '@qnotes/shared';
 import type { ContentReadParams } from '@qnotes/api-client';
 import type { ZodType } from 'zod';
 
@@ -8,6 +8,10 @@ export interface ReadQNotesClient {
   readNoteContext(documentId: string, params?: { before?: number; after?: number; maxTokens?: number; maxBytes?: number; continuation?: string }): Promise<SearchContext>;
   getBlock(noteRef: string, blockKey: string, options?: ContentReadParams): Promise<NoteBlock>;
   listNotebooks(): Promise<{ items: unknown[]; truncated?: boolean }>;
+  getCapabilities(): Promise<QNotesCapabilities>;
+  getNoteOutline(noteRef: string): Promise<NoteOutline>;
+  getMutationStatus(mutationId: string): Promise<MutationStatus>;
+  sync(cursor?: string, limit?: number): Promise<SyncPage>;
 }
 
 export function appendMarkdown(existing: string, addition: string): string {
@@ -74,7 +78,7 @@ export function toolResult(value: unknown, schema?: ZodType) {
 type ToolHandler = (...args: any[]) => unknown;
 
 const RETRYABLE_CODES = new Set(['RATE_LIMITED', 'RESOURCE_LIMIT_UNAVAILABLE', 'QUERY_EMBEDDING_UNAVAILABLE', 'SEMANTIC_SEARCH_UNAVAILABLE']);
-const CONFLICT_CODES = new Set(['NOTE_VERSION_CONFLICT', 'VAULT_VERSION_CONFLICT', 'NOTE_SLUG_CONFLICT', 'NOTEBOOK_NAME_CONFLICT', 'NOTE_DEDUPE_CONFLICT', 'MUTATION_REUSE_CONFLICT', 'VAULT_MUTATION_REUSE', 'VAULT_PROJECT_CONFLICT', 'VAULT_ENVIRONMENT_CONFLICT', 'VAULT_SECRET_CONFLICT']);
+const CONFLICT_CODES = new Set(['NOTE_VERSION_CONFLICT', 'NOTE_SECTION_CONFLICT', 'VAULT_VERSION_CONFLICT', 'NOTE_SLUG_CONFLICT', 'NOTEBOOK_NAME_CONFLICT', 'NOTE_DEDUPE_CONFLICT', 'MUTATION_REUSE_CONFLICT', 'VAULT_MUTATION_REUSE', 'VAULT_PROJECT_CONFLICT', 'VAULT_ENVIRONMENT_CONFLICT', 'VAULT_SECRET_CONFLICT']);
 
 function safeDetails(code: string, value: unknown): Record<string, number> | undefined {
   if (!CONFLICT_CODES.has(code) || typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;

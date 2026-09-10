@@ -70,7 +70,7 @@ test('MCP read context forwards an opaque continuation only when supplied', asyn
 test('default MCP profile exposes only the read surface', () => {
   const server = createQNotesMcpServer(mockClient());
   assert.ok(server);
-  assert.deepEqual(READ_TOOL_NAMES, ['search_notes', 'read_note_context', 'get_block', 'list_notebooks', 'resolve_public_share']);
+  assert.deepEqual(READ_TOOL_NAMES, ['get_capabilities', 'search_notes', 'read_note_context', 'get_block', 'list_notebooks', 'list_note_changes', 'get_note_outline', 'get_mutation_status', 'resolve_public_share']);
   assert.deepEqual(SHARE_TOOL_NAMES, ['create_public_share']);
 });
 
@@ -374,7 +374,7 @@ test('MCP protocol advertises the exact read and write tool profiles', async () 
   const writeTools = await write.client.listTools();
   assert.deepEqual(writeTools.tools.map((tool) => tool.name), WRITE_PROFILE_TOOL_NAMES);
   assert.equal(writeTools.tools.some((tool) => tool.name === 'create_public_share'), false);
-  assert.deepEqual(WRITE_TOOL_NAMES, ['capture_note', 'append_note', 'update_note', 'delete_note', 'restore_note', 'move_note_to_notebook']);
+  assert.deepEqual(WRITE_TOOL_NAMES, ['capture_note', 'append_note', 'update_note', 'preview_note_section', 'patch_note_section', 'delete_note', 'restore_note', 'move_note_to_notebook']);
   const deleteTool = writeTools.tools.find((tool) => tool.name === 'delete_note');
   assert.match(JSON.stringify(deleteTool.inputSchema), /confirm/);
   assert.match(JSON.stringify(deleteTool.inputSchema), /true/);

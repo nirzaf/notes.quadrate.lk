@@ -132,6 +132,55 @@ export const searchContextSchema = z.object({
   nextSources: z.array(contextSource).optional(),
 }).strict();
 
+const capabilityScope = z.enum(['notes:read', 'notes:write', 'search:read', 'shares:write', 'attachments:read', 'attachments:write']);
+const capabilityProfile = z.enum(['read', 'share', 'write']);
+const outlineSectionSchema = z.object({
+  sectionId: id,
+  level: z.number().int().min(1).max(6),
+  heading: z.string(),
+  headingPath: z.array(z.string()),
+  startLine: z.number().int().positive(),
+  endLine: z.number().int().positive(),
+  contentStartLine: z.number().int().positive(),
+  contentEndLine: z.number().int().positive(),
+  contentHash: z.string().regex(/^[a-f0-9]{64}$/i),
+  childCount: z.number().int().nonnegative(),
+}).strict();
+const outlineBlockSchema = z.object({ blockKey: z.string(), blockType: z.enum(['copy', 'code', 'prompt', 'command', 'sql', 'json', 'yaml', 'env', 'url', 'quote', 'checklist']), position: z.number().int().nonnegative(), contentHash: z.string().regex(/^[a-f0-9]{64}$/i) }).strict();
+export const noteOutlineSchema = z.object({
+  noteId: id,
+  noteVersion: z.number().int().positive(),
+  markdownHash: z.string().regex(/^[a-f0-9]{64}$/i),
+  sections: z.array(outlineSectionSchema),
+  blocks: z.array(outlineBlockSchema),
+  truncated: z.boolean(),
+}).strict();
+export const noteSectionPatchPreviewSchema = z.object({
+  noteId: id,
+  currentVersion: z.number().int().positive(),
+  sectionId: id,
+  currentContentHash: z.string().regex(/^[a-f0-9]{64}$/i),
+  replacementBytes: z.number().int().nonnegative(),
+  resultingMarkdownHash: z.string().regex(/^[a-f0-9]{64}$/i),
+  wouldChange: z.boolean(),
+}).strict();
+export const mutationStatusSchema = z.object({ mutationId: z.string().uuid(), operation: z.string(), noteId: id, resultingVersion: z.number().int().positive(), createdAt: date, status: z.literal('committed') }).strict();
+export const capabilitiesSchema = z.object({
+  schemaVersion: z.literal(1),
+  effectiveProfile: capabilityProfile,
+  scopes: z.array(capabilityScope),
+  supportedOperations: z.array(z.string()),
+  responseLimits: z.object({
+    searchResults: z.number().int().positive(),
+    contextTokens: z.number().int().positive(),
+    noteChanges: z.number().int().positive(),
+    outlineSections: z.number().int().positive(),
+    patchReplacementBytes: z.number().int().positive(),
+  }).strict(),
+}).strict();
+const syncChangeSchema = z.object({ noteId: id, slug: z.string(), title: z.string(), tags: z.array(z.string()), notebookId: id.nullable(), version: z.number().int().positive(), updatedAt: date, deletedAt: date.nullable() }).strict();
+export const syncPageSchema = z.object({ changes: z.array(syncChangeSchema), nextCursor: z.string().nullable(), hasMore: z.boolean() }).strict();
+
 export const noteBlockSchema = z.object({
   id,
   noteId: id,

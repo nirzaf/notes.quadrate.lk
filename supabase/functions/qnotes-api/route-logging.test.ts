@@ -5,8 +5,13 @@ import { normalizeApiRoute, requestRoute } from './route-logging.ts';
 test('normalizes resource identifiers to route templates', () => {
   assert.equal(normalizeApiRoute('/api/notes/550e8400-e29b-41d4-a716-446655440000'), '/api/notes/:noteRef');
   assert.equal(normalizeApiRoute('/api/notes/550e8400-e29b-41d4-a716-446655440000/share'), '/api/notes/:noteId/share');
+  assert.equal(normalizeApiRoute('/api/notes/550e8400-e29b-41d4-a716-446655440000/outline'), '/api/notes/:noteRef/outline');
+  assert.equal(normalizeApiRoute('/api/notes/550e8400-e29b-41d4-a716-446655440000/section'), '/api/notes/:noteId/section');
+  assert.equal(normalizeApiRoute('/api/notes/550e8400-e29b-41d4-a716-446655440000/section/preview'), '/api/notes/:noteId/section/preview');
   assert.equal(normalizeApiRoute('/api/attachments/550e8400-e29b-41d4-a716-446655440000'), '/api/attachments/:attachmentId');
   assert.equal(normalizeApiRoute('/api/search/documents/550e8400-e29b-41d4-a716-446655440000/context'), '/api/search/documents/:documentId/context');
+  assert.equal(normalizeApiRoute('/api/mutations/550e8400-e29b-41d4-a716-446655440000'), '/api/mutations/:mutationId');
+  assert.equal(normalizeApiRoute('/api/capabilities'), '/api/capabilities');
   assert.equal(normalizeApiRoute('/public/share/resolve'), '/public/share/resolve');
   assert.equal(normalizeApiRoute('/api/import/workspace'), '/api/import/workspace');
   assert.equal(normalizeApiRoute('/vault/environments/resolve'), '/vault/environments/resolve');

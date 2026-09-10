@@ -15,3 +15,4 @@ export async function parseMarkdown(markdown: string): Promise<ParsedMarkdown> {
 export { MarkdownParseError, renderMarkdown };
 export { sha256Hex } from './hash.ts';
 export { chunkMarkdown, chunkText, estimateTokenCount, splitTokenAware } from './chunker.ts';
+export { getMarkdownOutline, MarkdownPatchError, patchMarkdownSection } from './outline.ts';

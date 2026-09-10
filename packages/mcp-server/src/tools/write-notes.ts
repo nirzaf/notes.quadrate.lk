@@ -1,4 +1,4 @@
-import type { AppendNoteInput, CreateNoteInput, MoveNoteToNotebookInput, Note, UpdateNoteInput } from '@qnotes/shared';
+import type { AppendNoteInput, CreateNoteInput, MoveNoteToNotebookInput, Note, PatchNoteSectionInput, UpdateNoteInput } from '@qnotes/shared';
 import type { CreateNoteOutcome, NoteMutationOutcome, NoteMutationResult } from '@qnotes/api-client';
 import { toolResult, type ReadQNotesClient } from './common.ts';
 import { captureAcknowledgmentSchema, mutationAcknowledgmentSchema } from '../contracts.ts';
@@ -10,6 +10,8 @@ export interface WriteQNotesClient extends ReadQNotesClient {
   appendNoteDetailed?: (noteId: string, input: AppendNoteInput) => Promise<NoteMutationResult>;
   updateNote(noteId: string, input: UpdateNoteInput): Promise<Note>;
   updateNoteDetailed?: (noteId: string, input: UpdateNoteInput) => Promise<NoteMutationResult>;
+  patchNoteSection: (noteId: string, input: PatchNoteSectionInput) => Promise<NoteMutationResult>;
+  previewNoteSection: (noteId: string, input: PatchNoteSectionInput) => Promise<import('@qnotes/shared').NoteSectionPatchPreview>;
   moveNoteToNotebook(noteId: string, input: MoveNoteToNotebookInput): Promise<Note>;
   deleteNote(noteId: string, input: { expectedVersion: number; deviceId: string; mutationId: string }): Promise<Note>;
   deleteNoteDetailed?: (noteId: string, input: { expectedVersion: number; deviceId: string; mutationId: string }) => Promise<NoteMutationResult>;
@@ -24,7 +26,7 @@ export interface WriteToolOptions {
 
 const MCP_DEVICE_ID = crypto.randomUUID();
 
-function deviceId(args: { deviceId?: string }, options?: WriteToolOptions): string {
+export function deviceId(args: { deviceId?: string }, options?: WriteToolOptions): string {
   return args.deviceId ?? options?.deviceId ?? MCP_DEVICE_ID;
 }
 
