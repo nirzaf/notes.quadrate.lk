@@ -143,7 +143,7 @@ export async function clearApplicationData(): Promise<void> {
   const vaultSecrets = await client.from('vault_secrets').select('id, owner_id, version').in('owner_id', ids).is('deleted_at', null);
   if (vaultSecrets.error) throw vaultSecrets.error;
   for (const row of Array.isArray(vaultSecrets.data) ? vaultSecrets.data : []) {
-    const result = await client.rpc('qnotes_vault_delete_secret', {
+    const result = await client.schema('public').rpc('qnotes_vault_delete_secret', {
       p_owner_id: row.owner_id,
       p_secret_id: row.id,
       p_expected_version: row.version,
