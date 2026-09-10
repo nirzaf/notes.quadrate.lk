@@ -14,6 +14,8 @@ import type {
   VaultAgentTokenMetadata,
   VaultAuditEvent,
   VaultEnvironment,
+  VaultOperationApprovalInput,
+  VaultOperationApprovalResult,
   VaultProject,
   VaultSecretMetadata,
 } from '@qnotes/shared';
@@ -123,6 +125,11 @@ function tokenResult(value: unknown): value is CreateVaultAgentTokenResult {
     && Array.isArray(value.grants) && value.grants.every(isGrant);
 }
 
+function approvalResult(value: unknown): value is VaultOperationApprovalResult {
+  return isRecord(value) && hasExactKeys(value, ['approvalToken', 'expiresAt'])
+    && isString(value.approvalToken) && /^qva_[A-Za-z0-9_-]{43}$/.test(value.approvalToken) && isString(value.expiresAt);
+}
+
 export class QVaultClient {
   private readonly baseUrl: string;
   private readonly getAccessToken: QNotesClientOptions['getAccessToken'];
@@ -141,6 +148,10 @@ export class QVaultClient {
       const headers = new Headers(init.headers);
       headers.set('Accept', 'application/json');
       if (init.body !== undefined && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+      if (options.vaultApproval) {
+        headers.set('X-Vault-Approval', options.vaultApproval.approvalToken);
+        headers.set('X-Vault-Request-Hash', options.vaultApproval.requestHash);
+      }
       const token = await this.getAccessToken(requestSignal.signal);
       throwIfAborted(requestSignal.signal);
       if (token) headers.set('Authorization', `Bearer ${token}`);
@@ -217,6 +228,10 @@ export class QVaultClient {
 
   revealSecrets(input: RevealVaultSecretsInput, options: RequestOptions = {}): Promise<RevealVaultSecretsResult> {
     return this.validated('/secrets/reveal-batch', revealBatchPayload, 'reveal batch', { method: 'POST', body: JSON.stringify(input) }, options);
+  }
+
+  issueApproval(input: VaultOperationApprovalInput, options: RequestOptions = {}): Promise<VaultOperationApprovalResult> {
+    return this.validated('/approvals', approvalResult, 'Vault operation approval', { method: 'POST', body: JSON.stringify(input) }, options);
   }
 
   listAgentTokens(options: RequestOptions = {}): Promise<VaultAgentTokenMetadata[]> {

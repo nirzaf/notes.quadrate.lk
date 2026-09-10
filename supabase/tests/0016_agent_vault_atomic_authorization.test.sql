@@ -130,9 +130,12 @@ select public.qnotes_create_vault_agent_token(
   'expired atomic token',
   'qvt_AtomicB1',
   repeat('e', 64),
-  clock_timestamp() - interval '1 second',
+  clock_timestamp() + interval '1 hour',
   jsonb_build_array(jsonb_build_object('projectId', 'c1000000-0000-4000-8000-000000000001'::uuid, 'environmentId', 'c1000000-0000-4000-8000-000000000002'::uuid, 'secretId', ((select response->'secret'->>'id' from atomic_secret_a))::uuid, 'action', 'secret:reveal'))
 ) as response;
+update notesdb.vault_agent_tokens
+set expires_at = clock_timestamp() - interval '1 second'
+where id = ((select response->>'id' from atomic_expired_token))::uuid;
 select is((public.qnotes_vault_reveal_secret(
   (select id from auth.users where email = 'owner@qnotes.local'),
   ((select response->'secret'->>'id' from atomic_secret_a))::uuid,

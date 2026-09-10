@@ -62,6 +62,7 @@ export interface QNotesClientOptions {
 export interface RequestOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
+  vaultApproval?: { approvalToken: string; requestHash: string };
 }
 
 export interface ListNotesParams extends RequestOptions {

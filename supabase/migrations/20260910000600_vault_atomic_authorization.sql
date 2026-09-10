@@ -257,7 +257,6 @@ begin
 
   for selector_item in
     select value from jsonb_array_elements(p_selectors)
-    order by (value->>'secretId')::uuid
   loop
     selector_project_id := (selector_item->>'projectId')::uuid;
     selector_environment_id := (selector_item->>'environmentId')::uuid;

@@ -128,36 +128,6 @@ async function removeObjects(client: SupabaseClient<any, 'notesdb'>, prefix: str
   }
 }
 
-async function clearVaultData(ownerUsers: readonly TestUser[]): Promise<void> {
-  for (const user of ownerUsers) {
-    const session = await signInSession(user);
-    const projectsResponse = await apiJson('/vault/projects', session.access_token);
-    if (!projectsResponse.response.ok) throw new Error(`Unable to list local Vault projects during cleanup (HTTP ${projectsResponse.response.status}).`);
-    const projects = Array.isArray((projectsResponse.body as { data?: unknown }).data) ? (projectsResponse.body as { data: Array<{ id: string }> }).data : [];
-    for (const project of projects) {
-      const environmentsResponse = await apiJson(`/vault/projects/${project.id}/environments`, session.access_token);
-      if (!environmentsResponse.response.ok) throw new Error(`Unable to list local Vault environments during cleanup (HTTP ${environmentsResponse.response.status}).`);
-      const environments = Array.isArray((environmentsResponse.body as { data?: unknown }).data) ? (environmentsResponse.body as { data: Array<{ id: string }> }).data : [];
-      for (const environment of environments) {
-        const secretsResponse = await apiJson(`/vault/environments/${environment.id}/secrets`, session.access_token);
-        if (!secretsResponse.response.ok) throw new Error(`Unable to list local Vault secrets during cleanup (HTTP ${secretsResponse.response.status}).`);
-        const secrets = Array.isArray((secretsResponse.body as { data?: unknown }).data) ? (secretsResponse.body as { data: Array<{ id: string; version: number }> }).data : [];
-        for (const secret of secrets) {
-          const deleted = await apiJson(`/vault/secrets/${secret.id}`, session.access_token, { method: 'DELETE', body: JSON.stringify({ expectedVersion: secret.version, mutationId: crypto.randomUUID(), confirm: true }) });
-          if (!deleted.response.ok) throw new Error(`Unable to delete local Vault secret during cleanup (HTTP ${deleted.response.status}).`);
-        }
-      }
-    }
-    const tokensResponse = await apiJson('/vault/agent-tokens', session.access_token);
-    if (!tokensResponse.response.ok) throw new Error(`Unable to list local Vault agent tokens during cleanup (HTTP ${tokensResponse.response.status}).`);
-    const tokens = Array.isArray((tokensResponse.body as { data?: unknown }).data) ? (tokensResponse.body as { data: Array<{ id: string; revokedAt: string | null }> }).data : [];
-    for (const token of tokens.filter((item) => !item.revokedAt)) {
-      const revoked = await apiJson(`/vault/agent-tokens/${token.id}`, session.access_token, { method: 'DELETE' });
-      if (!revoked.response.ok) throw new Error(`Unable to revoke local Vault agent token during cleanup (HTTP ${revoked.response.status}).`);
-    }
-  }
-}
-
 export async function clearApplicationData(): Promise<void> {
   const env = await localEnv();
   const client = createClient(env.supabaseUrl, env.serviceRoleKey, { db: { schema: 'notesdb' }, auth: { autoRefreshToken: false, persistSession: false } });
@@ -170,7 +140,25 @@ export async function clearApplicationData(): Promise<void> {
     ids.push(found.id);
     await removeObjects(client, found.id);
   }
-  await clearVaultData(TEST_USERS);
+  const vaultSecrets = await client.from('vault_secrets').select('id, owner_id, version').in('owner_id', ids).is('deleted_at', null);
+  if (vaultSecrets.error) throw vaultSecrets.error;
+  for (const row of Array.isArray(vaultSecrets.data) ? vaultSecrets.data : []) {
+    const result = await client.schema('public').rpc('qnotes_vault_delete_secret', {
+      p_owner_id: row.owner_id,
+      p_secret_id: row.id,
+      p_expected_version: row.version,
+      p_mutation_id: crypto.randomUUID(),
+      p_request_hash: '0'.repeat(64),
+      p_actor_token_id: null,
+      p_request_id: crypto.randomUUID(),
+      p_actor_kind: 'user_jwt',
+    });
+    if (result.error || !result.data || !['ok', 'idempotent'].includes(String((result.data as { status?: unknown }).status))) throw result.error ?? new Error('Unable to remove a local encrypted Vault value during cleanup.');
+  }
+  for (const table of ['vault_operation_approvals', 'vault_audit_events', 'vault_mutations', 'vault_agent_tokens', 'vault_projects']) {
+    const result = await client.from(table).delete().in('owner_id', ids);
+    if (result.error) throw result.error;
+  }
   for (const table of ['search_documents', 'note_blocks', 'note_mutations', 'api_tokens', 'attachments', 'notes', 'notebooks']) {
     const result = await client.from(table).delete().in('owner_id', ids);
     if (result.error) throw result.error;

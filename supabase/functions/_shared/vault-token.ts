@@ -1,6 +1,7 @@
-import { isVaultAgentToken } from '@qnotes/shared';
+import { hashVaultApprovalRequest, isVaultAgentToken } from '@qnotes/shared';
 
 const VAULT_TOKEN_PREFIX = 'qvt_';
+const VAULT_APPROVAL_PREFIX = 'qva_';
 
 function base64Url(bytes: Uint8Array): string {
   return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
@@ -30,6 +31,12 @@ export function generateVaultAgentToken(): string {
   return `${VAULT_TOKEN_PREFIX}${base64Url(bytes)}`;
 }
 
+export function generateVaultApprovalToken(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return `${VAULT_APPROVAL_PREFIX}${base64Url(bytes)}`;
+}
+
 export { isVaultAgentToken };
 
 export function hashVaultAgentToken(token: string): Promise<string> {
@@ -38,4 +45,8 @@ export function hashVaultAgentToken(token: string): Promise<string> {
 
 export function hashVaultMutation(request: unknown): Promise<string> {
   return hmac('qnotes-vault-mutation-v1', stableJson(request));
+}
+
+export function hashVaultApprovalToken(token: string): Promise<string> {
+  return hashVaultApprovalRequest({ domain: 'qnotes-vault-approval-v1', token });
 }

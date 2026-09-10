@@ -371,7 +371,7 @@ select public.qnotes_create_vault_agent_token(
   'synthetic grant token',
   'qvt_Test0001',
   (select token_hash from vault_rpc_test_values),
-  null,
+  clock_timestamp() + interval '1 hour',
   jsonb_build_array(
     jsonb_build_object('projectId', 'a1000000-0000-4000-8000-000000000001'::uuid, 'environmentId', null, 'secretId', null, 'action', 'metadata:read'),
     jsonb_build_object('projectId', 'a1000000-0000-4000-8000-000000000001'::uuid, 'environmentId', 'a1000000-0000-4000-8000-000000000002'::uuid, 'secretId', null, 'action', 'secret:write'),

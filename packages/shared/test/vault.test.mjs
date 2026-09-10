@@ -34,6 +34,9 @@ test('Vault validators normalize safe metadata and preserve secret values only i
   });
   const secret = validateCreateVaultSecretInput({ projectId, environmentId, name: 'CLOUDFLARE_API_TOKEN', value: 'local-only-secret', mutationId });
   assert.deepEqual(secret, { projectId, environmentId, name: 'CLOUDFLARE_API_TOKEN', value: 'local-only-secret', mutationId });
+  assert.deepEqual(validateCreateVaultSecretInput({ projectId, environmentId, name: ' KEY ', description: ' description ', value: 'local-only-secret', mutationId }), {
+    projectId, environmentId, name: 'KEY', description: 'description', value: 'local-only-secret', mutationId,
+  });
   assert.throws(() => validateCreateVaultSecretInput({ projectId, environmentId, name: 'KEY', value: '😀'.repeat(32_768), mutationId }), /too large/);
 });
 
@@ -49,7 +52,9 @@ test('Vault batch reveal requires an explicit bounded selector list and purpose'
 
 test('Vault token creation requires a grant while replacement can clear every grant', () => {
   const grant = { projectId, environmentId: null, secretId: null, action: 'metadata:read' };
-  assert.throws(() => validateCreateVaultAgentTokenInput({ name: 'empty', expiresAt: null, grants: [] }), /1 to/);
+  assert.throws(() => validateCreateVaultAgentTokenInput({ name: 'empty', expiresAt: null, grants: [] }), /future ISO date/);
+  assert.throws(() => validateCreateVaultAgentTokenInput({ name: 'empty', expiresAt: new Date(Date.now() + 60_000).toISOString(), grants: [] }), /1 to/);
+  assert.equal(validateCreateVaultAgentTokenInput({ name: ' deploy ', expiresAt: new Date(Date.now() + 60_000).toISOString(), grants: [grant] }).name, 'deploy');
   assert.deepEqual(validateReplaceVaultAgentGrantsInput({ grants: [grant] }), { grants: [grant] });
   assert.deepEqual(validateReplaceVaultAgentGrantsInput({ grants: [] }), { grants: [] });
 });
