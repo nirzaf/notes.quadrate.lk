@@ -122,7 +122,10 @@ export class IndexedDbDraftStore implements DraftStore {
             const cursor = cursorRequest.result;
             if (!cursor) return;
             const value = cursor.value as Partial<Note> & NoteSummary;
-            if (typeof value.contentMarkdown === 'string' && typeof value.contentPlain === 'string') records.put(searchRecord(value as Note));
+            if (typeof value.contentMarkdown === 'string' && typeof value.contentPlain === 'string') {
+              records.put(searchRecord(value as Note));
+              cursor.update({ ...noteSummary(value as Note), noteId: value.id });
+            }
             cursor.continue();
           };
         }
@@ -217,7 +220,7 @@ export class IndexedDbDraftStore implements DraftStore {
     if (!database) throw new Error('Local storage is unavailable.');
     await new Promise<void>((resolve, reject) => {
       const transaction = database.transaction(['recentNotes', 'searchRecords'], 'readwrite');
-      transaction.objectStore('recentNotes').put({ ...noteSummary(note), noteId: note.id, contentMarkdown: note.contentMarkdown, contentPlain: note.contentPlain });
+      transaction.objectStore('recentNotes').put({ ...noteSummary(note), noteId: note.id });
       transaction.objectStore('searchRecords').put(searchRecord(note));
       void this.pruneCachedNotes(transaction).catch(reject);
       transaction.oncomplete = () => resolve();
@@ -291,7 +294,7 @@ export class IndexedDbDraftStore implements DraftStore {
         if (!cursor || value.length >= limit || scanned >= MAX_CACHED_NOTES) return;
         scanned += 1;
         const record = cursor.value as SearchRecord;
-        if (matchesSearch(record, normalized)) value.push(fromSearchRecord(record));
+        if (!record.deletedAt && matchesSearch(record, normalized)) value.push(fromSearchRecord(record));
         cursor.continue();
       };
       request.onerror = () => reject(request.error ?? new Error('Unable to search cached notes.'));
@@ -313,7 +316,7 @@ export class IndexedDbDraftStore implements DraftStore {
         searchable.clear();
       }
       for (const note of notes) {
-        recent.put({ ...noteSummary(note), noteId: note.id, contentMarkdown: note.contentMarkdown, contentPlain: note.contentPlain });
+        recent.put({ ...noteSummary(note), noteId: note.id });
         searchable.put(searchRecord(note));
       }
       for (const noteId of deletedNoteIds) {
@@ -372,8 +375,9 @@ export class MemoryDraftStore implements DraftStore {
 
   async searchRecent(query: string, limit = 50): Promise<NoteSummary[]> {
     const normalized = query.trim().toLocaleLowerCase();
+    if (!normalized) return [];
     return [...this.searchable.values()]
-      .filter((record) => matchesSearch(record, normalized))
+      .filter((record) => !record.deletedAt && matchesSearch(record, normalized))
       .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
       .slice(0, limit)
       .map(fromSearchRecord);

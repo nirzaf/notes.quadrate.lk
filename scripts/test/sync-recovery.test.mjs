@@ -231,3 +231,23 @@ test('page application stores content before advancing its checkpoint', async ()
   });
   assert.deepEqual(events, ['fetch', ['apply', 'note-a', 'cursor-1']]);
 });
+
+test('classifies a fetched deleted note as a tombstone before page application', async () => {
+  const applied = [];
+  await runSyncRecovery({
+    userId: 'user-a',
+    queryClient: recordingQueryClient(),
+    api: {
+      sync: async () => ({ changes: [change('note-a')], nextCursor: 'cursor-1', hasMore: false }),
+      getNote: async () => ({ id: 'note-a', deletedAt: '2026-09-09T00:00:00.000Z' }),
+    },
+    readSyncCursor: async () => 'cursor-0',
+    writeSyncCursor: async () => { throw new Error('legacy cursor write must not be used'); },
+    removeRememberedNote: async () => { throw new Error('legacy delete must not be used'); },
+    applySyncPage: async (page) => { applied.push(page); },
+    generation: 0,
+    getGeneration: () => 0,
+    signal: new AbortController().signal,
+  });
+  assert.deepEqual(applied, [{ notes: [], deletedNoteIds: ['note-a'], cursor: 'cursor-1' }]);
+});

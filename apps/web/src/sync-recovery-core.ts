@@ -92,9 +92,11 @@ export async function runSyncRecovery({ userId, queryClient, api, readSyncCursor
     }
     if (applySyncPage) {
       const currentDeleted = page.changes.filter((change) => Boolean(change.deletedAt)).map((change) => change.noteId);
-      const notes = await fetchChangedNotes(api, page.changes.filter((change) => !change.deletedAt), signal);
+      const fetchedNotes = await fetchChangedNotes(api, page.changes.filter((change) => !change.deletedAt), signal);
+      const notes = fetchedNotes.filter((note) => !note.deletedAt);
+      const fetchedDeleted = fetchedNotes.filter((note) => Boolean(note.deletedAt)).map((note) => note.id);
       if (isStale()) return;
-      await applySyncPage({ notes, deletedNoteIds: currentDeleted, cursor: page.nextCursor }, userId);
+      await applySyncPage({ notes, deletedNoteIds: [...new Set([...currentDeleted, ...fetchedDeleted])], cursor: page.nextCursor }, userId);
     }
     cursor = page.nextCursor;
     hasMore = page.hasMore;
