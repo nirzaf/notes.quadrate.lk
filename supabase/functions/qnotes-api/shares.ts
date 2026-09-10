@@ -5,6 +5,7 @@ import { appDbClient, assertSupabase, serviceClient } from '../_shared/database.
 import { ApiError } from '../_shared/errors.ts';
 import { generateNoteShareToken, hashNoteShareToken, isValidNoteShareToken, noteShareTokenPrefix } from '../_shared/share-token.ts';
 import { findAuthorizedNote } from './notes.ts';
+import { asCursorInteger, decodeReadCursor, encodeReadCursor, fitJsonContent, parseReadRange, resolveReadRange, sha256Hex } from './read-range.ts';
 
 const unavailableMessage = 'This shared note is unavailable. The link may be invalid, expired, or revoked.';
 
@@ -43,7 +44,7 @@ function shareNotFound(): never {
   throw new ApiError(404, 'PUBLIC_SHARE_NOT_FOUND', unavailableMessage);
 }
 
-async function loadPublicSharedNote(token: unknown): Promise<{ title: string; content_markdown: string; updated_at: string }> {
+async function loadPublicSharedNote(token: unknown): Promise<{ title: string; content_markdown: string; updated_at: string; tokenHash: string; sourceHash: string }> {
   if (typeof token !== 'string' || !isValidNoteShareToken(token)) shareNotFound();
   const tokenHash = await hashNoteShareToken(token);
   const result = assertSupabase(await serviceClient.rpc('qnotes_resolve_note_share', { p_token_hash: tokenHash }));
@@ -53,7 +54,7 @@ async function loadPublicSharedNote(token: unknown): Promise<{ title: string; co
   if (typeof resolved.title !== 'string' || typeof resolved.content_markdown !== 'string' || typeof resolved.updated_at !== 'string') {
     throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to resolve public share.');
   }
-  return { title: resolved.title, content_markdown: resolved.content_markdown, updated_at: resolved.updated_at };
+  return { title: resolved.title, content_markdown: resolved.content_markdown, updated_at: resolved.updated_at, tokenHash, sourceHash: await sha256Hex(resolved.content_markdown) };
 }
 
 export async function getPublicShare(context: Context): Promise<Response> {
@@ -127,7 +128,41 @@ export async function revokePublicShare(context: Context): Promise<Response> {
 
 export async function resolvePublicShare(context: Context): Promise<Response> {
   const body = record(await context.req.json().catch(() => null));
-  if (Object.keys(body).length !== 1 || !Object.prototype.hasOwnProperty.call(body, 'token')) shareNotFound();
+  const allowedKeys = new Set(['token', 'offset', 'lineStart', 'lineEnd', 'maxBytes', 'continuation']);
+  if (!Object.prototype.hasOwnProperty.call(body, 'token') || Object.keys(body).some((key) => !allowedKeys.has(key))) shareNotFound();
   const resolved = await loadPublicSharedNote(body.token);
-  return context.json({ data: { title: resolved.title, contentMarkdown: resolved.content_markdown, updatedAt: resolved.updated_at } });
+  const rangeRequest = parseReadRange({ offset: body.offset, lineStart: body.lineStart, lineEnd: body.lineEnd, maxBytes: body.maxBytes, continuation: body.continuation });
+  if (Object.keys(rangeRequest).length === 0) return context.json({ data: { title: resolved.title, contentMarkdown: resolved.content_markdown, updatedAt: resolved.updated_at } });
+  const shareHash = await sha256Hex(resolved.tokenHash);
+  let range = resolveReadRange(resolved.content_markdown, rangeRequest);
+  let rangeStart = range.startOffset;
+  if (rangeRequest.continuation) {
+    const cursor = decodeReadCursor(rangeRequest.continuation);
+    if (cursor.kind !== 'public-share' || cursor.shareHash !== shareHash || cursor.sourceHash !== resolved.sourceHash || cursor.updatedAt !== resolved.updated_at) throw new ApiError(409, 'NOTE_VERSION_CONFLICT', 'The public snapshot continuation is stale. Read a new snapshot page.');
+    const rangeEnd = asCursorInteger(cursor, 'rangeEnd');
+    rangeStart = asCursorInteger(cursor, 'rangeStart');
+    const nextOffset = asCursorInteger(cursor, 'nextOffset');
+    if (rangeStart > rangeEnd || nextOffset >= rangeEnd || rangeEnd > range.endOffset) throw new ApiError(422, 'VALIDATION_ERROR', 'continuation is invalid or expired.');
+    range = { ...range, startOffset: nextOffset, endOffset: rangeEnd };
+  }
+  return context.json({ data: fitJsonContent(resolved.content_markdown, range, (slice, pageTruncated) => {
+    const contentComplete = !pageTruncated && rangeStart === 0 && range.endOffset === slice.totalBytes;
+    const continuation = pageTruncated ? encodeReadCursor({
+      kind: 'public-share', shareHash, sourceHash: resolved.sourceHash, updatedAt: resolved.updated_at,
+      rangeStart, rangeEnd: range.endOffset, nextOffset: slice.endOffset,
+    }) : undefined;
+    return {
+      title: resolved.title,
+      contentMarkdown: slice.content,
+      updatedAt: resolved.updated_at,
+      contentBytes: slice.endOffset - slice.startOffset,
+      totalBytes: slice.totalBytes,
+      offset: slice.startOffset,
+      nextOffset: slice.endOffset,
+      truncated: !contentComplete,
+      contentComplete,
+      sourceHash: resolved.sourceHash,
+      ...(continuation ? { continuation: { cursor: continuation, sourceHash: resolved.sourceHash, nextOffset: slice.endOffset, totalBytes: slice.totalBytes } } : {}),
+    };
+  }) });
 }

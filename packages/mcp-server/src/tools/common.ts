@@ -1,11 +1,13 @@
+import { DEFAULT_MCP_CONTENT_MAX_BYTES } from '@qnotes/shared';
 import type { NoteBlock, SearchContext, SearchRequest, SearchResponse } from '@qnotes/shared';
+import type { ContentReadParams } from '@qnotes/api-client';
 import type { ZodType } from 'zod';
 
 export interface ReadQNotesClient {
   searchPost(input: SearchRequest, options?: { signal?: AbortSignal }): Promise<SearchResponse>;
-  readNoteContext(documentId: string, params?: { before?: number; after?: number; maxTokens?: number; continuation?: string }): Promise<SearchContext>;
-  getBlock(noteRef: string, blockKey: string): Promise<NoteBlock>;
-  listNotebooks(): Promise<{ items: unknown[] }>;
+  readNoteContext(documentId: string, params?: { before?: number; after?: number; maxTokens?: number; maxBytes?: number; continuation?: string }): Promise<SearchContext>;
+  getBlock(noteRef: string, blockKey: string, options?: ContentReadParams): Promise<NoteBlock>;
+  listNotebooks(): Promise<{ items: unknown[]; truncated?: boolean }>;
 }
 
 export function appendMarkdown(existing: string, addition: string): string {
@@ -20,13 +22,53 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+export const MAX_MCP_TOOL_RESPONSE_BYTES = 64 * 1024;
+
+export function boundedMcpContentBytes(value?: number): number {
+  if (value !== undefined && (!Number.isSafeInteger(value) || value < 1 || value > DEFAULT_MCP_CONTENT_MAX_BYTES)) {
+    throw new Error(`maxBytes must be at most ${DEFAULT_MCP_CONTENT_MAX_BYTES}.`);
+  }
+  return value ?? DEFAULT_MCP_CONTENT_MAX_BYTES;
+}
+
+function serializedToolResultBytes(value: Record<string, unknown>): number {
+  const result = {
+    content: [{ type: 'text' as const, text: JSON.stringify(value) }],
+    structuredContent: value,
+  };
+  return new TextEncoder().encode(JSON.stringify(result)).byteLength;
+}
+
+function boundItems(value: Record<string, unknown>): Record<string, unknown> {
+  if (!Array.isArray(value.items)) throw new Error('MCP tool response exceeds the configured wire-byte limit.');
+  const items = value.items;
+  let low = 0;
+  let high = items.length;
+  let best = -1;
+  while (low <= high) {
+    const count = Math.floor((low + high) / 2);
+    const candidate = { ...value, items: items.slice(0, count), truncated: true };
+    if (serializedToolResultBytes(candidate) <= MAX_MCP_TOOL_RESPONSE_BYTES) {
+      best = count;
+      low = count + 1;
+    } else {
+      high = count - 1;
+    }
+  }
+  if (best < 0) throw new Error('MCP tool response exceeds the configured wire-byte limit.');
+  return { ...value, items: items.slice(0, best), truncated: true };
+}
+
 export function toolResult(value: unknown, schema?: ZodType) {
   const parsed = schema ? schema.parse(value) : value;
   if (!isObject(parsed)) throw new Error('MCP tool output must be an object.');
-  return {
-    content: [{ type: 'text' as const, text: JSON.stringify(parsed) }],
-    structuredContent: parsed,
+  const bounded = serializedToolResultBytes(parsed) <= MAX_MCP_TOOL_RESPONSE_BYTES ? parsed : boundItems(parsed);
+  const result = {
+    content: [{ type: 'text' as const, text: JSON.stringify(bounded) }],
+    structuredContent: bounded,
   };
+  if (new TextEncoder().encode(JSON.stringify(result)).byteLength > MAX_MCP_TOOL_RESPONSE_BYTES) throw new Error('MCP tool response exceeds the configured wire-byte limit.');
+  return result;
 }
 
 type ToolHandler = (...args: any[]) => unknown;

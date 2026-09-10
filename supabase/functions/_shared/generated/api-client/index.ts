@@ -1,6 +1,6 @@
 export { QNotesClient, QNotesProtocolError } from './client.ts';
-export type { CreateNoteOutcome, CreateNoteResult, GetNoteParams, ListNotesParams, NoteContextParams, NoteMutationOutcome, NoteMutationResult, QNotesClientOptions, RequestOptions, SearchParams, SearchPostOptions, WorkspaceImportOptions, WorkspaceImportSummary } from './client.ts';
-export type { SearchContext, SearchContextSource, SearchContextTokenBudget, SearchRequest, SearchResponse } from '@qnotes/shared';
+export type { BlockReadParams, ContentReadParams, CreateNoteOutcome, CreateNoteResult, GetNoteParams, ListNotesParams, NoteContextParams, NoteMutationOutcome, NoteMutationResult, PublicShareReadParams, QNotesClientOptions, RequestOptions, SearchParams, SearchPostOptions, WorkspaceImportOptions, WorkspaceImportSummary } from './client.ts';
+export type { ContentContinuation, Note, PagedNote, SearchContext, SearchContextSource, SearchContextTokenBudget, SearchRequest, SearchResponse } from '@qnotes/shared';
 export type { AppendNoteInput, CreatePublicShareInput, CreatePublicShareResult, PublicShareMetadata, PublicSharedNote } from '@qnotes/shared';
 export { QNotesHttpError } from './http-error.ts';
 export { QVaultClient, QVaultProtocolError } from './vault-client.ts';

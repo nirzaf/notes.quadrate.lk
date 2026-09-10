@@ -10,6 +10,7 @@ import type {
   CreateNotebookInput,
   CreateNoteInput,
   Note,
+  PagedNote,
   Notebook,
   NoteBlock,
   NoteSummary,
@@ -76,9 +77,26 @@ export interface ListNotesParams extends RequestOptions {
   tag?: string;
 }
 
-export interface GetNoteParams extends RequestOptions {
+export interface ContentReadParams extends RequestOptions {
+  offset?: number;
+  lineStart?: number;
+  lineEnd?: number;
+  maxBytes?: number;
+  continuation?: string;
+}
+
+export interface GetNoteParams extends ContentReadParams {
   includeDeleted?: boolean;
 }
+
+type FullNoteParams = RequestOptions & {
+  includeDeleted?: boolean;
+  offset?: never;
+  lineStart?: never;
+  lineEnd?: never;
+  maxBytes?: never;
+  continuation?: never;
+};
 
 export interface SearchParams extends RequestOptions {
   query: string;
@@ -93,8 +111,12 @@ export interface NoteContextParams extends RequestOptions {
   before?: number;
   after?: number;
   maxTokens?: number;
+  maxBytes?: number;
   continuation?: string;
 }
+
+export type BlockReadParams = ContentReadParams;
+export type PublicShareReadParams = ContentReadParams;
 
 export interface WorkspaceImportOptions extends RequestOptions {
   confirm?: boolean;
@@ -141,11 +163,38 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every(isString);
 }
 
-function isNote(value: unknown): value is Note {
+function isContentContinuation(value: unknown): boolean {
+  return isRecord(value) && isString(value.cursor) && isString(value.sourceHash)
+    && typeof value.nextOffset === 'number' && Number.isSafeInteger(value.nextOffset) && value.nextOffset >= 0
+    && typeof value.totalBytes === 'number' && Number.isSafeInteger(value.totalBytes) && value.totalBytes >= 0
+    && (value.noteVersion === undefined || (typeof value.noteVersion === 'number' && Number.isSafeInteger(value.noteVersion) && value.noteVersion > 0));
+}
+
+function isNoteMetadata(value: unknown): value is Record<string, unknown> {
   return isRecord(value) && isString(value.id) && isString(value.slug) && isString(value.title)
-    && isString(value.contentMarkdown) && isString(value.contentPlain) && isStringArray(value.tags)
+    && isString(value.contentMarkdown) && isStringArray(value.tags)
     && isNullableString(value.notebookId) && typeof value.version === 'number' && Number.isSafeInteger(value.version)
-    && isString(value.createdAt) && isString(value.updatedAt) && isNullableString(value.deletedAt);
+    && isString(value.createdAt) && isString(value.updatedAt) && isNullableString(value.deletedAt)
+    && (value.contentBytes === undefined || (typeof value.contentBytes === 'number' && Number.isSafeInteger(value.contentBytes) && value.contentBytes >= 0))
+    && (value.totalBytes === undefined || (typeof value.totalBytes === 'number' && Number.isSafeInteger(value.totalBytes) && value.totalBytes >= 0))
+    && (value.offset === undefined || (typeof value.offset === 'number' && Number.isSafeInteger(value.offset) && value.offset >= 0))
+    && (value.nextOffset === undefined || (typeof value.nextOffset === 'number' && Number.isSafeInteger(value.nextOffset) && value.nextOffset >= 0))
+    && (value.truncated === undefined || typeof value.truncated === 'boolean')
+    && (value.contentComplete === undefined || typeof value.contentComplete === 'boolean')
+    && (value.sourceHash === undefined || isString(value.sourceHash))
+    && (value.continuation === undefined || isContentContinuation(value.continuation));
+}
+
+function isNote(value: unknown): value is Note {
+  return isNoteMetadata(value) && isString(value.contentPlain);
+}
+
+function isPagedNote(value: unknown): value is PagedNote {
+  return isNoteMetadata(value) && !Object.prototype.hasOwnProperty.call(value, 'contentPlain') && typeof value.contentComplete === 'boolean';
+}
+
+function isNoteRead(value: unknown): value is Note | PagedNote {
+  return isNote(value) || isPagedNote(value);
 }
 
 function isNoteSummary(value: unknown): value is NoteSummary {
@@ -201,6 +250,7 @@ function isSearchResponse(value: unknown): value is SearchResponse {
     || (value.timing.serializationMs !== undefined && typeof value.timing.serializationMs !== 'number')
     || !Array.isArray(value.items) || !value.items.every(isSearchResult)) return false;
   if (value.nextCursor !== undefined && !isNullableString(value.nextCursor)) return false;
+  if (value.truncated !== undefined && typeof value.truncated !== 'boolean') return false;
   if (value.degradedReason !== undefined && !isString(value.degradedReason)) return false;
   if (value.index !== undefined) {
     if (!isRecord(value.index) || !isString(value.index.model) || typeof value.index.pendingDocuments !== 'number'
@@ -219,7 +269,14 @@ function isNoteBlock(value: unknown): value is NoteBlock {
   return isRecord(value) && isString(value.id) && isString(value.noteId) && isString(value.blockKey)
     && isString(value.blockType) && isNullableString(value.title) && isNullableString(value.language)
     && isString(value.content) && typeof value.position === 'number' && typeof value.copyable === 'boolean'
-    && isString(value.contentHash);
+    && isString(value.contentHash)
+    && (value.contentBytes === undefined || (typeof value.contentBytes === 'number' && Number.isSafeInteger(value.contentBytes) && value.contentBytes >= 0))
+    && (value.totalBytes === undefined || (typeof value.totalBytes === 'number' && Number.isSafeInteger(value.totalBytes) && value.totalBytes >= 0))
+    && (value.offset === undefined || (typeof value.offset === 'number' && Number.isSafeInteger(value.offset) && value.offset >= 0))
+    && (value.nextOffset === undefined || (typeof value.nextOffset === 'number' && Number.isSafeInteger(value.nextOffset) && value.nextOffset >= 0))
+    && (value.truncated === undefined || typeof value.truncated === 'boolean')
+    && (value.contentComplete === undefined || typeof value.contentComplete === 'boolean')
+    && (value.continuation === undefined || isContentContinuation(value.continuation));
 }
 
 function isSearchContextSource(value: unknown): boolean {
@@ -229,7 +286,10 @@ function isSearchContextSource(value: unknown): boolean {
     && isNullableString(value.sourceId) && isString(value.sourceKey) && isString(value.sourceTitle)
     && isNullableString(value.headingPath) && isNullableString(value.attachmentId)
     && isNullableNumber(value.pageNumber) && isString(value.content) && isString(value.sourceHash)
-    && typeof value.truncated === 'boolean';
+    && typeof value.truncated === 'boolean'
+    && (value.contentBytes === undefined || (typeof value.contentBytes === 'number' && Number.isSafeInteger(value.contentBytes) && value.contentBytes >= 0))
+    && (value.totalBytes === undefined || (typeof value.totalBytes === 'number' && Number.isSafeInteger(value.totalBytes) && value.totalBytes >= 0))
+    && (value.offset === undefined || (typeof value.offset === 'number' && Number.isSafeInteger(value.offset) && value.offset >= 0));
 }
 
 function isSearchContextTokenBudget(value: unknown): boolean {
@@ -242,6 +302,7 @@ function isSearchContextContinuation(value: unknown): boolean {
   return isRecord(value) && isString(value.cursor) && typeof value.noteVersion === 'number'
     && Number.isSafeInteger(value.noteVersion) && isString(value.sourceHash)
     && typeof value.nextOffset === 'number' && Number.isSafeInteger(value.nextOffset) && value.nextOffset >= 0
+    && (value.totalBytes === undefined || (typeof value.totalBytes === 'number' && Number.isSafeInteger(value.totalBytes) && value.totalBytes >= 0))
     && (value.principal === undefined || isString(value.principal))
     && (value.policyRevision === undefined || (typeof value.policyRevision === 'number' && Number.isSafeInteger(value.policyRevision) && value.policyRevision >= 0));
 }
@@ -255,7 +316,15 @@ function isSearchContext(value: unknown): value is SearchContext {
     && (value.attachmentId === undefined || isNullableString(value.attachmentId))
     && (value.pageNumber === undefined || isNullableNumber(value.pageNumber))
     && (value.sourceHash === undefined || isString(value.sourceHash))
+    && (value.contentBytes === undefined || (typeof value.contentBytes === 'number' && Number.isSafeInteger(value.contentBytes) && value.contentBytes >= 0))
+    && (value.totalBytes === undefined || (typeof value.totalBytes === 'number' && Number.isSafeInteger(value.totalBytes) && value.totalBytes >= 0))
+    && (value.offset === undefined || (typeof value.offset === 'number' && Number.isSafeInteger(value.offset) && value.offset >= 0))
+    && (value.nextOffset === undefined || (typeof value.nextOffset === 'number' && Number.isSafeInteger(value.nextOffset) && value.nextOffset >= 0))
+    && (value.wireBytes === undefined || (typeof value.wireBytes === 'number' && Number.isSafeInteger(value.wireBytes) && value.wireBytes >= 0))
+    && (value.wireByteLimit === undefined || (typeof value.wireByteLimit === 'number' && Number.isSafeInteger(value.wireByteLimit) && value.wireByteLimit > 0))
     && (value.truncated === undefined || typeof value.truncated === 'boolean')
+    && (value.contentComplete === undefined || typeof value.contentComplete === 'boolean')
+    && (value.neighborsTruncated === undefined || typeof value.neighborsTruncated === 'boolean')
     && (value.tokenBudget === undefined || isSearchContextTokenBudget(value.tokenBudget))
     && (value.continuation === undefined || isSearchContextContinuation(value.continuation))
     && (value.previousSources === undefined || (Array.isArray(value.previousSources) && value.previousSources.every(isSearchContextSource)))
@@ -285,8 +354,17 @@ function hasOnlyKeys(value: Record<string, unknown>, keys: string[]): boolean {
 }
 
 function isPublicSharedNote(value: unknown): value is PublicSharedNote {
-  return isRecord(value) && hasOnlyKeys(value, ['title', 'contentMarkdown', 'updatedAt'])
-    && isString(value.title) && isString(value.contentMarkdown) && isString(value.updatedAt);
+  if (!isRecord(value) || !isString(value.title) || !isString(value.contentMarkdown) || !isString(value.updatedAt)) return false;
+  const allowed = ['title', 'contentMarkdown', 'updatedAt', 'contentBytes', 'totalBytes', 'offset', 'nextOffset', 'truncated', 'contentComplete', 'sourceHash', 'continuation'];
+  return Object.keys(value).every((key) => allowed.includes(key))
+    && (value.contentBytes === undefined || (typeof value.contentBytes === 'number' && Number.isSafeInteger(value.contentBytes) && value.contentBytes >= 0))
+    && (value.totalBytes === undefined || (typeof value.totalBytes === 'number' && Number.isSafeInteger(value.totalBytes) && value.totalBytes >= 0))
+    && (value.offset === undefined || (typeof value.offset === 'number' && Number.isSafeInteger(value.offset) && value.offset >= 0))
+    && (value.nextOffset === undefined || (typeof value.nextOffset === 'number' && Number.isSafeInteger(value.nextOffset) && value.nextOffset >= 0))
+    && (value.truncated === undefined || typeof value.truncated === 'boolean')
+    && (value.contentComplete === undefined || typeof value.contentComplete === 'boolean')
+    && (value.sourceHash === undefined || isString(value.sourceHash))
+    && (value.continuation === undefined || isContentContinuation(value.continuation));
 }
 
 function isPublicShareMetadata(value: unknown): value is PublicShareMetadata {
@@ -490,16 +568,19 @@ export class QNotesClient {
     return this.requestValidated(`/notes${queryString({ cursor: params.cursor, limit: params.limit, includeDeleted: params.includeDeleted, deletedOnly: params.deletedOnly, notebookId: params.notebookId, unfiled: params.unfiled, tag: params.tag })}`, (value): value is { items: NoteSummary[]; nextCursor: string | null } => isRecord(value) && Array.isArray(value.items) && value.items.every(isNoteSummary) && isNullableString(value.nextCursor), 'notes list', {}, params);
   }
 
-  listNotebooks(options: RequestOptions = {}): Promise<{ items: Notebook[] }> {
-    return this.requestValidated('/notebooks', (value): value is { items: Notebook[] } => isRecord(value) && Array.isArray(value.items) && value.items.every(isNotebook), 'notebooks list', {}, options);
+  listNotebooks(options: RequestOptions = {}): Promise<{ items: Notebook[]; truncated?: boolean }> {
+    return this.requestValidated('/notebooks', (value): value is { items: Notebook[]; truncated?: boolean } => isRecord(value) && Array.isArray(value.items) && value.items.every(isNotebook) && (value.truncated === undefined || typeof value.truncated === 'boolean'), 'notebooks list', {}, options);
   }
 
   createNotebook(input: CreateNotebookInput, options: RequestOptions = {}): Promise<Notebook> {
     return this.requestValidated('/notebooks', isNotebook, 'notebook', { method: 'POST', body: JSON.stringify(input) }, options);
   }
 
-  getNote(noteRef: string, params: GetNoteParams = {}): Promise<Note> {
-    return this.requestValidated(`/notes/${encodeURIComponent(noteRef)}${queryString({ includeDeleted: params.includeDeleted })}`, isNote, 'note', {}, params);
+  getNote(noteRef: string): Promise<Note>;
+  getNote(noteRef: string, params: FullNoteParams): Promise<Note>;
+  getNote(noteRef: string, params: GetNoteParams): Promise<Note | PagedNote>;
+  getNote(noteRef: string, params: GetNoteParams = {}): Promise<Note | PagedNote> {
+    return this.requestValidated(`/notes/${encodeURIComponent(noteRef)}${queryString({ includeDeleted: params.includeDeleted, offset: params.offset, lineStart: params.lineStart, lineEnd: params.lineEnd, maxBytes: params.maxBytes, continuation: params.continuation })}`, isNoteRead, 'note', {}, params);
   }
 
   createNote(input: CreateNoteInput, options: RequestOptions = {}): Promise<Note> {
@@ -564,8 +645,8 @@ export class QNotesClient {
     return this.requestValidated(`/notes/${encodeURIComponent(noteRef)}/blocks`, (value): value is NoteBlock[] => Array.isArray(value) && value.every(isNoteBlock), 'note blocks', {}, options);
   }
 
-  getBlock(noteRef: string, blockKey: string, options: RequestOptions = {}): Promise<NoteBlock> {
-    return this.requestValidated(`/notes/${encodeURIComponent(noteRef)}/blocks/${encodeURIComponent(blockKey)}`, isNoteBlock, 'note block', {}, options);
+  getBlock(noteRef: string, blockKey: string, options: BlockReadParams = {}): Promise<NoteBlock> {
+    return this.requestValidated(`/notes/${encodeURIComponent(noteRef)}/blocks/${encodeURIComponent(blockKey)}${queryString({ offset: options.offset, lineStart: options.lineStart, lineEnd: options.lineEnd, maxBytes: options.maxBytes, continuation: options.continuation })}`, isNoteBlock, 'note block', {}, options);
   }
 
   search(params: SearchParams): Promise<SearchResponse> {
@@ -577,7 +658,7 @@ export class QNotesClient {
   }
 
   readNoteContext(documentId: UUID, params: NoteContextParams = {}): Promise<SearchContext> {
-    return this.requestValidated(`/search/documents/${encodeURIComponent(documentId)}/context${queryString({ before: params.before ?? 1, after: params.after ?? 1, maxTokens: params.maxTokens ?? 1800, continuation: params.continuation })}`, isSearchContext, 'search context', {}, params);
+    return this.requestValidated(`/search/documents/${encodeURIComponent(documentId)}/context${queryString({ before: params.before ?? 1, after: params.after ?? 1, maxTokens: params.maxTokens ?? 1800, maxBytes: params.maxBytes, continuation: params.continuation })}`, isSearchContext, 'search context', {}, params);
   }
 
   sync(cursor?: string, limit?: number, options: RequestOptions = {}): Promise<SyncPage> {
@@ -616,8 +697,9 @@ export class QNotesClient {
     await this.request(`/notes/${encodeURIComponent(noteId)}/share`, { method: 'DELETE' }, options);
   }
 
-  resolvePublicShare(token: string, options: RequestOptions = {}): Promise<PublicSharedNote> {
-    return this.publicRequestValidated('/public/share/resolve', isPublicSharedNote, 'public shared note', { method: 'POST', body: JSON.stringify({ token }) }, options);
+  resolvePublicShare(token: string, options: PublicShareReadParams = {}): Promise<PublicSharedNote> {
+    const { offset, lineStart, lineEnd, maxBytes, continuation } = options;
+    return this.publicRequestValidated('/public/share/resolve', isPublicSharedNote, 'public shared note', { method: 'POST', body: JSON.stringify({ token, ...(offset === undefined ? {} : { offset }), ...(lineStart === undefined ? {} : { lineStart }), ...(lineEnd === undefined ? {} : { lineEnd }), ...(maxBytes === undefined ? {} : { maxBytes }), ...(continuation === undefined ? {} : { continuation }) }) }, options);
   }
 
   listTokens(options: RequestOptions = {}): Promise<ApiTokenMetadata[]> {

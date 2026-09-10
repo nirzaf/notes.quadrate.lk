@@ -5,6 +5,7 @@ import { authFromContext, requireScope } from '../_shared/auth.ts';
 import { ApiError } from '../_shared/errors.ts';
 import { appDbClient, assertSupabase, noteFromRow, requestHash, serviceClient, summaryFromRow } from '../_shared/database.ts';
 import { applyNotebookAccess, assertNotebookAccess, assertNoteAccess, assertUnfiledAccess, authPrincipal, requireCursorPolicy } from '../_shared/notebook-access.ts';
+import { asCursorInteger, asCursorString, decodeReadCursor, encodeReadCursor, fitJsonContent, parseReadRange, resolveReadRange, sha256Hex } from './read-range.ts';
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -148,7 +149,45 @@ export async function listNotes(context: Context): Promise<Response> {
 export async function getNote(context: Context): Promise<Response> {
   const auth = authFromContext(context);
   requireScope(auth, 'notes:read');
-  return dataBody(context, await findAuthorizedNote(auth, context.req.param('noteRef') ?? '', context.req.query('includeDeleted') === 'true'));
+  const note = await findAuthorizedNote(auth, context.req.param('noteRef') ?? '', context.req.query('includeDeleted') === 'true');
+  const query = context.req.query();
+  const rangeRequest = parseReadRange({ offset: query.offset, lineStart: query.lineStart, lineEnd: query.lineEnd, maxBytes: query.maxBytes, continuation: query.continuation });
+  if (Object.keys(rangeRequest).length === 0) return dataBody(context, note);
+  const sourceHash = await sha256Hex(note.contentMarkdown);
+  let range = resolveReadRange(note.contentMarkdown, rangeRequest);
+  let rangeStart = range.startOffset;
+  if (rangeRequest.continuation) {
+    const cursor = decodeReadCursor(rangeRequest.continuation);
+    if (cursor.kind !== 'note' || cursor.noteId !== note.id || cursor.sourceHash !== sourceHash) throw new ApiError(422, 'VALIDATION_ERROR', 'continuation belongs to a different note.');
+    requireCursorPolicy(auth, asCursorString(cursor, 'principal'), asCursorInteger(cursor, 'policyRevision'));
+    if (asCursorInteger(cursor, 'noteVersion', 1) !== note.version) throw new ApiError(409, 'NOTE_VERSION_CONFLICT', 'The note continuation is stale. Read a new note page.');
+    const rangeEnd = asCursorInteger(cursor, 'rangeEnd');
+    rangeStart = asCursorInteger(cursor, 'rangeStart');
+    const nextOffset = asCursorInteger(cursor, 'nextOffset');
+    if (rangeStart > rangeEnd || nextOffset >= rangeEnd || rangeEnd > range.endOffset) throw new ApiError(422, 'VALIDATION_ERROR', 'continuation is invalid or expired.');
+    range = { ...range, startOffset: nextOffset, endOffset: rangeEnd };
+  }
+  return dataBody(context, fitJsonContent(note.contentMarkdown, range, (slice, pageTruncated) => {
+    const contentComplete = !pageTruncated && rangeStart === 0 && range.endOffset === slice.totalBytes;
+    const continuation = pageTruncated ? encodeReadCursor({
+      kind: 'note', noteId: note.id, noteVersion: note.version, sourceHash,
+      rangeStart, rangeEnd: range.endOffset, nextOffset: slice.endOffset, principal: authPrincipal(auth), policyRevision: auth.policyRevision,
+    }) : undefined;
+    const pagedNote = { ...note } as Omit<typeof note, 'contentPlain'> & { contentPlain?: string };
+    delete pagedNote.contentPlain;
+    return {
+      ...pagedNote,
+      contentMarkdown: slice.content,
+      contentBytes: slice.endOffset - slice.startOffset,
+      totalBytes: slice.totalBytes,
+      offset: slice.startOffset,
+      nextOffset: slice.endOffset,
+      truncated: !contentComplete,
+      contentComplete,
+      sourceHash,
+      ...(continuation ? { continuation: { cursor: continuation, sourceHash, nextOffset: slice.endOffset, totalBytes: slice.totalBytes, noteVersion: note.version } } : {}),
+    };
+  }));
 }
 
 export async function createNoteMutation(ownerId: string, input: CreateNoteInput, noteId: string): Promise<NoteResult> {

@@ -103,6 +103,19 @@ export interface Note {
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
   deletedAt: ISODateTime | null;
+  contentBytes?: number;
+  totalBytes?: number;
+  offset?: number;
+  nextOffset?: number;
+  truncated?: boolean;
+  contentComplete?: boolean;
+  sourceHash?: string;
+  continuation?: ContentContinuation;
+}
+
+export interface PagedNote extends Omit<Note, 'contentPlain' | 'contentComplete'> {
+  contentComplete: boolean;
+  contentPlain?: never;
 }
 
 export interface NoteSummary {
@@ -188,6 +201,13 @@ export interface NoteBlock {
   position: number;
   copyable: true;
   contentHash: string;
+  contentBytes?: number;
+  totalBytes?: number;
+  offset?: number;
+  nextOffset?: number;
+  truncated?: boolean;
+  contentComplete?: boolean;
+  continuation?: ContentContinuation;
 }
 
 export interface ParsedBlock {
@@ -266,6 +286,9 @@ export interface SearchContextSource {
   content: string;
   sourceHash: string;
   truncated: boolean;
+  contentBytes?: number;
+  totalBytes?: number;
+  offset?: number;
 }
 
 export interface SearchContextTokenBudget {
@@ -279,8 +302,17 @@ export interface SearchContextContinuation {
   noteVersion: number;
   sourceHash: string;
   nextOffset: number;
+  totalBytes?: number;
   principal?: string;
   policyRevision?: number;
+}
+
+export interface ContentContinuation {
+  cursor: string;
+  sourceHash: string;
+  nextOffset: number;
+  totalBytes: number;
+  noteVersion?: number;
 }
 
 export interface SearchContext {
@@ -301,7 +333,15 @@ export interface SearchContext {
   attachmentId?: UUID | null;
   pageNumber?: number | null;
   sourceHash?: string;
+  contentBytes?: number;
+  totalBytes?: number;
+  offset?: number;
+  nextOffset?: number;
+  wireBytes?: number;
+  wireByteLimit?: number;
   truncated?: boolean;
+  contentComplete?: boolean;
+  neighborsTruncated?: boolean;
   tokenBudget?: SearchContextTokenBudget;
   continuation?: SearchContextContinuation;
   previousSources?: SearchContextSource[];
@@ -371,6 +411,7 @@ export interface SearchResponse extends SearchResponseMetadata {
   items: SearchResult[];
   index?: SearchIndexMetadata;
   nextCursor?: string | null;
+  truncated?: boolean;
 }
 export interface Attachment {
   id: UUID;
@@ -412,6 +453,14 @@ export interface PublicSharedNote {
   title: string;
   contentMarkdown: string;
   updatedAt: ISODateTime;
+  contentBytes?: number;
+  totalBytes?: number;
+  offset?: number;
+  nextOffset?: number;
+  truncated?: boolean;
+  contentComplete?: boolean;
+  sourceHash?: string;
+  continuation?: ContentContinuation;
 }
 
 export interface PublicShareMetadata {

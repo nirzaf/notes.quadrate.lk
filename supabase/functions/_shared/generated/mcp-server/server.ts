@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import type { QNotesClient, QVaultClient } from '@qnotes/api-client';
-import { MAX_BLOCK_KEY_LENGTH, MAX_DEDUPE_KEY_LENGTH, MAX_MARKDOWN_CODE_UNITS, MAX_SEARCH_CURSOR_LENGTH, MAX_SEARCH_LIMIT, MAX_SEARCH_QUERY_LENGTH, MAX_SLUG_LENGTH, MAX_TAG_COUNT, MAX_TAG_LENGTH, MAX_TITLE_LENGTH, MAX_VAULT_BATCH_REVEAL, MAX_VAULT_DESCRIPTION_LENGTH, MAX_VAULT_ENVIRONMENT_NAME_LENGTH, MAX_VAULT_PROJECT_NAME_LENGTH, MAX_VAULT_PURPOSE_LENGTH, MAX_VAULT_SECRET_BYTES, MAX_VAULT_SECRET_NAME_LENGTH } from '@qnotes/shared';
+import { DEFAULT_MCP_CONTENT_MAX_BYTES, MAX_BLOCK_KEY_LENGTH, MAX_DEDUPE_KEY_LENGTH, MAX_MARKDOWN_CODE_UNITS, MAX_SEARCH_CURSOR_LENGTH, MAX_SEARCH_LIMIT, MAX_SEARCH_QUERY_LENGTH, MAX_SLUG_LENGTH, MAX_TAG_COUNT, MAX_TAG_LENGTH, MAX_TITLE_LENGTH, MAX_VAULT_BATCH_REVEAL, MAX_VAULT_DESCRIPTION_LENGTH, MAX_VAULT_ENVIRONMENT_NAME_LENGTH, MAX_VAULT_PROJECT_NAME_LENGTH, MAX_VAULT_PURPOSE_LENGTH, MAX_VAULT_SECRET_BYTES, MAX_VAULT_SECRET_NAME_LENGTH } from '@qnotes/shared';
 import { MCP_CONTRACT_VERSION, captureAcknowledgmentSchema, mutationAcknowledgmentSchema, noteBlockSchema, notebookListSchema, publicShareSchema, publicSharedNoteSchema, searchContextSchema, searchResponseSchema, strictInput, vaultEnvironmentsSchema, vaultMetadataSchema, vaultProjectsSchema, vaultSecretBatchSchema, vaultSecretSchema, vaultSecretsSchema } from './contracts.ts';
 import { getBlockTool } from './tools/get-block.ts';
 import { readNoteContextTool } from './tools/read-note-context.ts';
@@ -51,8 +51,15 @@ const searchInputSchema = strictInput({
   cursor: z.string().min(1).max(MAX_SEARCH_CURSOR_LENGTH).optional(),
   filters: filtersSchema.optional(),
 });
-const readContextInputSchema = strictInput({ documentId: z.string().uuid(), before: z.number().int().min(0).max(5).optional(), after: z.number().int().min(0).max(5).optional(), maxTokens: z.number().int().min(1).max(4000).optional(), continuation: z.string().max(8192).optional() });
-const blockInputSchema = strictInput({ noteRef: z.string().min(1).max(200), blockKey: z.string().min(1).max(MAX_BLOCK_KEY_LENGTH) });
+const contentReadInputShape = {
+  offset: z.number().int().min(0).optional(),
+  lineStart: z.number().int().min(1).optional(),
+  lineEnd: z.number().int().min(1).optional(),
+  maxBytes: z.number().int().min(1).max(DEFAULT_MCP_CONTENT_MAX_BYTES).optional(),
+  continuation: z.string().min(1).max(8192).optional(),
+};
+const readContextInputSchema = strictInput({ documentId: z.string().uuid(), before: z.number().int().min(0).max(5).optional(), after: z.number().int().min(0).max(5).optional(), maxTokens: z.number().int().min(1).max(4000).optional(), maxBytes: z.number().int().min(1).max(DEFAULT_MCP_CONTENT_MAX_BYTES).optional(), continuation: z.string().max(8192).optional() });
+const blockInputSchema = strictInput({ noteRef: z.string().min(1).max(200), blockKey: z.string().min(1).max(MAX_BLOCK_KEY_LENGTH), ...contentReadInputShape });
 const noInputSchema = strictInput({});
 // Keep the legacy shape parseable so deployed clients receive a safe migration error instead of a schema break.
 const publicShareInputSchema = strictInput({ noteId: z.string().uuid(), expectedVersion: z.number().int().min(1).optional(), confirm: z.literal(true).optional() });
@@ -78,7 +85,7 @@ export function createQNotesMcpServer(client: QNotesClient & ReadQNotesClient, p
   server.registerTool('read_note_context', { description: 'Read one exact search document with bounded neighboring context.', inputSchema: readContextInputSchema, outputSchema: searchContextSchema, annotations: readAnnotations }, safeTool((args: Record<string, unknown>) => readNoteContextTool(client, args as Parameters<typeof readNoteContextTool>[1])));
   server.registerTool('get_block', { description: 'Read one exact reusable code or copy block by note reference and block key.', inputSchema: blockInputSchema, outputSchema: noteBlockSchema, annotations: readAnnotations }, safeTool((args: Record<string, unknown>) => getBlockTool(client, args as Parameters<typeof getBlockTool>[1])));
   server.registerTool('list_notebooks', { description: 'List available QNotes notebooks without reading note contents.', inputSchema: noInputSchema, outputSchema: notebookListSchema, annotations: readAnnotations }, safeTool(async () => toolResult(await client.listNotebooks(), notebookListSchema)));
-  server.registerTool('resolve_public_share', { description: 'Fetch one explicitly shared QNotes note by its qns_... bearer secret. Returns only the public title, saved Markdown, and update timestamp.', inputSchema: strictInput({ token: z.string().regex(/^qns_[A-Za-z0-9_-]{43}$/) }), outputSchema: publicSharedNoteSchema, annotations: readAnnotations }, safeTool((args: Record<string, unknown>) => resolvePublicShareTool(client, args as Parameters<typeof resolvePublicShareTool>[1])));
+  server.registerTool('resolve_public_share', { description: 'Fetch one explicitly shared QNotes note by its qns_... bearer secret. Returns bounded Markdown pages with continuation metadata.', inputSchema: strictInput({ token: z.string().regex(/^qns_[A-Za-z0-9_-]{43}$/), ...contentReadInputShape }), outputSchema: publicSharedNoteSchema, annotations: readAnnotations }, safeTool((args: Record<string, unknown>) => resolvePublicShareTool(client, args as Parameters<typeof resolvePublicShareTool>[1])));
   registerNotesResources(server, client);
 
   if (profile === 'share' || (profile === 'write' && options.allowPublicShare === true)) {

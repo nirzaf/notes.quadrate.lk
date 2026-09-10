@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildHermesMcpConfig } from '../dist/hermes.js';
-import { approximateContextTokens, boundContextContent, boundContextSource, contextNoteChanged, contextTokenUsage, takeContextSources } from '../dist/context.js';
+import { approximateContextTokens, boundContextContent, boundContextSource, contextNoteChanged, contextTokenUsage, serializedWireBytes, sliceUtf8ByBytes, takeContextSources, utf8ByteLength, utf8LineRange } from '../dist/context.js';
 import { resolveAutoSearchMode, validateAppendNoteInput, validateCreateNoteInput, validateCreatePublicShareInput, validateListNotesQuery, validateSearchRequest, validateTokenInput, validateUpdateNoteInput } from '../dist/validation.js';
 
 test('auto mode uses keyword retrieval for identifiers and quoted phrases', () => {
@@ -143,4 +143,17 @@ test('detects stale context snapshots by version or updated timestamp', () => {
   assert.equal(contextNoteChanged(snapshot, snapshot), false);
   assert.equal(contextNoteChanged(snapshot, { version: 4, updatedAt: snapshot.updatedAt }), true);
   assert.equal(contextNoteChanged(snapshot, { version: snapshot.version, updatedAt: '2026-01-01T00:00:01Z' }), true);
+});
+
+test('pages UTF-8 content without splitting Unicode or changing source bytes', () => {
+  const value = 'A😀\r\n二\nlast\n';
+  const first = sliceUtf8ByBytes(value, 0, 5);
+  const second = sliceUtf8ByBytes(value, first.endOffset, 5);
+  const third = sliceUtf8ByBytes(value, second.endOffset, 100);
+  assert.equal(first.content + second.content + third.content, value);
+  assert.equal(first.content, 'A😀');
+  assert.equal(utf8ByteLength(value), first.totalBytes);
+  assert.deepEqual(utf8LineRange(value, 2, 2), { startOffset: 7, endOffset: 11 });
+  assert.deepEqual(utf8LineRange(value, 2), { startOffset: 7, endOffset: 16 });
+  assert.equal(serializedWireBytes({ content: first.content }), utf8ByteLength(JSON.stringify({ data: { content: first.content } })));
 });
