@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveVaultBaseUrl } from '../dist/runtime-config.js';
+import { resolveVaultBaseUrl, resolveVaultMcpProfile } from '../dist/runtime-config.js';
 
 test('Vault requests derive their base URL from QNOTES_URL when QVAULT_URL is absent', () => {
   const qnotesUrl = 'https://notes.example.test/functions/v1/qnotes-api';
@@ -16,4 +16,13 @@ test('a non-empty QVAULT_URL fails closed without exposing its value', () => {
     assert.equal(error.message.includes(qvaultUrl), false);
     return true;
   });
+});
+
+test('Vault MCP profiles fail closed for unsupported proxy or shell values', () => {
+  assert.equal(resolveVaultMcpProfile(undefined), 'metadata');
+  assert.equal(resolveVaultMcpProfile('metadata'), 'metadata');
+  assert.equal(resolveVaultMcpProfile('reveal'), 'reveal');
+  assert.equal(resolveVaultMcpProfile('write'), 'write');
+  assert.throws(() => resolveVaultMcpProfile('proxy'), /Unsupported QVAULT_MCP_PROFILE/);
+  assert.throws(() => resolveVaultMcpProfile('shell'), /Unsupported QVAULT_MCP_PROFILE/);
 });

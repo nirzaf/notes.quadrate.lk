@@ -31,7 +31,7 @@ export function buildHermesMcpConfig({ profile, serverPath, deviceId, includePub
     ? [...READ_TOOLS, ...(includePublicShare ? SHARE_TOOLS : []), ...WRITE_TOOLS]
     : profile === 'share' ? [...READ_TOOLS, ...SHARE_TOOLS] : READ_TOOLS;
   const vaultTools = vaultProfile === 'write'
-    ? [...VAULT_METADATA_TOOLS, ...VAULT_REVEAL_TOOLS, ...VAULT_WRITE_TOOLS]
+    ? [...VAULT_METADATA_TOOLS, ...VAULT_WRITE_TOOLS]
     : vaultProfile === 'reveal'
       ? [...VAULT_METADATA_TOOLS, ...VAULT_REVEAL_TOOLS]
       : vaultProfile === 'metadata'

@@ -39,17 +39,22 @@ export QVAULT_TOKEN=qvt_replace-with-a-vault-agent-token
 export QVAULT_MCP_PROFILE=metadata # metadata | reveal | write
 ```
 
-The profiles are cumulative:
+The profiles are separate capabilities:
 
 | Profile | Tools | Purpose |
 | --- | --- | --- |
 | `metadata` | `vault_list_projects`, `vault_list_environments`, `vault_list_secrets` | Discover names and versions without values |
 | `reveal` | metadata plus `vault_get_secret`, `vault_get_secrets` | Deliberately reveal one or a bounded batch |
-| `write` | reveal plus create/rotate/delete tools | Mutate encrypted values with version and replay guards |
+| `write` | metadata plus create/rotate/delete tools | Mutate encrypted values with version and replay guards; plaintext reveal tools are not exposed |
 
-Reveal tools require a non-empty purpose. Batch reveal is bounded to 20
-secrets and 256 KiB of plaintext. The native adapter does not persist Vault
-responses; callers should avoid logging tool arguments or results.
+Native MCP reveal tools require an exact selector, a bounded non-empty purpose,
+and `confirmPlaintext: true` for each call. `confirmPlaintext` records the
+client's explicit acknowledgement; it is not authorization. The API still
+requires a matching `secret:reveal` grant or the verified human step-up and
+single-use approval boundary, and retrieved Note content cannot authorize a
+reveal. Batch reveal is bounded to 20 secrets and 256 KiB of plaintext. The
+native adapter does not persist Vault responses; callers should avoid logging
+tool arguments or results.
 
 The hosted HTTP MCP endpoint remains Notes-only. Vault tools are available only
 when the native adapter receives both `QVAULT_TOKEN` and an explicit Vault
@@ -80,8 +85,8 @@ audit metadata.
 | `GET`, `POST` | `/vault/projects/:projectRef/environments/:environmentRef/secrets` | Slug-based list/create |
 | `GET` | `/vault/secrets/:secretId` | Read metadata only |
 | `PATCH`, `DELETE` | `/vault/secrets/:secretId` | Rotate or delete with expected version |
-| `POST` | `/vault/secrets/reveal` | Reveal one value with purpose |
-| `POST` | `/vault/secrets/reveal-batch` | Reveal an explicit bounded list |
+| `POST` | `/vault/secrets/reveal` | Reveal one value with purpose and server-side authorization |
+| `POST` | `/vault/secrets/reveal-batch` | Reveal an explicit bounded list with server-side authorization |
 | `GET`, `POST` | `/vault/agent-tokens` | List or create qvt tokens (JWT only) |
 | `DELETE` | `/vault/agent-tokens/:tokenId` | Revoke a qvt token |
 | `PATCH` | `/vault/agent-tokens/:tokenId/grants` | Replace grants |
@@ -182,9 +187,10 @@ test reset flow to hosted production data from this guide.
 The companion is an optional external native Hermes plugin. Its default is
 Notes `read` with Vault `none`; selecting Vault metadata, reveal, or write is a
 separate operator choice and still requires matching qvt resource/action
-grants. A Vault reveal intentionally places plaintext in the Hermes/model
-session boundary, so the plugin does not preload, log, mirror, or automatically
-transmit secret values. It uses the existing MCP server and `QNOTES_URL`; a
-non-empty `QVAULT_URL` remains unsupported. Disablement of the plugin, removal
-of the MCP entry, removal of local credential inputs, and qnt/qvt revocation
-are separate actions.
+grants. Vault `write` does not expose plaintext reveal tools. A Vault reveal
+intentionally places plaintext in the Hermes/model session boundary, so the
+plugin does not preload, log, mirror, or automatically transmit secret values.
+It uses the existing MCP server and `QNOTES_URL`; a non-empty `QVAULT_URL`
+remains unsupported. Disablement of the plugin, removal of the MCP entry,
+removal of local credential inputs, and qnt/qvt revocation are separate
+actions.

@@ -39,7 +39,7 @@ const vaultProfileChoices: Array<{ value: HermesVaultMcpProfile; label: string; 
   { value: 'none', label: 'No Vault', description: 'Generate Notes tools only.' },
   { value: 'metadata', label: 'Vault metadata', description: 'List the Vault metadata allowed by QVAULT_TOKEN without revealing values.' },
   { value: 'reveal', label: 'Vault reveal', description: 'Add explicit single and bounded batch secret reveal tools.' },
-  { value: 'write', label: 'Vault write', description: 'Add Vault secret create, rotate, and delete tools.' },
+  { value: 'write', label: 'Vault write', description: 'Add Vault secret create, rotate, and delete tools without plaintext reveal.' },
 ];
 
 interface IssuedToken {

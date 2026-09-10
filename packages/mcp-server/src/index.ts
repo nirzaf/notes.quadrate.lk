@@ -1,6 +1,6 @@
 import { QNotesClient, QVaultClient } from '@qnotes/api-client';
 import { isUUID } from '@qnotes/shared';
-import { resolveVaultBaseUrl } from './runtime-config.ts';
+import { resolveVaultBaseUrl, resolveVaultMcpProfile } from './runtime-config.ts';
 import { runQNotesMcpServer, type McpProfile, type VaultMcpProfile } from './server.ts';
 
 function requiredEnvironment(name: string): string {
@@ -28,9 +28,7 @@ const allowPublicShare = profile === 'write' && process.env.QNOTES_MCP_ENABLE_PU
 const allowInsecureLoopback = process.env.QNOTES_ALLOW_INSECURE_LOOPBACK === 'true';
 const client = new QNotesClient({ baseUrl, getAccessToken: () => token, allowInsecureLoopback });
 const vaultToken = process.env.QVAULT_TOKEN;
-const vaultProfile: VaultMcpProfile | undefined = vaultToken
-  ? (process.env.QVAULT_MCP_PROFILE === 'write' ? 'write' : process.env.QVAULT_MCP_PROFILE === 'reveal' ? 'reveal' : 'metadata')
-  : undefined;
+const vaultProfile: VaultMcpProfile | undefined = vaultToken ? resolveVaultMcpProfile(process.env.QVAULT_MCP_PROFILE) : undefined;
 const vaultClient = vaultToken
   ? new QVaultClient({ baseUrl: vaultBaseUrl, getAccessToken: () => vaultToken, allowInsecureLoopback })
   : undefined;
