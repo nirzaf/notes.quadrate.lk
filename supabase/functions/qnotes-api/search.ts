@@ -2,6 +2,7 @@ import type { Context } from 'hono';
 import { DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT, QNotesValidationError, resolveAutoSearchMode, validateSearchRequest, validateLimit, validateSearchMode, validateSearchQuery } from '@qnotes/shared';
 import type { ResolvedSearchMode, SearchFilters, SearchIndexMetadata, SearchRequest, SearchResponseMetadata, SearchResult } from '@qnotes/shared';
 import { EMBEDDING_MODEL, EMBEDDING_MODEL_VERSION, createEmbedding, resolveEmbeddingMode } from '../embedding-worker/embedding.ts';
+import { boundQueryEmbedding, resolveQueryEmbeddingTimeout } from './query-embedding.ts';
 import { authFromContext, requireScope, type AuthContext } from '../_shared/auth.ts';
 import { ApiError } from '../_shared/errors.ts';
 import { appDbClient, decodeSearchCursor, encodeSearchCursor, requestHash, searchResultFromRow, serviceClient } from '../_shared/database.ts';
@@ -10,19 +11,34 @@ import { applyNotebookAccess, authPolicyKey, isAccountWide, scopedSearchPlan } f
 
 const QUERY_EMBEDDING_CACHE_TTL_MS = 5 * 60 * 1000;
 const QUERY_EMBEDDING_CACHE_MAX_ENTRIES = 256;
+const MAX_OUTSTANDING_QUERY_EMBEDDINGS = 8;
 const queryEmbeddingCache = new Map<string, { expiresAt: number; value: Promise<number[]> }>();
+let outstandingQueryEmbeddings = 0;
+
+function queryEmbeddingKey(query: string): string {
+  return `${EMBEDDING_MODEL}:${EMBEDDING_MODEL_VERSION}:${query.trim()}`;
+}
 
 function cachedQueryEmbedding(query: string): Promise<number[]> {
-  const key = `${EMBEDDING_MODEL}:${EMBEDDING_MODEL_VERSION}:${query.trim()}`;
+  const key = queryEmbeddingKey(query);
   const now = Date.now();
   const existing = queryEmbeddingCache.get(key);
   if (existing && existing.expiresAt > now) return existing.value;
   if (existing) queryEmbeddingCache.delete(key);
-  const value = createEmbedding(query).catch((error: unknown) => {
-    const current = queryEmbeddingCache.get(key);
-    if (current?.value === value) queryEmbeddingCache.delete(key);
-    throw error;
-  });
+  if (outstandingQueryEmbeddings >= MAX_OUTSTANDING_QUERY_EMBEDDINGS) return Promise.reject(new Error('QUERY_EMBEDDING_CONCURRENCY_LIMIT'));
+  outstandingQueryEmbeddings += 1;
+  const value = createEmbedding(query).then(
+    (result) => {
+      outstandingQueryEmbeddings -= 1;
+      return result;
+    },
+    (error: unknown) => {
+      outstandingQueryEmbeddings -= 1;
+      const current = queryEmbeddingCache.get(key);
+      if (current?.value === value) queryEmbeddingCache.delete(key);
+      throw error;
+    },
+  );
   queryEmbeddingCache.set(key, { expiresAt: now + QUERY_EMBEDDING_CACHE_TTL_MS, value });
   while (queryEmbeddingCache.size > QUERY_EMBEDDING_CACHE_MAX_ENTRIES) {
     const oldest = queryEmbeddingCache.keys().next().value;
@@ -30,6 +46,10 @@ function cachedQueryEmbedding(query: string): Promise<number[]> {
     queryEmbeddingCache.delete(oldest);
   }
   return queryEmbeddingCache.get(key)?.value ?? value;
+}
+
+function forgetQueryEmbedding(query: string): void {
+  queryEmbeddingCache.delete(queryEmbeddingKey(query));
 }
 
 function elapsedMilliseconds(started: number): number {
@@ -256,20 +276,23 @@ export async function searchNotes(context: Context): Promise<Response> {
   const searchFilters = { ...request.filters, embeddingMode };
   if (mode !== 'keyword') {
     try {
-      embedding = await cachedQueryEmbedding(request.query);
+      embedding = await boundQueryEmbedding(cachedQueryEmbedding(request.query), resolveQueryEmbeddingTimeout(Deno.env.get('QNOTES_QUERY_EMBEDDING_TIMEOUT_MS')));
       embeddingMs = elapsedMilliseconds(embeddingStarted);
     } catch {
+      forgetQueryEmbedding(request.query);
       embeddingMs = elapsedMilliseconds(embeddingStarted);
       const retrievalStarted = performance.now();
       const fallbackItems = await keywordSearch(auth, request.query, retrievalLimit, searchFilters, offset, request.maxPerNote);
       const retrievalMs = elapsedMilliseconds(retrievalStarted);
       const metadataStarted = performance.now();
-      const fallbackNotes = await noteMetadata(auth, [...new Set(fallbackItems.map((item) => item.noteId))]);
+      const [fallbackNotes, freshness] = await Promise.all([
+        noteMetadata(auth, [...new Set(fallbackItems.map((item) => item.noteId))]),
+        measuredIndexMetadata(auth),
+      ]);
       const metadataMs = elapsedMilliseconds(metadataStarted);
       const page = pageResults(fallbackItems, request, fingerprint, offset, fallbackNotes);
       // Degraded pages are deliberately not cursor-paginated: a later request
       // must not silently switch from the requested semantic/hybrid ranking.
-      const freshness = await measuredIndexMetadata(auth);
       return searchResponse(context, page.items, { queryId, modeUsed: 'keyword', degraded: true, started, embeddingMs, retrievalMs, metadataMs, freshnessMs: freshness.freshnessMs }, freshness.index, null, 'QUERY_EMBEDDING_UNAVAILABLE');
     }
   }
@@ -298,7 +321,10 @@ export async function searchNotes(context: Context): Promise<Response> {
     const fallbackItems = await keywordSearch(auth, request.query, retrievalLimit, searchFilters, offset, request.maxPerNote);
     retrievalMs = elapsedMilliseconds(retrievalStarted);
     const metadataStarted = performance.now();
-    const fallbackNotes = await noteMetadata(auth, [...new Set(fallbackItems.map((item) => item.noteId))]);
+    const [fallbackNotes, freshness] = await Promise.all([
+      noteMetadata(auth, [...new Set(fallbackItems.map((item) => item.noteId))]),
+      measuredIndexMetadata(auth),
+    ]);
     const metadataMs = elapsedMilliseconds(metadataStarted);
     const page = pageResults(fallbackItems, request, fingerprint, offset, fallbackNotes);
     const degradedReason: SearchResponseMetadata['degradedReason'] = error instanceof ApiError && (error.code === 'SEMANTIC_SEARCH_UNAVAILABLE' || error.code === 'QUERY_EMBEDDING_UNAVAILABLE')
@@ -306,13 +332,14 @@ export async function searchNotes(context: Context): Promise<Response> {
       : 'SEMANTIC_SEARCH_UNAVAILABLE';
     // Degraded pages are deliberately not cursor-paginated: a later request
     // must not silently switch from the requested semantic/hybrid ranking.
-    const freshness = await measuredIndexMetadata(auth);
     return searchResponse(context, page.items, { queryId, modeUsed: 'keyword', degraded: true, started, embeddingMs, retrievalMs, metadataMs, freshnessMs: freshness.freshnessMs }, freshness.index, null, degradedReason);
   }
   const metadataStarted = performance.now();
-  const notes = await noteMetadata(auth, [...new Set(rawItems.map((item) => item.noteId))]);
+  const [notes, freshness] = await Promise.all([
+    noteMetadata(auth, [...new Set(rawItems.map((item) => item.noteId))]),
+    measuredIndexMetadata(auth),
+  ]);
   const metadataMs = elapsedMilliseconds(metadataStarted);
   const page = pageResults(rawItems, request, fingerprint, offset, notes);
-  const freshness = await measuredIndexMetadata(auth);
   return searchResponse(context, page.items, { queryId, modeUsed: mode, degraded: false, started, embeddingMs, retrievalMs, metadataMs, freshnessMs: freshness.freshnessMs }, freshness.index, page.nextCursor);
 }
