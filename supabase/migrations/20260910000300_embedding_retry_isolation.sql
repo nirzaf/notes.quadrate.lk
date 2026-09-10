@@ -234,7 +234,7 @@ begin
       and old.embedding_status = 'failed'
       and not input_changed
       and not model_changed
-      and coalesce(new.embedding_attempts, 0) >= 5
+      and coalesce(old.embedding_attempts, 0) >= 5
     then
       new.embedding_status := 'failed';
       new.embedding_error := old.embedding_error;

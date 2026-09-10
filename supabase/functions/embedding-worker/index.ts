@@ -74,7 +74,8 @@ async function processMessage(message: { message_id: number; read_count: number;
       return 'skipped';
     }
 
-    const modeMismatch = document.embedding_status === 'ready' && document.embedding_mode !== embeddingMode;
+    const modeMismatch = (document.embedding_status === 'ready' || document.embedding_status === 'pending')
+      && document.embedding_mode !== embeddingMode;
     if (modeMismatch) {
       const { data: reset, error: resetError } = await appDbClient
         .from('search_documents')
@@ -90,7 +91,7 @@ async function processMessage(message: { message_id: number; read_count: number;
         .eq('owner_id', job.ownerId)
         .eq('content_hash', job.contentHash)
         .eq('embedding_input_hash', expectedInputHash)
-        .eq('embedding_status', 'ready')
+        .in('embedding_status', ['ready', 'pending'])
         .eq('embedding_mode', document.embedding_mode)
         .select('id')
         .maybeSingle();
