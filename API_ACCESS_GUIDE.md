@@ -521,7 +521,7 @@ curl -fsS \
   "$QNOTES_URL/api/notes?limit=500&cursor=NEXT_CURSOR"
 ```
 
-`GET /api/sync` returns lightweight note metadata changes rather than note bodies. Its default page size is 200 and maximum is 500. Persist the cursor in the calling application and continue while `hasMore` is true. Personal-token cursors are bound to the token and its current notebook policy; a grant revocation or notebook move can return `422 VALIDATION_ERROR` with `cursor is invalid or expired.`, after which the client must restart without a cursor. The browser performs that reset online and clears remembered note summaries while retaining drafts; an offline device cannot be remotely purged.
+`GET /api/sync` returns lightweight note metadata changes rather than note bodies. Its default page size is 200 and maximum is 500. Persist the cursor in the calling application and continue while `hasMore` is true. Personal-token cursors are bound to the token and its current notebook policy; a grant revocation or notebook move can return `422 VALIDATION_ERROR` with `cursor is invalid or expired.`, after which the client must restart without a cursor. The browser performs that reset online and clears its replaceable cached note summaries and lexical records while retaining unsent drafts; each successful page stores fetched authorized content, tombstones, and the page cursor atomically. The offline cache is account-specific and bounded to its most recent 2,000 notes; an offline device cannot be remotely purged.
 
 ```bash
 curl -fsS \

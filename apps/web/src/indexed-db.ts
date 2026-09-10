@@ -1,5 +1,5 @@
 import { IndexedDbDraftStore } from '@qnotes/sync';
-import type { Note, NoteSummary } from '@qnotes/shared';
+import type { Note, NoteSummary, UUID } from '@qnotes/shared';
 import type { SearchSelection } from '@qnotes/sync';
 
 const stores = new Map<string, IndexedDbDraftStore>();
@@ -24,14 +24,13 @@ export function getDeviceId(): string {
 }
 
 export async function rememberNote(note: Note, userId: string): Promise<void> {
-  await getAccountDraftStore(userId).putRecent({ ...note, noteId: note.id });
+  await getAccountDraftStore(userId).putRecent(note);
 }
 
 export async function searchRecentNotes(query: string, userId: string): Promise<NoteSummary[]> {
   const normalized = query.trim().toLocaleLowerCase();
   if (!normalized) return [];
-  const notes = await getAccountDraftStore(userId).listRecent();
-  return notes.filter((note) => note.title.toLocaleLowerCase().includes(normalized) || note.tags.some((tag) => tag.toLocaleLowerCase().includes(normalized)));
+  return getAccountDraftStore(userId).searchRecent(normalized);
 }
 
 export async function rememberSearchSelection(selection: SearchSelection, userId: string): Promise<void> {
@@ -52,4 +51,8 @@ export async function readSyncCursor(userId: string): Promise<string | null> {
 
 export async function writeSyncCursor(cursor: string | null, userId: string): Promise<void> {
   await getAccountDraftStore(userId).setCursor(cursor);
+}
+
+export async function applySyncPage(page: { notes: Note[]; deletedNoteIds: UUID[]; cursor: string | null; reset?: boolean }, userId: string): Promise<void> {
+  await getAccountDraftStore(userId).applySyncPage(page);
 }

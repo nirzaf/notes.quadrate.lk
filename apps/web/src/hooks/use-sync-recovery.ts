@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '../api';
-import { clearRememberedNotes, removeRememberedNote, readSyncCursor, writeSyncCursor } from '../indexed-db';
+import { applySyncPage, clearRememberedNotes, removeRememberedNote, readSyncCursor, writeSyncCursor } from '../indexed-db';
 import { useAuth } from '../auth-context';
 import { runSyncRecovery } from '../sync-recovery-core';
 
@@ -37,6 +37,7 @@ export function useSyncRecovery(): { syncing: boolean; recover: () => Promise<vo
           writeSyncCursor,
           removeRememberedNote,
           clearRememberedNotes,
+          applySyncPage,
           generation,
           getGeneration: () => generationRef.current,
           signal: controller.signal,
