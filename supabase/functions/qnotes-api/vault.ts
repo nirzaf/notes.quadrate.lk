@@ -164,6 +164,7 @@ async function mapVaultMutation(
     }
     return secretMetadata({ id: secret.id, project_id: secret.projectId, environment_id: secret.environmentId, name: secret.name, description: secret.description, version: secret.version, created_at: secret.createdAt, updated_at: secret.updatedAt, rotated_at: secret.rotatedAt, deleted_at: secret.deletedAt });
   }
+  if (status === 'access_denied') throw new ApiError(403, 'VAULT_ACCESS_DENIED', 'Vault access is denied.');
   await recordVaultAuditFailure(auth, auditAction, resource, failureCode, { requestId: context.get('requestId') });
   if (status === 'project_not_found') throw new ApiError(404, 'VAULT_PROJECT_NOT_FOUND', 'The Vault project was not found.');
   if (status === 'environment_not_found') throw new ApiError(404, 'VAULT_ENVIRONMENT_NOT_FOUND', 'The Vault environment was not found.');
@@ -188,6 +189,7 @@ async function revealById(context: Context, auth: ReturnType<typeof vaultAuthFro
   }));
   const payload = record(result);
   if (payload.status !== 'ok' || !record(payload.secret)) {
+    if (payload.status === 'access_denied') throw new ApiError(403, 'VAULT_ACCESS_DENIED', 'Vault access is denied.');
     await recordVaultAuditFailure(auth, 'secret:reveal', resource, typeof payload.status === 'string' ? payload.status : 'invalid_response', { requestId: context.get('requestId'), purpose });
     if (payload.status === 'not_found') throw new ApiError(404, 'VAULT_SECRET_NOT_FOUND', 'The Vault secret was not found.');
     if (payload.status === 'vault_missing') throw new ApiError(500, 'INTERNAL_ERROR', 'The Vault value is unavailable.');
@@ -356,6 +358,7 @@ export async function revealVaultSecrets(context: Context): Promise<Response> {
   }));
   const payload = record(result);
   if (payload.status !== 'ok' || !Array.isArray(payload.items)) {
+    if (payload.status === 'access_denied') throw new ApiError(403, 'VAULT_ACCESS_DENIED', 'Vault access is denied.');
     if (payload.status === 'not_found') throw new ApiError(404, 'VAULT_SECRET_NOT_FOUND', 'The Vault secret was not found.');
     if (payload.status === 'vault_missing') throw new ApiError(500, 'INTERNAL_ERROR', 'The Vault value is unavailable.');
     if (payload.status === 'batch_too_large') throw new ApiError(413, 'VAULT_SECRET_TOO_LARGE', 'The combined Vault reveal is too large.');
@@ -411,9 +414,9 @@ export async function revokeVaultAgentToken(context: Context): Promise<Response>
   const auth = vaultAuthFromContext(context);
   requireVaultUserJwt(auth);
   const tokenId = context.req.param('tokenId') ?? '';
-  const { data, error } = await appDbClient.from('vault_agent_tokens').update({ revoked_at: new Date().toISOString() }).eq('id', tokenId).eq('owner_id', auth.userId).is('revoked_at', null).select('id').maybeSingle();
-  if (error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to revoke Vault agent token.');
-  if (!data) throw new ApiError(404, 'VAULT_AGENT_TOKEN_NOT_FOUND', 'The Vault agent token was not found.');
+  const result = record(assertSupabase(await serviceClient.rpc('qnotes_revoke_vault_agent_token', { p_owner_id: auth.userId, p_token_id: tokenId })));
+  if (result.status === 'not_found') throw new ApiError(404, 'VAULT_AGENT_TOKEN_NOT_FOUND', 'The Vault agent token was not found.');
+  if (result.status !== 'ok') throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to revoke Vault agent token.');
   return dataBody(context, null);
 }
 
