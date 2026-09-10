@@ -356,7 +356,13 @@ declare
   grants jsonb := '[]'::jsonb;
 begin
   select * into token_row from notesdb.vault_agent_tokens where id = p_token_id and owner_id = p_owner_id for update;
-  if not found then return jsonb_build_object('status', 'not_found'); end if;
+  if not found then
+    perform public.qnotes_vault_append_audit_event(
+      p_owner_id, 'user_jwt', null, 'grant:replace', null, null, null,
+      'Vault agent grants replaced', false, 'not_found', p_request_id, p_request_id, p_token_id
+    );
+    return jsonb_build_object('status', 'not_found');
+  end if;
   delete from notesdb.vault_agent_grants where token_id = p_token_id and owner_id = p_owner_id;
   for grant_item in select value from jsonb_array_elements(coalesce(p_grants, '[]'::jsonb)) loop
     if (grant_item->>'secretId' is not null and grant_item->>'secretId' <> '') and (grant_item->>'environmentId' is null or grant_item->>'environmentId' = '') then raise exception 'Vault secret grant requires an environment'; end if;
@@ -387,7 +393,13 @@ begin
   from notesdb.vault_agent_tokens
   where id = p_token_id and owner_id = p_owner_id
   for update;
-  if not found then return jsonb_build_object('status', 'not_found'); end if;
+  if not found then
+    perform public.qnotes_vault_append_audit_event(
+      p_owner_id, 'user_jwt', null, 'token:revoke', null, null, null,
+      'Vault agent token revoked', false, 'not_found', p_request_id, p_request_id, p_token_id
+    );
+    return jsonb_build_object('status', 'not_found');
+  end if;
   if token_row.revoked_at is null then
     update notesdb.vault_agent_tokens
     set revoked_at = timezone('utc', now())

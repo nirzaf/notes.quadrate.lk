@@ -1,5 +1,5 @@
 begin;
-select plan(33);
+select plan(37);
 
 select has_table('notesdb', 'vault_audit_policy', 'Vault audit policy exists');
 select has_table('notesdb', 'vault_audit_outbox', 'Vault audit outbox exists');
@@ -39,10 +39,30 @@ select ok((select action = 'admin:recovery' and actor_kind = 'system' and not su
 select ok((select event_id = (select event_id from audit_integrity_event) and payload->>'action' = 'admin:recovery'
   and payload->>'targetTokenId' = 'a8000000-0000-4000-8000-000000000003'
   from notesdb.vault_audit_outbox where event_id = (select event_id from audit_integrity_event)), 'every event is durably queued for export without secret fields');
-select ok((select not (payload ? 'value') and not (payload ? 'requestBody') from notesdb.vault_audit_outbox where event_id = (select event_id from audit_integrity_event)), 'the export payload excludes secret values and whole requests');
+select ok((select (select array_agg(k order by k) from jsonb_object_keys(payload) as k) = ARRAY[
+  'action', 'actorKind', 'actorTokenId', 'environmentId', 'eventId', 'occurredAt',
+  'operationId', 'ownerId', 'policyRevision', 'projectId', 'purpose', 'requestId',
+  'resultCode', 'retentionExpiresAt', 'secretId', 'success', 'targetTokenId'
+]::text[] from notesdb.vault_audit_outbox where event_id = (select event_id from audit_integrity_event)), 'the export payload is limited to typed metadata and carries no secrets');
 
 select throws_ok($$update notesdb.vault_audit_events set purpose = 'tampered' where id = (select event_id from audit_integrity_event)$$, 'P0001', 'Vault audit events are append-only', 'the broker cannot update prior audit rows');
 select throws_ok($$delete from notesdb.vault_audit_events where id = (select event_id from audit_integrity_event)$$, 'P0001', 'Vault audit events are append-only', 'the broker cannot delete prior audit rows');
+
+select is((public.qnotes_replace_vault_agent_grants(
+  (select id from auth.users where email = 'owner@qnotes.local'),
+  'a8000000-0000-4000-8000-000000000004'::uuid,
+  '[]'::jsonb,
+  'a8000000-0000-4000-8000-000000000004'::uuid
+)->>'status'), 'not_found', 'missing grant replacement targets return not_found');
+select ok((select action = 'grant:replace' and not success and result_code = 'not_found' and target_token_id = 'a8000000-0000-4000-8000-000000000004'::uuid
+  from notesdb.vault_audit_events where request_id = 'a8000000-0000-4000-8000-000000000004'::uuid), 'missing grant replacement targets are audited as failures');
+select is((public.qnotes_revoke_vault_agent_token(
+  (select id from auth.users where email = 'owner@qnotes.local'),
+  'a8000000-0000-4000-8000-000000000005'::uuid,
+  'a8000000-0000-4000-8000-000000000005'::uuid
+)->>'status'), 'not_found', 'missing revoke targets return not_found');
+select ok((select action = 'token:revoke' and not success and result_code = 'not_found' and target_token_id = 'a8000000-0000-4000-8000-000000000005'::uuid
+  from notesdb.vault_audit_events where request_id = 'a8000000-0000-4000-8000-000000000005'::uuid), 'missing revoke targets are audited as failures');
 
 create temporary table audit_integrity_claim on commit drop as
 select * from public.qnotes_vault_claim_audit_outbox(100);
