@@ -15,11 +15,11 @@ select ok(
   'operator requeue is restricted to service_role'
 );
 select ok(
-  position('embedding_mode = coalesce' in pg_get_functiondef('public.qnotes_semantic_search(uuid,text,extensions.vector,integer,jsonb,integer,integer)'::regprocedure)) > 0,
+  position('embedding_mode = ''provider''' in pg_get_functiondef('public.qnotes_semantic_search(uuid,text,extensions.vector,integer,jsonb,integer,integer)'::regprocedure)) > 0,
   'semantic search excludes synthetic vectors'
 );
 select ok(
-  position('embedding_mode = coalesce' in pg_get_functiondef('public.qnotes_hybrid_search(uuid,text,extensions.vector,integer,integer,jsonb,integer,integer)'::regprocedure)) > 0,
+  position('embedding_mode = ''provider''' in pg_get_functiondef('public.qnotes_hybrid_search(uuid,text,extensions.vector,integer,integer,jsonb,integer,integer)'::regprocedure)) > 0,
   'hybrid search excludes synthetic vectors'
 );
 

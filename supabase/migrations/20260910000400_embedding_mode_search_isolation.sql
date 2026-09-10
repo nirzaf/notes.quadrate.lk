@@ -42,7 +42,8 @@ as $$
     cross join filter_values f
     where d.owner_id = p_owner_id and d.embedding_status = 'ready' and d.embedding is not null
       and d.embedding_model = 'gte-small' and d.embedding_model_version = 'v2'
-      and d.embedding_mode = coalesce(nullif(p_filters->>'embeddingMode', ''), 'provider')
+      and (d.embedding_mode = 'provider'
+        or (p_filters->>'embeddingMode' = 'synthetic-test-v1' and d.embedding_mode = 'synthetic-test-v1'))
       and d.embedding_input_hash = public.qnotes_embedding_input_hash(d.source_title, d.heading_path, d.content)
       and (cardinality(f.notebook_ids) = 0 or n.notebook_id = any(f.notebook_ids))
       and (cardinality(f.tags) = 0 or n.tags @> f.tags)
@@ -146,7 +147,8 @@ as $$
     select k.*
     from public.qnotes_keyword_search(p_owner_id, p_query, (select candidate_limit from params), p_filters, 0, (select note_limit from params)) k
     join notesdb.search_documents d on d.id = k.id
-      and d.embedding_mode = coalesce(nullif(p_filters->>'embeddingMode', ''), 'provider')
+      and (d.embedding_mode = 'provider'
+        or (p_filters->>'embeddingMode' = 'synthetic-test-v1' and d.embedding_mode = 'synthetic-test-v1'))
   ),
   semantic as (
     select s.* from public.qnotes_semantic_search(p_owner_id, p_query, p_embedding, (select candidate_limit from params), p_filters, 0, (select note_limit from params)) s
