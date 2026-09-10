@@ -27,7 +27,7 @@ export function edgeTestArguments(files) {
   return [
     'test',
     '--no-lock',
-    '--node-modules-dir=auto',
+    '--node-modules-dir=none',
     '--allow-env=QNOTES_TOKEN_PEPPER,QNOTES_VAULT_TOKEN_PEPPER,QNOTES_CLIENT_IP_HEADER,SUPABASE_URL,SUPABASE_SERVICE_ROLE_KEY',
     `--import-map=${importMap}`,
     ...files,
@@ -69,9 +69,10 @@ export async function runEdgeTests() {
   const files = await discoverEdgeTestFiles();
   const args = edgeTestArguments(files);
   const invocation = denoInvocation(await commandAvailable('deno'), args);
+  process.env.DENO_NO_PACKAGE_JSON = '1';
   console.log(`[test:edge] discovered ${files.length} test files:`);
   for (const file of files) console.log(`[test:edge]   ${file}`);
-  console.log(`[test:edge] running ${invocation.command === 'deno' ? 'native Deno' : `pnpm dlx deno@${fallbackDenoVersion}`} with the checked-in import map and lockfile writes disabled.`);
+  console.log(`[test:edge] running ${invocation.command === 'deno' ? 'native Deno' : `pnpm dlx deno@${fallbackDenoVersion}`} with package.json auto-resolution disabled, node_modules disabled, the checked-in import map, and lockfile writes disabled.`);
 
   const result = await runCommand(invocation.command, invocation.args);
   if (result.code !== 0) {
