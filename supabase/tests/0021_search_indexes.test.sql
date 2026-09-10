@@ -1,5 +1,5 @@
 begin;
-select plan(8);
+select plan(10);
 
 select ok(exists (
   select 1 from pg_indexes
@@ -12,7 +12,7 @@ select ok(exists (
   select 1 from pg_indexes
   where schemaname = 'notesdb'
     and indexname = 'search_documents_owner_source_title_lower_key'
-    and indexdef like '%lower(source_title)%'
+    and indexdef like '%md5(lower(source_title))%'
 ), 'exact source titles have an owner-scoped normalized index');
 
 select ok(exists (
@@ -86,6 +86,7 @@ begin
     select d.id
     from notesdb.search_documents d
     where d.owner_id = (select id from auth.users where email = 'owner@qnotes.local')
+      and md5(lower(d.source_title)) = md5('literal wildcard fixture')
       and lower(d.source_title) = 'literal wildcard fixture'
   $query$ into source_title_plan;
   insert into search_index_explain values ('source_key', source_key_plan), ('source_title', source_title_plan);
@@ -96,6 +97,18 @@ select ok((
   (select jsonb_path_exists(plan, '$.**."Index Name" ? (@ == "search_documents_owner_source_key_lower_key")') from search_index_explain where lookup = 'source_key')
     and (select jsonb_path_exists(plan, '$.**."Index Name" ? (@ == "search_documents_owner_source_title_lower_key")') from search_index_explain where lookup = 'source_title')
 ), 'exact source-key/title lookup uses both owner-scoped btree indexes');
+
+select ok((select indexdef like '%md5(lower(source_title))%'
+  from pg_indexes
+  where schemaname = 'notesdb' and indexname = 'search_documents_owner_source_title_lower_key'),
+  'source-title indexing remains safe for arbitrarily long text');
+
+select lives_ok($$insert into notesdb.search_documents (
+  owner_id, note_id, source_type, source_key, source_title, content, content_hash, position
+) values (
+  (select id from auth.users where email = 'owner@qnotes.local'),
+  'a1080000-0000-4000-8000-000000000001', 'note_chunk', 'long-title-fixture', repeat('x', 10000), 'long-title-content', 'long-title-hash', 1
+)$$, 'long source titles do not exceed the exact lookup index limit');
 
 select * from finish();
 rollback;

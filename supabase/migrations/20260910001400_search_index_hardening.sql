@@ -3,8 +3,9 @@
 -- token searches; these btree indexes avoid scanning exact source identities.
 create index if not exists search_documents_owner_source_key_lower_key
   on notesdb.search_documents (owner_id, lower(source_key));
+drop index if exists notesdb.search_documents_owner_source_title_lower_key;
 create index if not exists search_documents_owner_source_title_lower_key
-  on notesdb.search_documents (owner_id, lower(source_title));
+  on notesdb.search_documents (owner_id, md5(lower(source_title)));
 
 -- Keep the fuzzy channel index-supported for normal terms. One- and two-
 -- character queries retain the substring fallback because pg_trgm cannot
@@ -75,8 +76,9 @@ as $$
   title_candidates as (
     select b.id, row_number() over (order by b.source_priority, b.id)::integer as channel_rank
     from base b cross join params p
-    where (b.source_type = 'note_metadata' and lower(b.note_title) = p.normalized_query)
-       or (b.source_type in ('copy_block', 'code_block', 'attachment_chunk') and lower(b.source_title) = p.normalized_query)
+    where b.source_type in ('note_metadata', 'copy_block', 'code_block', 'attachment_chunk')
+      and md5(lower(b.source_title)) = md5(p.normalized_query)
+      and lower(b.source_title) = p.normalized_query
   ),
   fts_candidates as (
     select b.id, row_number() over (order by ts_rank_cd(b.search_vector, p.ts_query) desc, b.source_priority, b.id)::integer as channel_rank
