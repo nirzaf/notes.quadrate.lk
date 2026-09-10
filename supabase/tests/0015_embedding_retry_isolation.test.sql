@@ -1,5 +1,5 @@
 begin;
-select plan(8);
+select plan(10);
 
 select has_column('notesdb', 'search_documents', 'embedding_attempts', 'search documents track provider attempts separately from queue reads');
 select has_column('notesdb', 'search_documents', 'embedding_mode', 'search documents identify synthetic test vectors separately');
@@ -13,6 +13,14 @@ select ok(
     and not has_function_privilege('authenticated', 'public.qnotes_requeue_embedding_failures(integer)', 'EXECUTE')
     and has_function_privilege('service_role', 'public.qnotes_requeue_embedding_failures(integer)', 'EXECUTE'),
   'operator requeue is restricted to service_role'
+);
+select ok(
+  position('embedding_mode = ''provider''' in pg_get_functiondef('public.qnotes_semantic_search(uuid,text,extensions.vector,integer,jsonb,integer,integer)'::regprocedure)) > 0,
+  'semantic search excludes synthetic vectors'
+);
+select ok(
+  position('embedding_mode = ''provider''' in pg_get_functiondef('public.qnotes_hybrid_search(uuid,text,extensions.vector,integer,integer,jsonb,integer,integer)'::regprocedure)) > 0,
+  'hybrid search excludes synthetic vectors'
 );
 
 select * from finish();

@@ -31,6 +31,7 @@ begin
     new.embedding_mode := 'provider';
   elsif old.content_hash is distinct from new.content_hash
     or old.embedding_input_hash is distinct from new.embedding_input_hash
+    or old.embedding_model is distinct from new.embedding_model
     or old.embedding_model_version is distinct from new.embedding_model_version
   then
     new.embedding_attempts := 0;
