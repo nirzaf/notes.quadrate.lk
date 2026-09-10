@@ -5,10 +5,17 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
+import { validateApiEndpoint } from '../endpoint-policy.mjs';
 
 const testDirectory = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(testDirectory, '../../..');
 const launcher = join(repoRoot, 'integrations', 'hermes-plugin', 'launch.mjs');
+
+test('standalone endpoint policy rejects empty delimiters and encoded dot segments', () => {
+  for (const value of ['https://example.test?', 'https://example.test#', 'https://example.test/functions/%2e%2e/qnotes-api', 'https://example.test/functions/%2f../qnotes-api', 'https://example.test/functions/%5c..%5cqnotes-api']) {
+    assert.throws(() => validateApiEndpoint(value), /API endpoint/);
+  }
+});
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), 'qnotes-hermes-launch-'));
@@ -20,7 +27,7 @@ async function fixture() {
       'QNOTES_URL', 'QNOTES_MCP_PROFILE', 'QNOTES_TOKEN',
       'QNOTES_READ_TOKEN', 'QNOTES_WRITE_TOKEN', 'QNOTES_MCP_DEVICE_ID',
       'QNOTES_MCP_ENABLE_PUBLIC_SHARE', 'QVAULT_TOKEN', 'QVAULT_MCP_PROFILE',
-      'QVAULT_URL', 'QNOTES_PLUGIN_TOKEN', 'QNOTES_PLUGIN_VAULT_TOKEN'
+      'QNOTES_ALLOW_INSECURE_LOOPBACK', 'QVAULT_URL', 'QNOTES_PLUGIN_TOKEN', 'QNOTES_PLUGIN_VAULT_TOKEN'
     ];
     process.stdout.write(JSON.stringify(Object.fromEntries(names.map((name) => [name, process.env[name] ?? null]))));
   `);
@@ -73,6 +80,7 @@ test('launcher isolates read/none from conflicting inherited credentials', async
     QNOTES_WRITE_TOKEN: null,
     QNOTES_MCP_DEVICE_ID: null,
     QNOTES_MCP_ENABLE_PUBLIC_SHARE: null,
+    QNOTES_ALLOW_INSECURE_LOOPBACK: null,
     QVAULT_TOKEN: null,
     QVAULT_MCP_PROFILE: null,
     QVAULT_URL: null,
@@ -90,6 +98,7 @@ test('launcher selects write/public-share and Vault reveal credentials explicitl
     QNOTES_PLUGIN_TOKEN: 'qnt_selected_write',
     QNOTES_PLUGIN_VAULT_TOKEN: 'qvt_selected_reveal',
     QNOTES_MCP_DEVICE_ID: '11111111-1111-4111-8111-111111111111',
+    QNOTES_ALLOW_INSECURE_LOOPBACK: 'true',
     QNOTES_TOKEN: 'qnt_parent_share',
     QNOTES_READ_TOKEN: 'qnt_parent_read',
     QNOTES_WRITE_TOKEN: 'qnt_parent_write',
@@ -105,6 +114,7 @@ test('launcher selects write/public-share and Vault reveal credentials explicitl
   assert.equal(observed.QNOTES_TOKEN, null);
   assert.equal(observed.QNOTES_MCP_DEVICE_ID, '11111111-1111-4111-8111-111111111111');
   assert.equal(observed.QNOTES_MCP_ENABLE_PUBLIC_SHARE, 'true');
+  assert.equal(observed.QNOTES_ALLOW_INSECURE_LOOPBACK, 'true');
   assert.equal(observed.QVAULT_TOKEN, 'qvt_selected_reveal');
   assert.equal(observed.QVAULT_MCP_PROFILE, 'reveal');
   assert.equal(observed.QVAULT_URL, null);
@@ -154,8 +164,15 @@ test('launcher accepts only exact loopback HTTP for local tests', async (t) => {
   const local = await runLauncher(serverPath, {}, {
     QNOTES_URL: 'http://127.0.0.1:54321/functions/v1/qnotes-api',
     QNOTES_PLUGIN_TOKEN: 'qnt_local',
+    QNOTES_ALLOW_INSECURE_LOOPBACK: 'true',
   });
   assert.equal(local.code, 0, local.stderr);
+
+  const implicit = await runLauncher(serverPath, {}, {
+    QNOTES_URL: 'http://127.0.0.1:54321/functions/v1/qnotes-api',
+    QNOTES_PLUGIN_TOKEN: 'qnt_local',
+  });
+  assert.notEqual(implicit.code, 0);
 
   const lookalike = await runLauncher(serverPath, {}, {
     QNOTES_URL: 'http://127.0.0.1.attacker.test/api',

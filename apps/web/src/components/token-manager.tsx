@@ -162,7 +162,7 @@ export function TokenManager(): JSX.Element {
     const requestUserId = userIdRef.current;
     setVerification('verifying');
     try {
-      const tokenClient = new QNotesClient({ baseUrl: env.qnotesApiUrl, getAccessToken: () => issued.token });
+      const tokenClient = new QNotesClient({ baseUrl: env.qnotesApiUrl, allowInsecureLoopback: import.meta.env.VITE_ALLOW_INSECURE_LOOPBACK === 'true', getAccessToken: () => issued.token });
       await tokenClient.listNotes({ limit: 1 });
       if (mountedRef.current && userIdRef.current === requestUserId) setVerification('verified');
     } catch {

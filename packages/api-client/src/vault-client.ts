@@ -19,6 +19,7 @@ import type {
 } from '@qnotes/shared';
 import { QNotesHttpError } from './http-error.ts';
 import type { QNotesClientOptions, RequestOptions } from './client.ts';
+import { createRequestSignal, redactSensitive, requestSecrets, throwIfAborted, validateApiEndpoint } from './endpoint-policy.ts';
 
 export class QVaultProtocolError extends Error {
   constructor(resource: string) {
@@ -128,27 +129,46 @@ export class QVaultClient {
   private readonly fetchImplementation: typeof fetch;
 
   constructor(options: QNotesClientOptions) {
-    this.baseUrl = options.baseUrl.replace(/\/+$/, '');
+    this.baseUrl = validateApiEndpoint(options.baseUrl, options.allowInsecureLoopback === undefined ? {} : { allowInsecureLoopback: options.allowInsecureLoopback }).replace(/\/+$/, '');
     this.getAccessToken = options.getAccessToken;
     this.fetchImplementation = options.fetchImplementation ?? globalThis.fetch.bind(globalThis);
   }
 
   private async request<T>(path: string, init: RequestInit = {}, options: RequestOptions = {}): Promise<T> {
-    const headers = new Headers(init.headers);
-    headers.set('Accept', 'application/json');
-    if (init.body !== undefined && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
-    const token = await this.getAccessToken(options.signal ?? (init.signal ?? undefined));
-    if (options.signal?.aborted) throw options.signal.reason;
-    if (token) headers.set('Authorization', `Bearer ${token}`);
-    const response = await this.fetchImplementation(`${this.baseUrl}/vault${path}`, { ...init, headers, ...(options.signal ? { signal: options.signal } : {}) });
-    if (!response.ok) {
-      const body: unknown = (response.headers.get('content-type') ?? '').includes('application/json') ? await response.json().catch(() => null) : null;
-      const envelope = isRecord(body) && isRecord(body.error) ? body.error : {};
-      throw new QNotesHttpError(response.status, (isString(envelope.code) ? envelope.code : 'INTERNAL_ERROR') as QNotesHttpError['code'], isString(envelope.message) ? envelope.message : `Vault request failed with HTTP ${response.status}.`, isString(envelope.requestId) ? envelope.requestId : response.headers.get('x-request-id') ?? '', envelope.details);
+    const requestSignal = createRequestSignal(options.signal ?? init.signal, options.timeoutMs);
+    try {
+      throwIfAborted(requestSignal.signal);
+      const headers = new Headers(init.headers);
+      headers.set('Accept', 'application/json');
+      if (init.body !== undefined && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+      const token = await this.getAccessToken(requestSignal.signal);
+      throwIfAborted(requestSignal.signal);
+      if (token) headers.set('Authorization', `Bearer ${token}`);
+      const secrets = requestSecrets(init.body, token);
+      const response = await this.fetchImplementation(`${this.baseUrl}/vault${path}`, {
+        ...init,
+        headers,
+        redirect: 'error',
+        cache: 'no-store',
+        signal: requestSignal.signal,
+      });
+      throwIfAborted(requestSignal.signal);
+      if (!response.ok) {
+        const body: unknown = (response.headers.get('content-type') ?? '').includes('application/json') ? await response.json().catch(() => null) : null;
+        const envelope = isRecord(body) && isRecord(body.error) ? body.error : {};
+        throw new QNotesHttpError(response.status, (isString(envelope.code) ? envelope.code : 'INTERNAL_ERROR') as QNotesHttpError['code'], isString(envelope.message) ? redactSensitive(envelope.message, secrets) as string : `Vault request failed with HTTP ${response.status}.`, isString(envelope.requestId) ? redactSensitive(envelope.requestId, secrets) as string : redactSensitive(response.headers.get('x-request-id') ?? '', secrets) as string, redactSensitive(envelope.details, secrets));
+      }
+      const body: unknown = await response.json();
+      throwIfAborted(requestSignal.signal);
+      if (!isRecord(body) || !('data' in body)) throw new QVaultProtocolError('success');
+      return (body as Success<T>).data;
+    } catch (error) {
+      throwIfAborted(requestSignal.signal);
+      if (error instanceof QNotesHttpError || error instanceof QVaultProtocolError) throw error;
+      throw new Error('QVault request failed.');
+    } finally {
+      requestSignal.cleanup();
     }
-    const body: unknown = await response.json();
-    if (!isRecord(body) || !('data' in body)) throw new QVaultProtocolError('success');
-    return (body as Success<T>).data;
   }
 
   private async validated<T>(path: string, validator: (value: unknown) => value is T, resource: string, init: RequestInit = {}, options: RequestOptions = {}): Promise<T> {

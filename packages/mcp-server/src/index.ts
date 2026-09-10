@@ -25,13 +25,14 @@ if (profile === 'share' && !token.startsWith('qnt_')) {
 const configuredDeviceId = process.env.QNOTES_MCP_DEVICE_ID;
 if (configuredDeviceId && !isUUID(configuredDeviceId)) throw new Error('QNOTES_MCP_DEVICE_ID must be a UUID. Keep this value stable across MCP process restarts when retrying writes.');
 const allowPublicShare = profile === 'write' && process.env.QNOTES_MCP_ENABLE_PUBLIC_SHARE === 'true';
-const client = new QNotesClient({ baseUrl, getAccessToken: () => token });
+const allowInsecureLoopback = process.env.QNOTES_ALLOW_INSECURE_LOOPBACK === 'true';
+const client = new QNotesClient({ baseUrl, getAccessToken: () => token, allowInsecureLoopback });
 const vaultToken = process.env.QVAULT_TOKEN;
 const vaultProfile: VaultMcpProfile | undefined = vaultToken
   ? (process.env.QVAULT_MCP_PROFILE === 'write' ? 'write' : process.env.QVAULT_MCP_PROFILE === 'reveal' ? 'reveal' : 'metadata')
   : undefined;
 const vaultClient = vaultToken
-  ? new QVaultClient({ baseUrl: vaultBaseUrl, getAccessToken: () => vaultToken })
+  ? new QVaultClient({ baseUrl: vaultBaseUrl, getAccessToken: () => vaultToken, allowInsecureLoopback })
   : undefined;
 await runQNotesMcpServer(client, profile, {
   ...(allowPublicShare ? { allowPublicShare: true } : {}),
