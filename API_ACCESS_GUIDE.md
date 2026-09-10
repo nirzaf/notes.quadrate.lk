@@ -443,11 +443,13 @@ Each change includes `noteId`, `slug`, `title`, `tags`, `notebookId`, `version`,
 
 Supported MIME types are `text/plain`, `text/markdown`, `application/pdf`, `image/png`, `image/jpeg`, and `image/webp`. The API default upload limit is 20 MiB. Text, Markdown, and text-bearing PDFs are extracted and indexed asynchronously. Images are accepted and stored privately, but the worker reports `unsupported` with `IMAGE_OCR_UNSUPPORTED` because image OCR is not implemented.
 
-Attachment upload is a two-step API plus one direct Storage operation:
+Attachment upload is a two-step API plus one direct staging Storage operation:
 
 1. Request a signed upload URL with `attachments:write`.
-2. Upload the bytes directly to the private `note-attachments` bucket using the returned `path` and `token`.
-3. Finalize the attachment so the processing worker queues extraction.
+2. Upload the bytes directly to the private `note-attachments` bucket using the returned staging `path` and `token`.
+3. Finalize the attachment. The API verifies the byte count, supported file signature, final object bytes, and SHA-256 digest, then promotes the immutable final object and queues extraction.
+
+The signed path is under `staging/` and is registered to one pending attachment. Authenticated Storage clients cannot overwrite finalized objects or delete final objects directly. `DELETE /api/attachments/:attachmentId` starts a lifecycle-authorized cleanup; the worker retries object removal when Storage is temporarily unavailable and requeues stale processing rows.
 
 Request the signed upload URL:
 
@@ -472,7 +474,7 @@ curl -fsS -X POST \
   "$QNOTES_URL/api/attachments/ATTACHMENT_UUID/finalize"
 ```
 
-List active attachments for a note with `GET /api/notes/:noteRef/attachments`. The attachment status moves through `pending_upload`, `queued`, `processing`, and then `ready`, `failed`, or `unsupported`. Search can return ready attachment chunks.
+List active attachments for a note with `GET /api/notes/:noteRef/attachments`. The attachment status moves through `pending_upload`, `verifying`, `queued`, `processing`, and then `ready`, `failed`, or `unsupported`. Deletion moves through `deleting` before the worker records `deleted`; search rows are removed when deletion starts. Search can return ready attachment chunks.
 
 Create a short-lived download URL with `attachments:read`:
 
@@ -482,7 +484,7 @@ curl -fsS \
   "$QNOTES_URL/api/attachments/ATTACHMENT_UUID"
 ```
 
-The response contains `signedUrl` and `expiresInSeconds: 60`. `DELETE /api/attachments/:attachmentId` removes the object and soft-deletes its metadata.
+The response contains `signedUrl` and `expiresInSeconds: 60`. `DELETE /api/attachments/:attachmentId` soft-deletes the metadata immediately and returns success when object cleanup finishes inline, or `202` with `status: "deleting"` when the worker must retry cleanup.
 
 ### Exports
 
@@ -504,7 +506,7 @@ curl -fsS \
   -o qnotes-backup.zip
 ```
 
-The ZIP contains `notes/<safe-slug>-<note-id>.md`, `attachments/<safe-slug>/<attachment-id>-<file-name>`, and `manifest.json`. The version-two manifest includes notebooks, note-to-notebook IDs, Markdown paths, and attachment metadata. Deleted notes and deleted attachments are excluded. Before any Storage download, the API checks Markdown bytes, declared attachment bytes, manifest bytes, and the 5,000-entry limit against the default 50 MiB compressed ZIP limit (configurable with `QNOTES_EXPORT_MAX_BYTES`); it retains a final ZIP-size check.
+The ZIP contains `notes/<safe-slug>-<note-id>.md`, `attachments/<safe-slug>/<attachment-id>-<file-name>`, and `manifest.json`. The version-two manifest includes notebooks, note-to-notebook IDs, Markdown paths, and attachment metadata. Deleted notes and deleted attachments are excluded; stored image attachments remain included even when their extraction status is `unsupported`. Before any Storage download, the API checks Markdown bytes, declared attachment bytes, manifest bytes, and the 5,000-entry limit against the default 50 MiB compressed ZIP limit (configurable with `QNOTES_EXPORT_MAX_BYTES`); it retains a final ZIP-size check.
 
 Validate a workspace backup without writing any data. The dry-run endpoint accepts the exported ZIP as the request body and requires all four note/attachment read/write scopes:
 
@@ -779,8 +781,10 @@ All `/api` routes except health require a bearer credential. The public share re
 - `409 MUTATION_REUSE_CONFLICT`: do not reuse a mutation ID for a different request.
 - `413 ATTACHMENT_TOO_LARGE` or `EXPORT_TOO_LARGE`: reduce the payload or raise the corresponding server-side limit.
 - `422 ATTACHMENT_SIZE_MISMATCH`: the uploaded Storage object did not match the declared byte count; the object is rejected before processing is queued.
+- `422 ATTACHMENT_TYPE_MISMATCH`: the uploaded bytes do not match the declared supported MIME type.
 - `422 VALIDATION_ERROR`: check required fields, UUIDs, versions, Markdown, pagination values, and input limits.
 - `409 ATTACHMENT_NOT_UPLOADED`: upload to the signed Storage URL before finalizing.
+- `409 ATTACHMENT_UPLOAD_EXPIRED`, `ATTACHMENT_VERIFYING`, or `ATTACHMENT_GENERATION_CONFLICT`: the staged object can no longer be finalized; request a new upload when appropriate.
 - `422 UNSUPPORTED_ATTACHMENT_TYPE`: use one of the supported MIME types.
 - `422 DUPLICATE_BLOCK_KEY` or `INVALID_COPY_BLOCK`: fix the named/fenced Markdown block syntax and make named IDs unique within the note.
 - `403 CORS_ORIGIN_DENIED`: send the request from an origin in the server’s exact `QNOTES_ALLOWED_ORIGIN` allow-list.

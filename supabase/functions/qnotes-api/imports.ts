@@ -1,10 +1,12 @@
 import type { Context } from 'hono';
 import { authFromContext, requireScope } from '../_shared/auth.ts';
+import { bytesEqual, ensureFinalObject, removeAttachmentObjectsOrScheduleDeletion, sha256Bytes } from '../_shared/attachment-storage.ts';
 import { appDbClient, serviceClient } from '../_shared/database.ts';
 import { ApiError } from '../_shared/errors.ts';
 import { enforceRequestBudget } from '../_shared/request-limits.ts';
 import { workspaceMaxBytes } from './exports.ts';
 import { createNoteMutation } from './notes.ts';
+import { validateAttachmentSignature } from './attachment-signature.ts';
 import { requireAccountWide } from '../_shared/notebook-access.ts';
 import {
   inspectWorkspaceArchive,
@@ -49,10 +51,8 @@ function archiveText(inspection: WorkspaceArchiveInspection, path: string): stri
   }
 }
 
-function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
-  if (left.byteLength !== right.byteLength) return false;
-  for (let index = 0; index < left.byteLength; index += 1) if (left[index] !== right[index]) return false;
-  return true;
+function importedAttachmentStagingPath(ownerId: string, noteId: string, backupId: string, attachmentId: string, fileName: string): string {
+  return `${ownerId}/${noteId}/staging/imports/${backupId}/${attachmentId}/${fileName}`;
 }
 
 async function workspaceConflicts(ownerId: string, manifest: WorkspaceBackupManifest): Promise<WorkspaceImportConflict[]> {
@@ -138,18 +138,23 @@ async function ensureNotebook(ownerId: string, backupId: string, notebook: Works
 }
 
 function importedAttachmentPath(ownerId: string, backupId: string, noteId: string, attachmentId: string, fileName: string): string {
-  return `${ownerId}/${noteId}/imports/${backupId}/${attachmentId}/${fileName}`;
+  return `${ownerId}/${noteId}/final/imports/${backupId}/${attachmentId}/${fileName}`;
 }
 
-async function failImportedAttachment(ownerId: string, attachmentId: string, objectPath: string): Promise<void> {
-  const removed = await serviceClient.storage.from(attachmentBucket).remove([objectPath]);
+async function failImportedAttachment(ownerId: string, attachmentId: string, paths: string[], error = 'ATTACHMENT_SIZE_MISMATCH'): Promise<void> {
+  const cleanup = await removeAttachmentObjectsOrScheduleDeletion(ownerId, attachmentId, attachmentBucket, paths);
+  if (cleanup === 'scheduled') return;
   const failed = await serviceClient.rpc('qnotes_fail_attachment_processing', {
     p_owner_id: ownerId,
     p_attachment_id: attachmentId,
     p_status: 'failed',
-    p_error: 'ATTACHMENT_SIZE_MISMATCH',
+    p_error: error,
   });
-  if (removed.error || failed.error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to safely reject an imported attachment.');
+  if (failed.error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to safely reject an imported attachment.');
+}
+
+function importAlreadyProcessed(status: unknown): boolean {
+  return ['queued', 'processing', 'ready', 'unsupported'].includes(String(status));
 }
 
 async function ensureImportedAttachment(
@@ -164,64 +169,81 @@ async function ensureImportedAttachment(
   const fileName = safeImportFileName(sourceAttachment.originalFileName);
   const targetId = await workspaceImportUuid(ownerId, backupId, 'attachment', sourceAttachment.id);
   const objectPath = importedAttachmentPath(ownerId, backupId, noteId, targetId, fileName);
+  const stagingPath = importedAttachmentStagingPath(ownerId, noteId, backupId, targetId, fileName);
   const existing = await appDbClient.from('attachments').select('*').eq('id', targetId).eq('owner_id', ownerId).maybeSingle();
   if (existing.error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to inspect an imported attachment.');
   if (existing.data) {
-    if (existing.data.deleted_at || String(existing.data.note_id) !== noteId || String(existing.data.bucket) !== attachmentBucket || String(existing.data.object_path) !== objectPath || String(existing.data.original_file_name) !== fileName || String(existing.data.mime_type) !== sourceAttachment.mimeType || Number(existing.data.size_bytes) !== sourceAttachment.sizeBytes) {
+    if (existing.data.deleted_at || String(existing.data.note_id) !== noteId || String(existing.data.bucket) !== attachmentBucket || String(existing.data.object_path) !== objectPath || String(existing.data.staging_object_path ?? stagingPath) !== stagingPath || String(existing.data.original_file_name) !== fileName || String(existing.data.mime_type) !== sourceAttachment.mimeType || Number(existing.data.size_bytes) !== sourceAttachment.sizeBytes) {
       throw conflictError([{ kind: 'note', sourceId: noteId, value: fileName, reason: 'import_identity_conflict' }]);
     }
+    if (importAlreadyProcessed(existing.data.extraction_status)) return;
   } else {
-    let uploadedHere = false;
-    const uploaded = await serviceClient.storage.from(attachmentBucket).upload(objectPath, bytes, { contentType: sourceAttachment.mimeType, upsert: false });
-    if (uploaded.error) {
-      const existingObject = await serviceClient.storage.from(attachmentBucket).download(objectPath);
-      if (existingObject.error || !existingObject.data) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to upload an imported attachment.');
-      const existingBytes = new Uint8Array(await existingObject.data.arrayBuffer());
-      if (!bytesEqual(existingBytes, bytes)) throw conflictError([{ kind: 'note', sourceId: noteId, value: fileName, reason: 'import_identity_conflict' }]);
-    } else {
-      uploadedHere = true;
-    }
-
     const inserted = await appDbClient.from('attachments').insert({
       id: targetId,
       owner_id: ownerId,
       note_id: noteId,
       bucket: attachmentBucket,
       object_path: objectPath,
+      staging_object_path: stagingPath,
       original_file_name: fileName,
       mime_type: sourceAttachment.mimeType,
       size_bytes: sourceAttachment.sizeBytes,
+      storage_mode: 'immutable',
+      staging_expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
       extraction_status: 'pending_upload',
     }).select('*').single();
     if (inserted.error || !inserted.data) {
       if (inserted.error?.code === '23505') {
         const raced = await appDbClient.from('attachments').select('*').eq('id', targetId).eq('owner_id', ownerId).maybeSingle();
-        if (!raced.error && raced.data && !raced.data.deleted_at && String(raced.data.note_id) === noteId && String(raced.data.object_path) === objectPath && Number(raced.data.size_bytes) === sourceAttachment.sizeBytes) {
-          // Another retry created the same logical item. Continue with the
-          // same object verification and finalization below.
+        if (!raced.error && raced.data && !raced.data.deleted_at && String(raced.data.note_id) === noteId && String(raced.data.object_path) === objectPath && String(raced.data.staging_object_path ?? stagingPath) === stagingPath && Number(raced.data.size_bytes) === sourceAttachment.sizeBytes) {
+          if (importAlreadyProcessed(raced.data.extraction_status)) return;
         } else {
-          if (uploadedHere) await serviceClient.storage.from(attachmentBucket).remove([objectPath]);
           throw conflictError([{ kind: 'note', sourceId: noteId, value: fileName, reason: 'import_identity_conflict' }]);
         }
       } else {
-        if (uploadedHere) await serviceClient.storage.from(attachmentBucket).remove([objectPath]);
         throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to create imported attachment metadata.');
       }
     }
   }
 
-  const downloaded = await serviceClient.storage.from(attachmentBucket).download(objectPath);
+  const uploaded = await serviceClient.storage.from(attachmentBucket).upload(stagingPath, new Blob([bytes.buffer as ArrayBuffer], { type: sourceAttachment.mimeType }), { contentType: sourceAttachment.mimeType, upsert: false });
+  if (uploaded.error) {
+    const existingObject = await serviceClient.storage.from(attachmentBucket).download(stagingPath);
+    if (existingObject.error || !existingObject.data || !bytesEqual(new Uint8Array(await existingObject.data.arrayBuffer()), bytes)) throw conflictError([{ kind: 'note', sourceId: noteId, value: fileName, reason: 'import_identity_conflict' }]);
+  }
+
+  const downloaded = await serviceClient.storage.from(attachmentBucket).download(stagingPath);
   if (downloaded.error || !downloaded.data) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to verify an imported attachment.');
   const actualBytes = new Uint8Array(await downloaded.data.arrayBuffer());
   if (actualBytes.byteLength !== sourceAttachment.sizeBytes || !bytesEqual(actualBytes, bytes)) {
-    await failImportedAttachment(ownerId, targetId, objectPath);
+    await failImportedAttachment(ownerId, targetId, [stagingPath]);
     throw new ApiError(422, 'ATTACHMENT_SIZE_MISMATCH', 'The imported attachment bytes do not match its manifest.');
   }
+  if (!validateAttachmentSignature(sourceAttachment.mimeType, actualBytes).ok) {
+    await failImportedAttachment(ownerId, targetId, [stagingPath], 'ATTACHMENT_TYPE_MISMATCH');
+    throw new ApiError(422, 'ATTACHMENT_TYPE_MISMATCH', 'The imported attachment bytes do not match its declared type.');
+  }
 
-  const finalized = await serviceClient.rpc('qnotes_finalize_attachment', { p_owner_id: ownerId, p_attachment_id: targetId });
-  if (finalized.error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to queue an imported attachment for processing.');
-  const status = record(finalized.data).status;
-  if (status === 'not_found') throw new ApiError(500, 'INTERNAL_ERROR', 'The imported attachment metadata disappeared during restore.');
+  const begun = await serviceClient.rpc('qnotes_begin_attachment_verification', { p_owner_id: ownerId, p_attachment_id: targetId });
+  if (begun.error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to begin imported attachment verification.');
+  const begin = record(begun.data);
+  if (begin.claimed !== true) {
+    if (String(begin.status) === 'expired') throw new ApiError(409, 'ATTACHMENT_UPLOAD_EXPIRED', 'The imported attachment upload expired before finalization.');
+    if (importAlreadyProcessed(begin.status)) return;
+    throw new ApiError(409, 'VALIDATION_ERROR', 'The imported attachment is already being processed.');
+  }
+  try {
+    const checksum = await sha256Bytes(actualBytes);
+    await ensureFinalObject(attachmentBucket, objectPath, sourceAttachment.mimeType, actualBytes);
+    const finalized = await serviceClient.rpc('qnotes_finalize_attachment', { p_owner_id: ownerId, p_attachment_id: targetId, p_checksum_sha256: checksum, p_generation: begin.generation });
+    if (finalized.error || !['ok', 'queued', 'processing', 'ready'].includes(String(record(finalized.data).status))) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to queue an imported attachment for processing.');
+    if (stagingPath !== objectPath) await serviceClient.storage.from(attachmentBucket).remove([stagingPath]);
+  } catch (error) {
+    await failImportedAttachment(ownerId, targetId, [stagingPath, objectPath]);
+    if (error instanceof Error && error.message === 'FINAL_OBJECT_CONFLICT') throw conflictError([{ kind: 'note', sourceId: noteId, value: fileName, reason: 'import_identity_conflict' }]);
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to finalize an imported attachment.');
+  }
 }
 
 interface RestoreSummary {

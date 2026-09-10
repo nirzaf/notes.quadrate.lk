@@ -18,6 +18,14 @@ function envelope(body: unknown): Record<string, unknown> {
   return data as Record<string, unknown>;
 }
 
+async function openAttachments(page: import('@playwright/test').Page): Promise<void> {
+  const details = page.locator('section[aria-label="Attachments"] details');
+  if (await details.evaluate((element) => (element as HTMLDetailsElement).open)) return;
+  await page.waitForTimeout(250);
+  if (!(await details.evaluate((element) => (element as HTMLDetailsElement).open))) await details.locator('summary').click();
+  await expect.poll(() => details.evaluate((element) => (element as HTMLDetailsElement).open)).toBe(true);
+}
+
 async function uploadBytes(token: string, noteId: string, fileName: string, mimeType: string, bytes: Uint8Array, declaredSizeBytes = bytes.byteLength): Promise<string> {
   const requested = await apiJson('/api/attachments/upload-url', token, { method: 'POST', body: JSON.stringify({ noteId, fileName, mimeType, sizeBytes: declaredSizeBytes }) });
   expect(requested.response.status).toBe(201);
@@ -100,7 +108,7 @@ test('refreshes attachment processing stages in the open note without a reload',
   await signInPage(page);
   await page.goto(`/notes/${note.id}`);
   await expectPreviewMode(page);
-  await page.getByText('Attachments', { exact: true }).click();
+  await openAttachments(page);
   await page.locator(`#attachment-upload-${note.id}`).setInputFiles('tests/e2e/fixtures/sample.txt');
   const row = page.locator('.q-attachment-row').first();
   await expect(row).toBeVisible({ timeout: 15_000 });
@@ -118,7 +126,7 @@ test('previews a private text attachment in the open note', async ({ page }) => 
   await signInPage(page);
   await page.goto(`/notes/${note.id}`);
   await expectPreviewMode(page);
-  await page.getByText('Attachments', { exact: true }).click();
+  await openAttachments(page);
   const row = page.locator('.q-attachment-row').first();
   await expect(row).toContainText('preview.txt');
   await row.getByRole('button', { name: 'Preview', exact: true }).click();
@@ -139,8 +147,8 @@ test('offers the screenshot modes and leaves attachments unchanged when capture 
   await signInPage(page);
   await page.goto(`/notes/${note.id}`);
   await expectPreviewMode(page);
-  await page.getByText('Attachments', { exact: true }).click();
-  await page.getByRole('button', { name: 'Screenshot' }).click();
+  await openAttachments(page);
+  await page.getByRole('button', { name: 'Screenshot', exact: true }).click();
   await expect(page.getByRole('menuitem', { name: /Visible Area/ })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: /Entire Page/ })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: /Cropped Zone/ })).toBeVisible();
@@ -158,8 +166,8 @@ test('captures the current note page through the ordinary private attachment flo
   await page.goto(`/notes/${note.id}`);
   await expectPreviewMode(page);
   await expect(page.getByLabel('Rendered note preview')).toContainText('Long section 1');
-  await page.getByText('Attachments', { exact: true }).click();
-  await page.getByRole('button', { name: 'Screenshot' }).click();
+  await openAttachments(page);
+  await page.getByRole('button', { name: 'Screenshot', exact: true }).click();
   await page.getByRole('menuitem', { name: /Entire Page/ }).click();
   await expect(page.getByText('Screenshot attached securely.', { exact: true })).toBeVisible({ timeout: 15_000 });
   await expect.poll(async () => (await listAttachmentsApi(session.access_token, note.id)).filter((item) => item.mimeType === 'image/png' && /^screenshot-page-.*\.png$/.test(item.originalFileName))).not.toHaveLength(0);

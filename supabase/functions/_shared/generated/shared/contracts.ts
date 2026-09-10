@@ -68,11 +68,13 @@ export type SyncStatus =
 export type AttachmentStatus =
   | 'pending_upload'
   | 'uploaded'
+  | 'verifying'
   | 'queued'
   | 'processing'
   | 'ready'
   | 'failed'
   | 'unsupported'
+  | 'deleting'
   | 'deleted';
 
 export type ApiTokenScope =

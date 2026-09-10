@@ -52,6 +52,8 @@ export type Database = {
         Row: {
           bucket: string
           checksum_sha256: string | null
+          cleanup_attempts: number
+          cleanup_next_at: string
           created_at: string
           deleted_at: string | null
           extraction_error: string | null
@@ -59,15 +61,22 @@ export type Database = {
           id: string
           mime_type: string
           note_id: string
+          object_generation: string
           object_path: string
           original_file_name: string
           owner_id: string
           size_bytes: number
+          staging_expires_at: string | null
+          staging_object_path: string | null
+          storage_mode: string
           updated_at: string
+          verified_at: string | null
         }
         Insert: {
           bucket?: string
           checksum_sha256?: string | null
+          cleanup_attempts?: number
+          cleanup_next_at?: string
           created_at?: string
           deleted_at?: string | null
           extraction_error?: string | null
@@ -75,15 +84,22 @@ export type Database = {
           id?: string
           mime_type: string
           note_id: string
+          object_generation?: string
           object_path: string
           original_file_name: string
           owner_id: string
           size_bytes: number
+          staging_expires_at?: string | null
+          staging_object_path?: string | null
+          storage_mode?: string
           updated_at?: string
+          verified_at?: string | null
         }
         Update: {
           bucket?: string
           checksum_sha256?: string | null
+          cleanup_attempts?: number
+          cleanup_next_at?: string
           created_at?: string
           deleted_at?: string | null
           extraction_error?: string | null
@@ -91,11 +107,16 @@ export type Database = {
           id?: string
           mime_type?: string
           note_id?: string
+          object_generation?: string
           object_path?: string
           original_file_name?: string
           owner_id?: string
           size_bytes?: number
+          staging_expires_at?: string | null
+          staging_object_path?: string | null
+          storage_mode?: string
           updated_at?: string
+          verified_at?: string | null
         }
         Relationships: [
           {
@@ -468,14 +489,23 @@ export type Database = {
         Args: { p_message_id: number; p_queue_name: string }
         Returns: boolean
       }
+      qnotes_begin_attachment_verification: {
+        Args: { p_attachment_id: string; p_owner_id: string }
+        Returns: Json
+      }
       qnotes_blocks_json: { Args: { p_note_id: string }; Returns: Json }
       qnotes_complete_attachment_processing: {
         Args: {
           p_attachment_id: string
           p_checksum_sha256: string
           p_documents: Json
+          p_generation: string
           p_owner_id: string
         }
+        Returns: Json
+      }
+      qnotes_complete_attachment_deletion: {
+        Args: { p_attachment_id: string; p_owner_id: string }
         Returns: Json
       }
       qnotes_create_note: {
@@ -539,7 +569,12 @@ export type Database = {
         Returns: Json
       }
       qnotes_finalize_attachment: {
-        Args: { p_attachment_id: string; p_owner_id: string }
+        Args: {
+          p_attachment_id: string
+          p_checksum_sha256: string
+          p_generation: string
+          p_owner_id: string
+        }
         Returns: Json
       }
       qnotes_hybrid_search: {
@@ -635,6 +670,10 @@ export type Database = {
       }
       qnotes_requeue_embedding_mode_mismatches: {
         Args: { p_embedding_mode: string; p_limit?: number }
+        Returns: number
+      }
+      qnotes_requeue_stale_attachment_processing: {
+        Args: { p_limit?: number; p_stale_after?: string }
         Returns: number
       }
       qnotes_requeue_stale_embeddings: {
