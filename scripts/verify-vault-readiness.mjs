@@ -25,6 +25,8 @@ export const VAULT_METADATA_TABLES = [
   'vault_mutations',
   'vault_security_policy',
   'vault_operation_approvals',
+  'vault_audit_policy',
+  'vault_audit_outbox',
 ];
 
 export const VAULT_RPC_CHECKS = [
@@ -78,6 +80,32 @@ export const VAULT_RPC_CHECKS = [
     name: 'qnotes_consume_vault_operation_approval',
     signature: 'uuid,uuid,text,uuid,uuid,uuid,bigint,text,text',
   },
+  {
+    id: 'append_audit_event',
+    name: 'qnotes_vault_append_audit_event',
+    signature: 'uuid,text,uuid,text,uuid,uuid,uuid,text,boolean,text,uuid,uuid',
+  },
+  {
+    id: 'claim_audit_outbox',
+    name: 'qnotes_vault_claim_audit_outbox',
+    signature: 'integer',
+  },
+  {
+    id: 'ack_audit_outbox',
+    name: 'qnotes_vault_ack_audit_outbox',
+    signature: 'uuid',
+  },
+  {
+    id: 'retry_audit_outbox',
+    name: 'qnotes_vault_retry_audit_outbox',
+    signature: 'uuid,text',
+  },
+  {
+    id: 'purge_audit_events',
+    name: 'qnotes_vault_purge_expired_audit_events',
+    signature: 'timestamptz',
+    serviceRoleAllowed: false,
+  },
 ];
 
 const baseReadinessChecks = [
@@ -89,13 +117,17 @@ const baseReadinessChecks = [
   })),
 ];
 
+function serviceRoleKey(rpc) {
+  return rpc.serviceRoleAllowed === false ? 'service_role_denied' : 'service_role_allowed';
+}
+
 export const VAULT_READINESS_CHECKS = [
   ...baseReadinessChecks,
-  ...VAULT_RPC_CHECKS.flatMap(({ id, name }) => [
-    { key: `vault_rpc_${id}_exists`, label: `Vault RPC ${name}` },
-    { key: `vault_rpc_${id}_anon_denied`, label: `Vault RPC ${name} denies anon` },
-    { key: `vault_rpc_${id}_authenticated_denied`, label: `Vault RPC ${name} denies authenticated` },
-    { key: `vault_rpc_${id}_service_role_allowed`, label: `Vault RPC ${name} allows service_role` },
+  ...VAULT_RPC_CHECKS.flatMap((rpc) => [
+    { key: `vault_rpc_${rpc.id}_exists`, label: `Vault RPC ${rpc.name}` },
+    { key: `vault_rpc_${rpc.id}_anon_denied`, label: `Vault RPC ${rpc.name} denies anon` },
+    { key: `vault_rpc_${rpc.id}_authenticated_denied`, label: `Vault RPC ${rpc.name} denies authenticated` },
+    { key: `vault_rpc_${rpc.id}_${serviceRoleKey(rpc)}`, label: `Vault RPC ${rpc.name} ${rpc.serviceRoleAllowed === false ? 'denies' : 'allows'} service_role` },
   ]),
 ];
 
@@ -122,7 +154,7 @@ const readinessExpressions = [
     `${rpcOid(rpc)} is not null as vault_rpc_${rpc.id}_exists`,
     `${privilegeCheck(rpc, 'anon', false)} as vault_rpc_${rpc.id}_anon_denied`,
     `${privilegeCheck(rpc, 'authenticated', false)} as vault_rpc_${rpc.id}_authenticated_denied`,
-    `${privilegeCheck(rpc, 'service_role', true)} as vault_rpc_${rpc.id}_service_role_allowed`,
+    `${privilegeCheck(rpc, 'service_role', rpc.serviceRoleAllowed !== false)} as vault_rpc_${rpc.id}_${serviceRoleKey(rpc)}`,
   ]),
 ];
 

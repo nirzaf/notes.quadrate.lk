@@ -1,7 +1,8 @@
 import { QNotesValidationError } from './errors.ts';
 
 export type VaultAction = 'metadata:read' | 'secret:reveal' | 'secret:write' | 'secret:delete';
-export type VaultActorKind = 'user_jwt' | 'vault_agent';
+export type VaultAuditAction = VaultAction | 'secret:use' | 'token:issue' | 'token:revoke' | 'grant:replace' | 'auth:step_up' | 'approval:issue' | 'approval:consume' | 'access:denied' | 'admin:recovery';
+export type VaultActorKind = 'user_jwt' | 'vault_agent' | 'system';
 export type VaultSensitiveAction = 'secret:reveal' | 'secret:write' | 'secret:delete' | 'token:issue' | 'token:revoke' | 'grant:replace';
 
 export const MAX_VAULT_PROJECT_NAME_LENGTH = 80;
@@ -87,7 +88,7 @@ export type VaultAuditEvent = {
   actorTokenId: string | null;
   actorTokenName: string | null;
   actorTokenPrefix: string | null;
-  action: VaultAction;
+  action: VaultAuditAction;
   projectId: string | null;
   environmentId: string | null;
   secretId: string | null;
@@ -95,6 +96,9 @@ export type VaultAuditEvent = {
   success: boolean;
   resultCode: string | null;
   requestId: string | null;
+  operationId: string | null;
+  policyRevision: string;
+  retentionExpiresAt: string;
   occurredAt: string;
 };
 
