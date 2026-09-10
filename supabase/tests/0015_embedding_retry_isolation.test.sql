@@ -58,25 +58,25 @@ select is((select count(*)::integer from public.qnotes_semantic_search(
   'synthetic-vector-marker', ('[' || repeat('0,', 383) || '0]')::extensions.vector,
   10, '{}'::jsonb, 0, 2)
   where source_key = 'us26-synthetic'
-)), 0, 'provider semantic search excludes synthetic vectors');
+), 0, 'provider semantic search excludes synthetic vectors');
 select is((select count(*)::integer from public.qnotes_semantic_search(
   (select id from auth.users where email = 'owner@qnotes.local'),
   'synthetic-vector-marker', ('[' || repeat('0,', 383) || '0]')::extensions.vector,
   10, '{"embeddingMode":"synthetic-test-v1"}'::jsonb, 0, 2)
   where source_key = 'us26-synthetic'
-)), 1, 'explicit synthetic semantic search includes synthetic vectors');
+), 1, 'explicit synthetic semantic search includes synthetic vectors');
 select is((select count(*)::integer from public.qnotes_hybrid_search(
   (select id from auth.users where email = 'owner@qnotes.local'),
   'synthetic-vector-marker', ('[' || repeat('0,', 383) || '0]')::extensions.vector,
   10, 60)
   where source_key = 'us26-synthetic'
-)), 0, 'provider hybrid search excludes synthetic vectors');
+), 0, 'provider hybrid search excludes synthetic vectors');
 select is((select count(*)::integer from public.qnotes_hybrid_search(
   (select id from auth.users where email = 'owner@qnotes.local'),
   'synthetic-vector-marker', ('[' || repeat('0,', 383) || '0]')::extensions.vector,
   10, 60, '{"embeddingMode":"synthetic-test-v1"}'::jsonb, 0, 2)
   where source_key = 'us26-synthetic'
-)), 1, 'explicit synthetic hybrid search includes synthetic vectors');
+), 1, 'explicit synthetic hybrid search includes synthetic vectors');
 
 select * from finish();
 rollback;
