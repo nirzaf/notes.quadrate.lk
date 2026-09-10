@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,7 +31,8 @@ async function fixture() {
       'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'GITHUB_TOKEN', 'GOOGLE_APPLICATION_CREDENTIALS',
       'NODE_OPTIONS', 'NODE_PATH', 'NODE_EXTRA_CA_CERTS', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY',
       'SSL_CERT_FILE', 'SSL_CERT_DIR', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'LC_CTYPE', 'PATH',
-      'APPDATA', 'LOCALAPPDATA', 'USERPROFILE', 'SYSTEMROOT', 'WINDIR'
+      'APPDATA', 'LOCALAPPDATA', 'USERPROFILE', 'SYSTEMROOT', 'WINDIR',
+      'COMSPEC', 'HOMEDRIVE', 'HOMEPATH', 'PATHEXT', 'SYSTEMDRIVE'
     ];
     process.stdout.write(JSON.stringify(Object.fromEntries(names.map((name) => [name, process.env[name] ?? null]))));
   `);
@@ -127,7 +128,12 @@ test('launcher passes platform runtime values but drops unrelated credentials an
     LC_CTYPE: 'C.UTF-8',
     PATH: '/usr/bin',
     APPDATA: 'C:\\Users\\hermes\\AppData\\Roaming',
+    COMSPEC: 'C:\\Windows\\System32\\cmd.exe',
+    HOMEDRIVE: 'C:',
+    HOMEPATH: '\\Users\\hermes',
     LOCALAPPDATA: 'C:\\Users\\hermes\\AppData\\Local',
+    PATHEXT: '.COM;.EXE;.BAT;.CMD',
+    SYSTEMDRIVE: 'C:',
     USERPROFILE: 'C:\\Users\\hermes',
     SYSTEMROOT: 'C:\\Windows',
     WINDIR: 'C:\\Windows',
@@ -161,7 +167,12 @@ test('launcher passes platform runtime values but drops unrelated credentials an
   assert.equal(observed.LC_CTYPE, 'C.UTF-8');
   if (process.platform === 'win32') {
     assert.equal(observed.APPDATA, 'C:\\Users\\hermes\\AppData\\Roaming');
+    assert.equal(observed.COMSPEC, 'C:\\Windows\\System32\\cmd.exe');
+    assert.equal(observed.HOMEDRIVE, 'C:');
+    assert.equal(observed.HOMEPATH, '\\Users\\hermes');
     assert.equal(observed.LOCALAPPDATA, 'C:\\Users\\hermes\\AppData\\Local');
+    assert.equal(observed.PATHEXT, '.COM;.EXE;.BAT;.CMD');
+    assert.equal(observed.SYSTEMDRIVE, 'C:');
     assert.equal(observed.USERPROFILE, 'C:\\Users\\hermes');
     assert.equal(observed.SYSTEMROOT, 'C:\\Windows');
     assert.equal(observed.WINDIR, 'C:\\Windows');
@@ -172,6 +183,11 @@ test('launcher passes platform runtime values but drops unrelated credentials an
     assert.equal(observed.USERPROFILE, null);
     assert.equal(observed.SYSTEMROOT, null);
     assert.equal(observed.WINDIR, null);
+    assert.equal(observed.COMSPEC, null);
+    assert.equal(observed.HOMEDRIVE, null);
+    assert.equal(observed.HOMEPATH, null);
+    assert.equal(observed.PATHEXT, null);
+    assert.equal(observed.SYSTEMDRIVE, null);
   }
 });
 
@@ -280,4 +296,21 @@ test('launcher rejects a non-JavaScript runtime target', async (t) => {
 
   assert.notEqual(result.code, 0);
   assert.doesNotMatch(result.stdout + result.stderr, /runtime\.txt/);
+});
+
+test('launcher validates the resolved target of a runtime symlink', async (t) => {
+  const { root } = await fixture();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const target = join(root, 'runtime.txt');
+  const link = join(root, 'runtime.mjs');
+  await writeFile(target, 'not a runtime');
+  await symlink(target, link);
+
+  const result = await runLauncher(link, {}, {
+    QNOTES_URL: 'https://notes.example.test/functions/v1/qnotes-api',
+    QNOTES_PLUGIN_TOKEN: 'qnt_selected_read',
+  });
+
+  assert.notEqual(result.code, 0);
+  assert.doesNotMatch(result.stdout + result.stderr, /runtime\.(?:txt|mjs)/);
 });

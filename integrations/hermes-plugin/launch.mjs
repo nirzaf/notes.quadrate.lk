@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
-import { statSync } from 'node:fs';
+import { realpathSync, statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { validateApiEndpoint } from './endpoint-policy.mjs';
 
@@ -81,13 +81,14 @@ function parseArgs(argv) {
 function validateServerPath(value) {
   if (!isAbsolute(value)) throw configurationError();
   try {
-    if (!statSync(value).isFile()) throw configurationError();
+    const resolved = realpathSync(value);
+    if (!statSync(resolved).isFile()) throw configurationError();
+    if (!/\.(?:c|m)?js$/i.test(resolved)) throw configurationError();
+    return resolved;
   } catch (error) {
     if (error instanceof LauncherConfigurationError) throw error;
     throw configurationError();
   }
-  if (!/\.(?:c|m)?js$/i.test(value)) throw configurationError();
-  return value;
 }
 
 function validateUrl(value, allowInsecureLoopback) {
