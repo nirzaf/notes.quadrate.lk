@@ -1,4 +1,4 @@
-import type { ISODateTime, NoteSummary, UUID } from '@qnotes/shared';
+import type { ISODateTime, Note, NoteSummary, UUID } from '@qnotes/shared';
 
 export interface NoteDraft {
   noteId: UUID;
@@ -36,6 +36,59 @@ export interface DraftStore {
 
 type SyncRecord = { key: string; value: string };
 
+type SearchRecord = NoteSummary & {
+  contentMarkdown: string;
+  contentPlain: string;
+};
+
+export interface CachedSyncPage {
+  notes: Note[];
+  deletedNoteIds: UUID[];
+  cursor: string | null;
+  reset?: boolean;
+}
+
+export const MAX_CACHED_NOTES = 2_000;
+
+function noteSummary(note: Note): NoteSummary {
+  return {
+    id: note.id,
+    slug: note.slug,
+    title: note.title,
+    excerpt: note.contentPlain.slice(0, 280),
+    tags: [...note.tags],
+    notebookId: note.notebookId,
+    version: note.version,
+    createdAt: note.createdAt,
+    updatedAt: note.updatedAt,
+    deletedAt: note.deletedAt,
+  };
+}
+
+function searchRecord(note: Note): SearchRecord {
+  return { ...noteSummary(note), contentMarkdown: note.contentMarkdown, contentPlain: note.contentPlain };
+}
+
+function fromSearchRecord(record: SearchRecord): NoteSummary {
+  return {
+    id: record.id,
+    slug: record.slug,
+    title: record.title,
+    excerpt: record.excerpt,
+    tags: [...record.tags],
+    notebookId: record.notebookId,
+    version: record.version,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    deletedAt: record.deletedAt,
+  };
+}
+
+function matchesSearch(record: SearchRecord, query: string): boolean {
+  const haystack = [record.title, record.tags.join(' '), record.contentPlain, record.contentMarkdown].join('\n').toLocaleLowerCase();
+  return haystack.includes(query);
+}
+
 export class IndexedDbDraftStore implements DraftStore {
   private readonly databaseName: string;
   private database: IDBDatabase | null = null;
@@ -48,13 +101,31 @@ export class IndexedDbDraftStore implements DraftStore {
     if (this.database) return this.database;
     if (typeof indexedDB === 'undefined') return null;
     this.database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open(this.databaseName, 2);
-      request.onupgradeneeded = () => {
+      const request = indexedDB.open(this.databaseName, 3);
+      request.onupgradeneeded = (event) => {
         const database = request.result;
         if (!database.objectStoreNames.contains('drafts')) database.createObjectStore('drafts', { keyPath: 'noteId' });
         if (!database.objectStoreNames.contains('sync')) database.createObjectStore('sync', { keyPath: 'key' });
-        if (!database.objectStoreNames.contains('recentNotes')) database.createObjectStore('recentNotes', { keyPath: 'noteId' });
+        const recentNotes = database.objectStoreNames.contains('recentNotes')
+          ? request.transaction!.objectStore('recentNotes')
+          : database.createObjectStore('recentNotes', { keyPath: 'noteId' });
+        if (!recentNotes.indexNames.contains('updatedAt')) recentNotes.createIndex('updatedAt', 'updatedAt');
         if (!database.objectStoreNames.contains('searchSelections')) database.createObjectStore('searchSelections', { autoIncrement: true });
+        const searchRecords = database.objectStoreNames.contains('searchRecords')
+          ? request.transaction!.objectStore('searchRecords')
+          : database.createObjectStore('searchRecords', { keyPath: 'id' });
+        if (!searchRecords.indexNames.contains('updatedAt')) searchRecords.createIndex('updatedAt', 'updatedAt');
+        if (event.oldVersion < 3) {
+          const records = searchRecords;
+          const cursorRequest = recentNotes.openCursor();
+          cursorRequest.onsuccess = () => {
+            const cursor = cursorRequest.result;
+            if (!cursor) return;
+            const value = cursor.value as Partial<Note> & NoteSummary;
+            if (typeof value.contentMarkdown === 'string' && typeof value.contentPlain === 'string') records.put(searchRecord(value as Note));
+            cursor.continue();
+          };
+        }
       };
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error ?? new Error('Unable to open qnotes IndexedDB.'));
@@ -121,16 +192,64 @@ export class IndexedDbDraftStore implements DraftStore {
     await this.write('sync', (store) => store.put({ key: 'notesCursor', value: value ?? '' }));
   }
 
-  async putRecent(note: { id: UUID } & Record<string, unknown>): Promise<void> {
-    await this.write('recentNotes', (store) => store.put({ ...note, noteId: note.id }));
+  private async pruneCachedNotes(transaction: IDBTransaction): Promise<void> {
+    const index = transaction.objectStore('recentNotes').index('updatedAt');
+    let seen = 0;
+    await new Promise<void>((resolve, reject) => {
+      const request = index.openCursor(null, 'prev');
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) { resolve(); return; }
+        seen += 1;
+        if (seen > MAX_CACHED_NOTES) {
+          const noteId = cursor.primaryKey;
+          transaction.objectStore('recentNotes').delete(noteId);
+          transaction.objectStore('searchRecords').delete(noteId);
+        }
+        cursor.continue();
+      };
+      request.onerror = () => reject(request.error ?? new Error('Unable to prune cached notes.'));
+    });
+  }
+
+  async putRecent(note: Note): Promise<void> {
+    const database = await this.open();
+    if (!database) throw new Error('Local storage is unavailable.');
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(['recentNotes', 'searchRecords'], 'readwrite');
+      transaction.objectStore('recentNotes').put({ ...noteSummary(note), noteId: note.id, contentMarkdown: note.contentMarkdown, contentPlain: note.contentPlain });
+      transaction.objectStore('searchRecords').put(searchRecord(note));
+      void this.pruneCachedNotes(transaction).catch(reject);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error ?? new Error('Unable to cache note.'));
+      transaction.onabort = () => reject(transaction.error ?? new Error('Local storage transaction was aborted.'));
+    });
   }
 
   async deleteRecent(noteId: UUID): Promise<void> {
-    await this.write('recentNotes', (store) => store.delete(noteId));
+    const database = await this.open();
+    if (!database) return;
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(['recentNotes', 'searchRecords'], 'readwrite');
+      transaction.objectStore('recentNotes').delete(noteId);
+      transaction.objectStore('searchRecords').delete(noteId);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error ?? new Error('Unable to delete cached note.'));
+      transaction.onabort = () => reject(transaction.error ?? new Error('Local storage transaction was aborted.'));
+    });
   }
 
   async clearRecent(): Promise<void> {
-    await this.write('recentNotes', (store) => store.clear());
+    const database = await this.open();
+    if (!database) return;
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(['recentNotes', 'searchRecords'], 'readwrite');
+      transaction.objectStore('recentNotes').clear();
+      transaction.objectStore('searchRecords').clear();
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error ?? new Error('Unable to clear cached notes.'));
+      transaction.onabort = () => reject(transaction.error ?? new Error('Local storage transaction was aborted.'));
+    });
   }
 
   async listRecent(limit = 500): Promise<NoteSummary[]> {
@@ -138,9 +257,14 @@ export class IndexedDbDraftStore implements DraftStore {
     if (!database) return [];
     return new Promise((resolve, reject) => {
       const transaction = database.transaction('recentNotes', 'readonly');
-      const request = transaction.objectStore('recentNotes').getAll();
+      const request = transaction.objectStore('recentNotes').index('updatedAt').openCursor(null, 'prev');
       let value: NoteSummary[] = [];
-      request.onsuccess = () => { value = (request.result as NoteSummary[]).sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)).slice(0, limit); };
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor || value.length >= limit) return;
+        value.push(cursor.value as NoteSummary);
+        cursor.continue();
+      };
       request.onerror = () => reject(request.error ?? new Error('Unable to list cached notes.'));
       transaction.oncomplete = () => resolve(value);
       transaction.onerror = () => reject(transaction.error ?? new Error('Unable to list cached notes.'));
@@ -151,11 +275,64 @@ export class IndexedDbDraftStore implements DraftStore {
   async putSearchSelection(selection: SearchSelection): Promise<void> {
     await this.write('searchSelections', (store) => store.add(selection));
   }
+
+  async searchRecent(query: string, limit = 50): Promise<NoteSummary[]> {
+    const database = await this.open();
+    if (!database) return [];
+    const normalized = query.trim().toLocaleLowerCase();
+    if (!normalized) return [];
+    return new Promise((resolve, reject) => {
+      const transaction = database.transaction('searchRecords', 'readonly');
+      const request = transaction.objectStore('searchRecords').index('updatedAt').openCursor(null, 'prev');
+      const value: NoteSummary[] = [];
+      let scanned = 0;
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor || value.length >= limit || scanned >= MAX_CACHED_NOTES) return;
+        scanned += 1;
+        const record = cursor.value as SearchRecord;
+        if (matchesSearch(record, normalized)) value.push(fromSearchRecord(record));
+        cursor.continue();
+      };
+      request.onerror = () => reject(request.error ?? new Error('Unable to search cached notes.'));
+      transaction.oncomplete = () => resolve(value);
+      transaction.onerror = () => reject(transaction.error ?? new Error('Unable to search cached notes.'));
+      transaction.onabort = () => reject(transaction.error ?? new Error('Unable to search cached notes.'));
+    });
+  }
+
+  async applySyncPage({ notes, deletedNoteIds, cursor, reset = false }: CachedSyncPage): Promise<void> {
+    const database = await this.open();
+    if (!database) throw new Error('Local storage is unavailable.');
+    await new Promise<void>((resolve, reject) => {
+      const transaction = database.transaction(['recentNotes', 'searchRecords', 'sync'], 'readwrite');
+      const recent = transaction.objectStore('recentNotes');
+      const searchable = transaction.objectStore('searchRecords');
+      if (reset) {
+        recent.clear();
+        searchable.clear();
+      }
+      for (const note of notes) {
+        recent.put({ ...noteSummary(note), noteId: note.id, contentMarkdown: note.contentMarkdown, contentPlain: note.contentPlain });
+        searchable.put(searchRecord(note));
+      }
+      for (const noteId of deletedNoteIds) {
+        recent.delete(noteId);
+        searchable.delete(noteId);
+      }
+      transaction.objectStore('sync').put({ key: 'notesCursor', value: cursor ?? '' });
+      void this.pruneCachedNotes(transaction).catch(reject);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error ?? new Error('Unable to apply sync page.'));
+      transaction.onabort = () => reject(transaction.error ?? new Error('Local sync transaction was aborted.'));
+    });
+  }
 }
 
 export class MemoryDraftStore implements DraftStore {
   private readonly drafts = new Map<UUID, NoteDraft>();
   private readonly recent = new Map<UUID, NoteSummary>();
+  private readonly searchable = new Map<UUID, SearchRecord>();
   private readonly selections: SearchSelection[] = [];
 
   async get(noteId: UUID): Promise<NoteDraft | null> {
@@ -170,15 +347,41 @@ export class MemoryDraftStore implements DraftStore {
     this.drafts.delete(noteId);
   }
 
+  async putRecent(note: Note): Promise<void> {
+    this.recent.set(note.id, noteSummary(note));
+    this.searchable.set(note.id, searchRecord(note));
+  }
+
+  async deleteRecent(noteId: UUID): Promise<void> {
+    this.recent.delete(noteId);
+    this.searchable.delete(noteId);
+  }
+
   async listRecent(limit = 500): Promise<NoteSummary[]> {
     return [...this.recent.values()].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)).slice(0, limit);
   }
 
   async clearRecent(): Promise<void> {
     this.recent.clear();
+    this.searchable.clear();
   }
 
   async putSearchSelection(selection: SearchSelection): Promise<void> {
     this.selections.push(selection);
+  }
+
+  async searchRecent(query: string, limit = 50): Promise<NoteSummary[]> {
+    const normalized = query.trim().toLocaleLowerCase();
+    return [...this.searchable.values()]
+      .filter((record) => matchesSearch(record, normalized))
+      .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
+      .slice(0, limit)
+      .map(fromSearchRecord);
+  }
+
+  async applySyncPage({ notes, deletedNoteIds, cursor: _cursor, reset = false }: CachedSyncPage): Promise<void> {
+    if (reset) this.clearRecent();
+    for (const note of notes) await this.putRecent(note);
+    for (const noteId of deletedNoteIds) await this.deleteRecent(noteId);
   }
 }

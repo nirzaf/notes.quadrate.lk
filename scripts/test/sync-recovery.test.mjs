@@ -210,3 +210,24 @@ test('recovery still invalidates account-scoped views when generation changes du
     assert.ok(queryClient.calls.some((called) => JSON.stringify(called) === JSON.stringify(queryKey)));
   }
 });
+
+test('page application stores content before advancing its checkpoint', async () => {
+  const events = [];
+  const note = { id: 'note-a', title: 'A', contentMarkdown: '# A', contentPlain: 'A' };
+  await runSyncRecovery({
+    userId: 'user-a',
+    queryClient: recordingQueryClient(),
+    api: {
+      sync: async () => ({ changes: [{ noteId: 'note-a', deletedAt: null }], nextCursor: 'cursor-1', hasMore: false }),
+      getNote: async () => { events.push('fetch'); return note; },
+    },
+    readSyncCursor: async () => 'cursor-0',
+    writeSyncCursor: async () => { throw new Error('legacy cursor write must not be used'); },
+    removeRememberedNote: async () => { throw new Error('legacy delete must not be used'); },
+    applySyncPage: async (page) => { events.push(['apply', page.notes[0].id, page.cursor]); },
+    generation: 0,
+    getGeneration: () => 0,
+    signal: new AbortController().signal,
+  });
+  assert.deepEqual(events, ['fetch', ['apply', 'note-a', 'cursor-1']]);
+});
