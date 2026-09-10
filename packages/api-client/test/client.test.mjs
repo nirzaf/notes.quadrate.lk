@@ -308,6 +308,23 @@ test('accepts old context payloads and validates additive provenance fields', as
   await assert.rejects(() => malformedClient.readNoteContext('doc-1'), /malformed search context/);
 });
 
+test('serializes bounded exact-read ranges for notes, blocks, and public shares', async () => {
+  const calls = [];
+  const block = { id: 'block-1', noteId: 'note-1', blockKey: 'rollback', blockType: 'command', title: null, language: 'bash', content: 'echo hi', position: 0, copyable: true, contentHash: 'hash', offset: 0, nextOffset: 7, contentBytes: 7, totalBytes: 7, truncated: false, contentComplete: true };
+  const client = new QNotesClient({ baseUrl: 'https://example.test', getAccessToken: () => null, fetchImplementation: async (url, init) => {
+    calls.push({ url, init });
+    if (url.includes('/blocks/')) return jsonResponse({ data: block });
+    if (url.includes('/public/share/resolve')) return jsonResponse({ data: { title: 'Shared', contentMarkdown: '# Shared', updatedAt: '2026-01-01T00:00:00Z' } });
+    return jsonResponse({ data: notePayload({ contentMarkdown: 'page', contentPlain: '' }) });
+  } });
+  await client.getNote('note-1', { offset: 4, maxBytes: 1024, continuation: 'note-cursor' });
+  await client.getBlock('note-1', 'rollback', { lineStart: 2, lineEnd: 3, maxBytes: 1024 });
+  await client.resolvePublicShare('qns_' + 'A'.repeat(43), { offset: 4, maxBytes: 1024 });
+  assert.match(calls[0].url, /\/api\/notes\/note-1\?offset=4&maxBytes=1024&continuation=note-cursor$/);
+  assert.match(calls[1].url, /\/api\/notes\/note-1\/blocks\/rollback\?lineStart=2&lineEnd=3&maxBytes=1024$/);
+  assert.deepEqual(JSON.parse(calls[2].init.body), { token: 'qns_' + 'A'.repeat(43), offset: 4, maxBytes: 1024 });
+});
+
 test('preserves search items and response metadata inside the success data envelope', async () => {
   const response = {
     items: [{ id: 'document-1', documentId: 'document-1', noteId: 'note-1', noteVersion: 1, noteSlug: 'deployment', noteTitle: 'Deployment', sourceType: 'note_chunk', sourceId: null, sourceKey: 'section-1', sourceTitle: 'Deployment', headingPath: null, snippet: 'rollback', score: 1, keywordRank: 1, semanticRank: null, copyable: false, blockKey: null, language: null, attachmentId: null }],

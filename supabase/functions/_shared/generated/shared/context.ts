@@ -25,6 +25,68 @@ export interface ContextNoteSnapshot {
   updatedAt: string;
 }
 
+export const DEFAULT_AGENT_RESPONSE_MAX_BYTES = 64 * 1024;
+export const MAX_AGENT_RESPONSE_MAX_BYTES = 64 * 1024;
+export const DEFAULT_MCP_CONTENT_MAX_BYTES = 24 * 1024;
+
+export interface Utf8ContentSlice {
+  content: string;
+  startOffset: number;
+  endOffset: number;
+  totalBytes: number;
+}
+
+export function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
+
+export function sliceUtf8ByBytes(value: string, startOffset: number, maxBytes: number): Utf8ContentSlice {
+  const bytes = new TextEncoder().encode(value);
+  if (!Number.isSafeInteger(startOffset) || startOffset < 0 || startOffset > bytes.byteLength) throw new RangeError('startOffset is outside the UTF-8 content.');
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) throw new RangeError('maxBytes must be a non-negative integer.');
+  const decoder = new TextDecoder('utf-8', { fatal: true });
+  try {
+    decoder.decode(bytes.slice(0, startOffset));
+  } catch {
+    throw new RangeError('startOffset must be on a UTF-8 character boundary.');
+  }
+  let endOffset = Math.min(bytes.byteLength, startOffset + maxBytes);
+  while (endOffset > startOffset) {
+    try {
+      const content = decoder.decode(bytes.slice(startOffset, endOffset));
+      return { content, startOffset, endOffset, totalBytes: bytes.byteLength };
+    } catch {
+      endOffset -= 1;
+    }
+  }
+  return { content: '', startOffset, endOffset: startOffset, totalBytes: bytes.byteLength };
+}
+
+export function utf8LineRange(value: string, lineStart?: number, lineEnd?: number): { startOffset: number; endOffset: number } {
+  if (lineStart === undefined && lineEnd === undefined) return { startOffset: 0, endOffset: utf8ByteLength(value) };
+  const starts = [0];
+  const ends: number[] = [];
+  let offset = 0;
+  for (const character of value) {
+    offset += utf8ByteLength(character);
+    if (character === '\n') {
+      ends.push(offset);
+      starts.push(offset);
+    }
+  }
+  if (starts.length > ends.length) ends.push(offset);
+  const first = lineStart ?? 1;
+  const last = lineEnd ?? ends.length;
+  if (!Number.isSafeInteger(first) || !Number.isSafeInteger(last) || first < 1 || last < first || first > starts.length || last > ends.length) {
+    throw new RangeError('line range is outside the content.');
+  }
+  return { startOffset: starts[first - 1]!, endOffset: ends[last - 1]! };
+}
+
+export function serializedWireBytes(value: unknown): number {
+  return utf8ByteLength(JSON.stringify({ data: value }));
+}
+
 function characterCount(value: string): number {
   return Array.from(value).length;
 }

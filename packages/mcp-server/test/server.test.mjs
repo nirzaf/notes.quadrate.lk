@@ -6,7 +6,7 @@ import { readNoteContextTool } from '../dist/tools/read-note-context.js';
 import { createPublicShareTool } from '../dist/tools/create-public-share.js';
 import { searchNotesTool } from '../dist/tools/search-notes.js';
 import { appendNoteTool, captureNoteTool, deleteNoteTool, restoreNoteTool, updateNoteTool } from '../dist/tools/write-notes.js';
-import { appendMarkdown } from '../dist/tools/common.js';
+import { appendMarkdown, MAX_MCP_TOOL_RESPONSE_BYTES } from '../dist/tools/common.js';
 import { PROFILE_TOOL_NAMES, READ_TOOL_NAMES, SHARE_PROFILE_TOOL_NAMES, SHARE_TOOL_NAMES, WRITE_PROFILE_TOOL_NAMES, WRITE_TOOL_NAMES, createQNotesMcpServer } from '../dist/server.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -25,12 +25,13 @@ function mockClient() {
     },
     async readNoteContext(documentId, params) {
       assert.equal(documentId, 'doc-1');
-      assert.deepEqual(params, { before: 1, after: 2, maxTokens: 900 });
+      assert.deepEqual(params, { before: 1, after: 2, maxTokens: 900, maxBytes: 24576 });
       return context;
     },
-    async getBlock(noteRef, blockKey) {
+    async getBlock(noteRef, blockKey, options) {
       assert.equal(noteRef, 'note-1');
       assert.equal(blockKey, 'rollback');
+      assert.deepEqual(options, { maxBytes: 24576 });
       return { id: 'block-1', noteId: 'note-1', blockKey, blockType: 'command', title: 'Rollback', language: 'bash', content: 'docker compose down', position: 0, copyable: true, contentHash: 'hash' };
     },
   };
@@ -46,6 +47,15 @@ test('read MCP tools delegate to the API client and return structured JSON', asy
   assert.equal(JSON.parse(block.content[0].text).blockKey, 'rollback');
 });
 
+test('MCP read results enforce the complete duplicated wire envelope limit', async () => {
+  assert.equal(MAX_MCP_TOOL_RESPONSE_BYTES, 64 * 1024);
+  await assert.rejects(() => getBlockTool({
+    async getBlock() {
+      return { id: 'block-1', noteId: 'note-1', blockKey: 'large', blockType: 'code', title: null, language: 'text', content: 'x'.repeat(40_000), position: 0, copyable: true, contentHash: 'hash' };
+    },
+  }, { noteRef: 'note-1', blockKey: 'large', maxBytes: 64 * 1024 }), /wire-byte limit/);
+});
+
 test('MCP read context forwards an opaque continuation only when supplied', async () => {
   let received;
   await readNoteContextTool({
@@ -54,7 +64,7 @@ test('MCP read context forwards an opaque continuation only when supplied', asyn
       return context;
     },
   }, { documentId: 'doc-1', continuation: 'opaque-context-cursor' });
-  assert.deepEqual(received, { documentId: 'doc-1', params: { before: 1, after: 1, maxTokens: 1800, continuation: 'opaque-context-cursor' } });
+  assert.deepEqual(received, { documentId: 'doc-1', params: { before: 1, after: 1, maxTokens: 1800, maxBytes: 24576, continuation: 'opaque-context-cursor' } });
 });
 
 test('default MCP profile exposes only the read surface', () => {
@@ -224,16 +234,19 @@ test('MCP list_notebooks is available in the read profile and delegates to the A
 
 test('MCP resolve_public_share is read-only and delegates to the public API-client operation', async () => {
   let receivedToken;
+  let receivedOptions;
   const token = 'qns_' + 'A'.repeat(43);
   const sharedNote = { title: 'Shared', contentMarkdown: '# Shared', updatedAt: '2026-01-01T00:00:00Z' };
   const { client } = await connectedProtocol('read', protocolClient({
-    async resolvePublicShare(value) {
+    async resolvePublicShare(value, options) {
       receivedToken = value;
+      receivedOptions = options;
       return sharedNote;
     },
   }));
   const result = await client.callTool({ name: 'resolve_public_share', arguments: { token } });
   assert.equal(receivedToken, token);
+  assert.deepEqual(receivedOptions, { maxBytes: 24576 });
   assert.deepEqual(result.structuredContent, sharedNote);
   await client.close();
 });

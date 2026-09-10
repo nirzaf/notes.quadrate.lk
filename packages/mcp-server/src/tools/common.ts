@@ -1,10 +1,12 @@
+import { DEFAULT_MCP_CONTENT_MAX_BYTES } from '@qnotes/shared';
 import type { NoteBlock, SearchContext, SearchRequest, SearchResponse } from '@qnotes/shared';
+import type { ContentReadParams } from '@qnotes/api-client';
 import type { ZodType } from 'zod';
 
 export interface ReadQNotesClient {
   searchPost(input: SearchRequest, options?: { signal?: AbortSignal }): Promise<SearchResponse>;
-  readNoteContext(documentId: string, params?: { before?: number; after?: number; maxTokens?: number; continuation?: string }): Promise<SearchContext>;
-  getBlock(noteRef: string, blockKey: string): Promise<NoteBlock>;
+  readNoteContext(documentId: string, params?: { before?: number; after?: number; maxTokens?: number; maxBytes?: number; continuation?: string }): Promise<SearchContext>;
+  getBlock(noteRef: string, blockKey: string, options?: ContentReadParams): Promise<NoteBlock>;
   listNotebooks(): Promise<{ items: unknown[] }>;
 }
 
@@ -20,13 +22,21 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+export const MAX_MCP_TOOL_RESPONSE_BYTES = 64 * 1024;
+
+export function boundedMcpContentBytes(value?: number): number {
+  return Math.min(value ?? DEFAULT_MCP_CONTENT_MAX_BYTES, DEFAULT_MCP_CONTENT_MAX_BYTES);
+}
+
 export function toolResult(value: unknown, schema?: ZodType) {
   const parsed = schema ? schema.parse(value) : value;
   if (!isObject(parsed)) throw new Error('MCP tool output must be an object.');
-  return {
+  const result = {
     content: [{ type: 'text' as const, text: JSON.stringify(parsed) }],
     structuredContent: parsed,
   };
+  if (new TextEncoder().encode(JSON.stringify(result)).byteLength > MAX_MCP_TOOL_RESPONSE_BYTES) throw new Error('MCP tool response exceeds the configured wire-byte limit.');
+  return result;
 }
 
 type ToolHandler = (...args: any[]) => unknown;

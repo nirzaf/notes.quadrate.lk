@@ -114,7 +114,7 @@ curl -fsS -X POST \
   --data '{"token":"qns_<secret>"}'
 ```
 
-A successful resolver response contains only `title`, `contentMarkdown`, and `updatedAt`. Unknown, expired, revoked, deleted, malformed, and wrong-format tokens return the same `404 PUBLIC_SHARE_NOT_FOUND` response. Public resolver responses are `no-store`, and the public page sends no attachment requests.
+A successful resolver response contains only `title`, `contentMarkdown`, and `updatedAt` when no read-range controls are supplied. Agent and other large-content callers can request a bounded page with `offset` (a UTF-8 byte offset), an inclusive `lineStart`/`lineEnd` range, and `maxBytes`; the response adds `contentBytes`, `totalBytes`, `offset`, `nextOffset`, `truncated`, `contentComplete`, `sourceHash`, and an opaque `continuation` when another page exists. Public resolver responses are `no-store`, and the public page sends no attachment requests.
 
 AI agents and other HTTP clients can fetch the same shared note with the unauthenticated JSON resolver. The token must be supplied in the POST body; it must not appear in a path, query string, referrer, or log:
 
@@ -127,7 +127,7 @@ curl -fsS \
   --data '{"token":"qns_<secret>"}'
 ```
 
-The resolver returns `{ data: { title, contentMarkdown, updatedAt } }`, does not require a private JWT, and sends `Cache-Control: no-store`, `X-Robots-Tag: noindex`, `Referrer-Policy: no-referrer`, and a restrictive content security policy. Invalid, expired, revoked, deleted, malformed, and wrong-format tokens return the same generic `404 PUBLIC_SHARE_NOT_FOUND` response. Requests using another method, including a query-token request, are not supported. The web share dialog explains the POST/MCP workflow without constructing another secret-bearing URL.
+The resolver returns `{ data: { title, contentMarkdown, updatedAt } }` for a complete read, or the same envelope with page metadata for a bounded read. It does not require a private JWT and sends `Cache-Control: no-store`, `X-Robots-Tag: noindex`, `Referrer-Policy: no-referrer`, and a restrictive content security policy. Invalid, expired, revoked, deleted, malformed, and wrong-format tokens return the same generic `404 PUBLIC_SHARE_NOT_FOUND` response. Requests using another method, including a query-token request, are not supported. The web share dialog explains the POST/MCP workflow without constructing another secret-bearing URL.
 
 See [AI_AGENTS_SHARED_LINKS.md](AI_AGENTS_SHARED_LINKS.md) for an agent-oriented explanation of browser share URLs, POST JSON retrieval, Markdown content handling, and safe token handling.
 
@@ -242,7 +242,7 @@ curl -fsS \
   "$QNOTES_URL/api/notes/your-note-slug"
 ```
 
-Note summaries contain `id`, `slug`, `title`, a plain-text `excerpt`, `tags`, `notebookId`, version, timestamps, and `deletedAt`. Full notes additionally contain `contentMarkdown` and derived `contentPlain`.
+Note summaries contain `id`, `slug`, `title`, a plain-text `excerpt`, `tags`, `notebookId`, version, timestamps, and `deletedAt`. Full notes additionally contain `contentMarkdown` and derived `contentPlain`. `GET /api/notes/:noteId` accepts the same `offset`, inclusive `lineStart`/`lineEnd`, `maxBytes`, and opaque `continuation` controls for exact Markdown paging. A paged response preserves the canonical Markdown in `contentMarkdown` and leaves `contentPlain` empty so the serialized page remains bounded; derive plain text after reconstructing the complete Markdown body. Continuations bind the note, version, source hash, caller, and notebook policy and must be requested again after an edit or access-policy change.
 
 ### Search
 
@@ -310,10 +310,10 @@ Read one exact document with bounded neighboring context:
 curl -fsS --get \
   -H "Authorization: Bearer ***" \
   "$QNOTES_URL/api/search/documents/DOCUMENT_UUID/context" \
-  --data 'before=1' --data 'after=1' --data 'maxTokens=1800'
+  --data 'before=1' --data 'after=1' --data 'maxTokens=1800' --data 'maxBytes=65536'
 ```
 
-The context response contains `noteId`, `noteVersion`, `documentId`, stable URI, title, heading path, bounded `content`, `previous` and `next` neighboring chunks, `updatedAt`, `sourceType`, `sourceId`, `sourceKey`, `sourceTitle`, and attachment `pageNumber` when applicable. It also includes an explicit `truncated` flag, an approximate-token `tokenBudget`, the center `sourceHash`, and additive `previousSources`/`nextSources` entries with independent document IDs, source keys, hashes, versions, and attachment/page provenance. When `truncated` is true for the center content, follow `continuation.cursor` by passing it as `continuation` on the next context request; the cursor is bound to the document, note version, source hash, token principal, and notebook-policy revision and must not be reused after an edit or access-grant change. The legacy string arrays remain available for compatibility. The route enforces ownership and notebook grants, excludes deleted notes, and keeps neighbors within the same note source; attachment neighbors are restricted to the same attachment. If the owning note changes during the read, the route returns a retriable `NOTE_VERSION_CONFLICT` instead of claiming that the context is internally consistent.
+The context response contains `noteId`, `noteVersion`, `documentId`, stable URI, title, heading path, bounded `content`, `previous` and `next` neighboring chunks, `updatedAt`, `sourceType`, `sourceId`, `sourceKey`, `sourceTitle`, and attachment `pageNumber` when applicable. It also includes `contentBytes`, `totalBytes`, `offset`, `nextOffset`, `truncated`, `contentComplete`, `neighborsTruncated`, an approximate-token `tokenBudget`, the center `sourceHash`, and additive `previousSources`/`nextSources` entries with independent document IDs, source keys, hashes, versions, and attachment/page provenance. The legacy `previous` and `next` string arrays remain as empty compatibility fields; use the canonical provenance-bearing `previousSources` and `nextSources` entries for neighboring content. When `truncated` is true for the center content, follow `continuation.cursor` by passing it as `continuation` on the next context request. The cursor is bound to the document, note version, source hash, token principal, and notebook-policy revision and must be requested again after an edit or access-grant change. The route enforces ownership and notebook grants, excludes deleted notes, and keeps neighbors within the same note source; attachment neighbors are restricted to the same attachment. If the owning note changes during the read, the route returns a retriable `NOTE_VERSION_CONFLICT` instead of claiming that the context is internally consistent. `maxBytes` measures the complete serialized JSON response, including the `{ data: ... }` envelope, and an approximate token budget remains enforced separately.
 
 ### Create, update, and organize notes
 
@@ -416,6 +416,17 @@ curl -fsS \
   -H "Authorization: Bearer $QNOTES_TOKEN" \
   "$QNOTES_URL/api/notes/your-note-slug/blocks/deploy"
 ```
+
+Exact block content can be read by UTF-8 byte offset, inclusive line range, or a continuation from an earlier page:
+
+```bash
+curl -fsS --get \
+  -H "Authorization: Bearer $QNOTES_TOKEN" \
+  "$QNOTES_URL/api/notes/your-note-slug/blocks/deploy" \
+  --data 'offset=0' --data 'maxBytes=8192'
+```
+
+The response keeps the block metadata and adds `contentBytes`, `totalBytes`, `offset`, `nextOffset`, `truncated`, `contentComplete`, and `continuation` when more content remains. `maxBytes` is a hard serialized UTF-8 response ceiling; QNotes slices only the Markdown or block content, so metadata and JSON remain valid. Line ranges preserve the source bytes and newline style. A continuation is bound to the authenticated caller, notebook policy, note version, block, and content hash. Stale or unauthorized continuations fail closed.
 
 Fenced code blocks are automatically assigned stable-looking `auto-...` block keys. Named blocks use the `:::copy{id="..." ...}` Markdown extension. Named IDs must be unique within a note; supported types are `copy`, `code`, `prompt`, `command`, `sql`, `json`, `yaml`, `env`, `url`, `quote`, and `checklist`.
 
@@ -620,7 +631,9 @@ The default read profile exposes `search_notes`, `read_note_context`, `get_block
 - `qnotes://notes/{noteId}/documents/{documentId}`
 - `qnotes://notes/{noteId}/blocks/{blockKey}`
 
-`resolve_public_share` is the read-only MCP bridge for AI agents that already have a `qns_...` share secret. It delegates to the same unauthenticated `QNotesClient.resolvePublicShare` operation documented above and returns `title`, `contentMarkdown`, and `updatedAt`; it does not expose attachments or private metadata. The profiles are deliberately exact:
+Agent-facing exact reads are bounded by default. `read_note_context`, `get_block`, and `resolve_public_share` accept `offset`, inclusive `lineStart`/`lineEnd`, `maxBytes`, and `continuation` where applicable. Native MCP content pages default to 24 KiB so the text and structured MCP result together remain below the 64 KiB serialized wire ceiling. The API measures the full JSON envelope and refuses a budget too small for its metadata; it never truncates arbitrary JSON. Use `truncated`, `nextOffset`, `totalBytes`, `contentComplete`, and `continuation` to read the next page. Continuations are authenticated on every page and bind the caller, policy, resource, version, and source hash.
+
+`resolve_public_share` is the read-only MCP bridge for AI agents that already have a `qns_...` share secret. It delegates to the same unauthenticated `QNotesClient.resolvePublicShare` operation documented above and returns bounded `title`, `contentMarkdown`, and `updatedAt` pages; it does not expose attachments or private metadata. The profiles are deliberately exact:
 
 - `read` (default): `search_notes`, `read_note_context`, `get_block`, `list_notebooks`, and `resolve_public_share`, plus the read-only resources.
 - `share`: every `read` tool plus `create_public_share`. Call it with the reviewed saved note's `expectedVersion` and `confirm: true`; the tool pre-reads that exact note, blocks recognizable credential material, and creates exactly a 24-hour link. The legacy `noteId`-only shape remains parseable but fails closed with a migration error. It returns only the URL, note ID, and expiry and has no note mutation tools.

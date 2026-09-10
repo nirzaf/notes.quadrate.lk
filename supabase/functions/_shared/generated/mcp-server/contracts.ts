@@ -85,6 +85,17 @@ const contextSource = z.object({
   content: z.string(),
   sourceHash: z.string(),
   truncated: z.boolean(),
+  contentBytes: z.number().int().nonnegative().optional(),
+  totalBytes: z.number().int().nonnegative().optional(),
+  offset: z.number().int().nonnegative().optional(),
+}).strict();
+
+const contentContinuation = z.object({
+  cursor: z.string(),
+  sourceHash: z.string(),
+  nextOffset: z.number().int().nonnegative(),
+  totalBytes: z.number().int().nonnegative(),
+  noteVersion: z.number().int().positive().optional(),
 }).strict();
 
 export const searchContextSchema = z.object({
@@ -105,9 +116,17 @@ export const searchContextSchema = z.object({
   attachmentId: id.nullable().optional(),
   pageNumber: z.number().int().positive().nullable().optional(),
   sourceHash: z.string().optional(),
+  contentBytes: z.number().int().nonnegative().optional(),
+  totalBytes: z.number().int().nonnegative().optional(),
+  offset: z.number().int().nonnegative().optional(),
+  nextOffset: z.number().int().nonnegative().optional(),
+  wireBytes: z.number().int().nonnegative().optional(),
+  wireByteLimit: z.number().int().positive().optional(),
   truncated: z.boolean().optional(),
+  contentComplete: z.boolean().optional(),
+  neighborsTruncated: z.boolean().optional(),
   tokenBudget: z.object({ max: z.number().int().positive(), used: z.number().int().nonnegative(), unit: z.literal('approximate_tokens') }).strict().optional(),
-  continuation: z.object({ cursor: z.string(), noteVersion: z.number().int().positive(), sourceHash: z.string(), nextOffset: z.number().int().nonnegative() }).strict().optional(),
+  continuation: z.object({ cursor: z.string(), noteVersion: z.number().int().positive(), sourceHash: z.string(), nextOffset: z.number().int().nonnegative(), totalBytes: z.number().int().nonnegative().optional() }).strict().optional(),
   previousSources: z.array(contextSource).optional(),
   nextSources: z.array(contextSource).optional(),
 }).strict();
@@ -123,13 +142,32 @@ export const noteBlockSchema = z.object({
   position: z.number().int().nonnegative(),
   copyable: z.literal(true),
   contentHash: z.string(),
+  contentBytes: z.number().int().nonnegative().optional(),
+  totalBytes: z.number().int().nonnegative().optional(),
+  offset: z.number().int().nonnegative().optional(),
+  nextOffset: z.number().int().nonnegative().optional(),
+  truncated: z.boolean().optional(),
+  contentComplete: z.boolean().optional(),
+  continuation: contentContinuation.optional(),
 }).strict();
 
 export const notebookListSchema = z.object({
   items: z.array(z.object({ id, name: z.string(), createdAt: date, updatedAt: date }).strict()),
 }).strict();
 
-export const publicSharedNoteSchema = z.object({ title: z.string(), contentMarkdown: z.string(), updatedAt: date }).strict();
+export const publicSharedNoteSchema = z.object({
+  title: z.string(),
+  contentMarkdown: z.string(),
+  updatedAt: date,
+  contentBytes: z.number().int().nonnegative().optional(),
+  totalBytes: z.number().int().nonnegative().optional(),
+  offset: z.number().int().nonnegative().optional(),
+  nextOffset: z.number().int().nonnegative().optional(),
+  truncated: z.boolean().optional(),
+  contentComplete: z.boolean().optional(),
+  sourceHash: z.string().optional(),
+  continuation: contentContinuation.optional(),
+}).strict();
 export const publicShareSchema = z.object({ url: z.string().url(), noteId: id, expiresAt: date }).strict();
 
 const acknowledgment = {

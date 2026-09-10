@@ -2,16 +2,34 @@ import { ListResourcesRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { ListResourcesRequest, ListResourcesResult, RequestId } from '@modelcontextprotocol/sdk/types.js';
 import type { Notebook, Note } from '@qnotes/shared';
-import type { ReadQNotesClient } from '../tools/common.ts';
+import { boundedMcpContentBytes, type ReadQNotesClient } from '../tools/common.ts';
 
 interface ResourceQNotesClient extends ReadQNotesClient {
   listNotebooks(): Promise<{ items: Notebook[] }>;
   listNotes(params?: { cursor?: string; limit?: number }): Promise<{ items: Array<{ id: string; slug: string; title: string }>; nextCursor: string | null }>;
-  getNote(noteRef: string): Promise<Note>;
+  getNote(noteRef: string, params?: { maxBytes?: number; offset?: number; lineStart?: number; lineEnd?: number; continuation?: string }): Promise<Note>;
 }
 
 type RequestHandler = (request: unknown, extra: unknown) => unknown | Promise<unknown>;
 type ResourceRequestExtra = { requestId: RequestId };
+
+function numericParam(uri: URL, name: string): number | undefined {
+  const value = uri.searchParams.get(name);
+  return value === null ? undefined : Number(value);
+}
+
+function contentParams(uri: URL) {
+  const params: { maxBytes: number; offset?: number; lineStart?: number; lineEnd?: number; continuation?: string } = { maxBytes: boundedMcpContentBytes(numericParam(uri, 'maxBytes')) };
+  const offset = numericParam(uri, 'offset');
+  const lineStart = numericParam(uri, 'lineStart');
+  const lineEnd = numericParam(uri, 'lineEnd');
+  const continuation = uri.searchParams.get('continuation');
+  if (offset !== undefined) params.offset = offset;
+  if (lineStart !== undefined) params.lineStart = lineStart;
+  if (lineEnd !== undefined) params.lineEnd = lineEnd;
+  if (continuation !== null) params.continuation = continuation;
+  return params;
+}
 
 function bridgeResourceListPagination(
   server: McpServer,
@@ -59,25 +77,26 @@ export function registerNotesResources(server: McpServer, client: ResourceQNotes
     };
   } }), {
     title: 'Recent QNotes',
-    description: 'A recent, partial list of note summaries. Read qnotes://notes/{noteId} for the full note.',
+    description: 'A recent, partial list of note summaries. Read qnotes://notes/{noteId} for a bounded Markdown page and follow its continuation.',
     mimeType: 'application/json',
   }, async (uri: URL, variables: Record<string, string | string[]>) => {
     const noteId = String(variables.noteId);
-    const note = await client.getNote(noteId);
+    const note = await client.getNote(noteId, contentParams(uri));
     if (note.id !== noteId) throw new Error('Resource note ID does not match the requested URI.');
     return { contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(note) }] };
   });
 
   server.registerResource('note-document', new ResourceTemplate('qnotes://notes/{noteId}/documents/{documentId}', { list: undefined }), { title: 'QNotes note document context', mimeType: 'application/json' }, async (uri: URL, variables: Record<string, string | string[]>) => {
     const noteId = String(variables.noteId);
-    const context = await client.readNoteContext(String(variables.documentId));
+    const page = contentParams(uri);
+    const context = await client.readNoteContext(String(variables.documentId), { before: 1, after: 1, maxTokens: 1800, maxBytes: page.maxBytes, ...(page.continuation === undefined ? {} : { continuation: page.continuation }) });
     if (context.noteId !== noteId) throw new Error('Document context note ID does not match the requested URI.');
     return { contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(context) }] };
   });
 
   server.registerResource('note-block', new ResourceTemplate('qnotes://notes/{noteId}/blocks/{blockKey}', { list: undefined }), { title: 'QNotes note block', mimeType: 'application/json' }, async (uri: URL, variables: Record<string, string | string[]>) => {
     const noteId = String(variables.noteId);
-    const block = await client.getBlock(noteId, String(variables.blockKey));
+    const block = await client.getBlock(noteId, String(variables.blockKey), contentParams(uri));
     if (block.noteId !== noteId) throw new Error('Block note ID does not match the requested URI.');
     return { contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(block) }] };
   });
