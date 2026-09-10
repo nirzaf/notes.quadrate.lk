@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from '@tanstack/react-router';
 import type { VaultAgentGrant, VaultSecretMetadata, VaultSensitiveAction } from '@qnotes/shared';
-import { hashVaultApprovalRequest, MAX_VAULT_DESCRIPTION_LENGTH, MAX_VAULT_ENVIRONMENT_NAME_LENGTH, MAX_VAULT_PROJECT_NAME_LENGTH, MAX_VAULT_SECRET_BYTES, MAX_VAULT_SECRET_NAME_LENGTH } from '@qnotes/shared';
+import { hashVaultApprovalRequest, MAX_VAULT_DESCRIPTION_LENGTH, MAX_VAULT_ENVIRONMENT_NAME_LENGTH, MAX_VAULT_PROJECT_NAME_LENGTH, MAX_VAULT_SECRET_BYTES, MAX_VAULT_SECRET_NAME_LENGTH, validateCreateVaultAgentTokenInput, validateCreateVaultSecretInput, validateReplaceVaultAgentGrantsInput, validateRevealVaultSecretInput, validateRotateVaultSecretInput } from '@qnotes/shared';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import { vaultApi, api } from '../api';
 import { AppShell } from '../components/app-shell';
@@ -232,12 +232,14 @@ export function VaultPage(): JSX.Element {
         const current = secretsQuery.data?.find((secret) => secret.id === changeSecretId);
         if (!current) throw new Error('Select an active Vault secret before rotating it.');
         const input = { value: secretValue, expectedVersion: current.version, mutationId: crypto.randomUUID(), ...(secretDescription ? { description: secretDescription } : {}) };
-        const approval = await approve('secret:write', { operation: 'rotated', secretId: current.id, value: input.value, description: input.description ?? null, expectedVersion: input.expectedVersion, mutationId: input.mutationId }, { projectId: current.projectId, environmentId: current.environmentId, secretId: current.id, expectedVersion: current.version });
+        const canonical = validateRotateVaultSecretInput(input);
+        const approval = await approve('secret:write', { operation: 'rotated', secretId: current.id, value: canonical.value, description: canonical.description ?? null, expectedVersion: canonical.expectedVersion, mutationId: canonical.mutationId }, { projectId: current.projectId, environmentId: current.environmentId, secretId: current.id, expectedVersion: current.version });
         await vaultApi.rotateSecret(current.id, input, approval);
         toast('Vault secret rotated.', 'success');
       } else {
         const input = { projectId: selectedProject.id, environmentId: selectedEnvironment.id, name: secretName, value: secretValue, mutationId: crypto.randomUUID(), ...(secretDescription ? { description: secretDescription } : {}) };
-        const approval = await approve('secret:write', { operation: 'created', projectId: input.projectId, environmentId: input.environmentId, name: input.name, description: input.description ?? null, value: input.value, mutationId: input.mutationId }, { projectId: input.projectId, environmentId: input.environmentId, secretId: null, expectedVersion: null });
+        const canonical = validateCreateVaultSecretInput(input);
+        const approval = await approve('secret:write', { operation: 'created', projectId: canonical.projectId, environmentId: canonical.environmentId, name: canonical.name, description: canonical.description ?? null, value: canonical.value, mutationId: canonical.mutationId }, { projectId: canonical.projectId, environmentId: canonical.environmentId, secretId: null, expectedVersion: null });
         await vaultApi.createSecret(input, approval);
         toast('Vault secret created.', 'success');
       }
@@ -253,7 +255,8 @@ export function VaultPage(): JSX.Element {
     setRevealedSecret(null);
     try {
       const input = { project: selectedProject.slug, environment: selectedEnvironment.slug, name: secret.name, purpose: 'Manual reveal in the QNotes Vault administration UI' };
-      const approval = await approve('secret:reveal', { operation: 'revealed', ...input }, { projectId: selectedProject.id, environmentId: selectedEnvironment.id, secretId: secret.id, expectedVersion: null });
+      const canonical = validateRevealVaultSecretInput(input);
+      const approval = await approve('secret:reveal', { operation: 'revealed', ...canonical }, { projectId: selectedProject.id, environmentId: selectedEnvironment.id, secretId: secret.id, expectedVersion: null });
       const result = await vaultApi.revealSecret(input, approval);
       if (attempt !== revealAttempt.current) return;
       setRevealedSecret({ environmentId: selectedEnvironment.id, id: secret.id, value: result.value });
@@ -282,7 +285,8 @@ export function VaultPage(): JSX.Element {
     setBusy(true);
     try {
       const input = { name: tokenName, expiresAt: tokenExpiresAt(tokenExpiry), grants: draftGrants };
-      const approval = await approve('token:issue', { operation: 'token-issued', ...input }, { projectId: null, environmentId: null, secretId: null, expectedVersion: null });
+      const canonical = validateCreateVaultAgentTokenInput(input);
+      const approval = await approve('token:issue', { operation: 'token-issued', ...canonical }, { projectId: null, environmentId: null, secretId: null, expectedVersion: null });
       const result = await vaultApi.createAgentToken(input, approval);
       setTokenName(''); setDraftGrants([]); setIssuedToken(result.token); await tokensQuery.refetch(); toast('Vault agent token created. Copy it now; it is shown only once.', 'success');
     } catch (error: unknown) { toast(safeErrorMessage(error, 'Unable to create Vault agent token.'), 'error'); }
@@ -318,8 +322,9 @@ export function VaultPage(): JSX.Element {
     if (!editingTokenId) return;
     setBusy(true);
     try {
-      const approval = await approve('grant:replace', { operation: 'grants-replaced', tokenId: editingTokenId, grants: editingGrants }, { projectId: null, environmentId: null, secretId: null, expectedVersion: null });
-      await vaultApi.replaceAgentGrants(editingTokenId, editingGrants, approval);
+      const canonical = validateReplaceVaultAgentGrantsInput({ grants: editingGrants });
+      const approval = await approve('grant:replace', { operation: 'grants-replaced', tokenId: editingTokenId, grants: canonical.grants }, { projectId: null, environmentId: null, secretId: null, expectedVersion: null });
+      await vaultApi.replaceAgentGrants(editingTokenId, canonical.grants, approval);
       await tokensQuery.refetch();
       setEditingTokenId(null);
       setEditingGrants([]);

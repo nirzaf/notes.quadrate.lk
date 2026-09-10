@@ -1,6 +1,6 @@
 # Vault step-up and recovery
 
-QNotes treats Vault metadata and Vault values as separate surfaces. Listing projects, environments, secret metadata, agent-token metadata, and audit history uses the authenticated session. Revealing a value, creating or changing a secret, issuing or revoking an agent token, and replacing grants require a verified `aal2` session and a single-use approval.
+QNotes treats Vault metadata and Vault values as separate surfaces. Listing projects, environments, secret metadata, agent-token metadata, and audit history uses the authenticated human session. For human Supabase sessions, revealing a value, creating or changing a secret, issuing or revoking an agent token, and replacing grants require a verified `aal2` session and a single-use approval. Granted `qvt_` agent credentials remain constrained by their stored grant and do not use the human step-up flow.
 
 The approval flow is deliberately short:
 
