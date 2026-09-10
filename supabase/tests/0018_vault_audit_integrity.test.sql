@@ -67,9 +67,11 @@ select ok((select exported_at is not null and lease_token is null from notesdb.v
 -- Expire only these synthetic fixtures; production audit rows remain append-only.
 alter table notesdb.vault_audit_events disable trigger vault_audit_events_append_only;
 update notesdb.vault_audit_events set retention_expires_at = clock_timestamp() - interval '1 second' where id = (select event_id from audit_integrity_event);
-update notesdb.vault_audit_events set retention_expires_at = clock_timestamp() - interval '1 second' where id = (select event_id from audit_integrity_ack_event);
 alter table notesdb.vault_audit_events enable trigger vault_audit_events_append_only;
 select is(public.qnotes_vault_purge_expired_audit_events(clock_timestamp()), 0, 'retention purge preserves an event with an unacknowledged export');
+alter table notesdb.vault_audit_events disable trigger vault_audit_events_append_only;
+update notesdb.vault_audit_events set retention_expires_at = clock_timestamp() - interval '1 second' where id = (select event_id from audit_integrity_ack_event);
+alter table notesdb.vault_audit_events enable trigger vault_audit_events_append_only;
 select is(public.qnotes_vault_purge_expired_audit_events(clock_timestamp()), 1, 'retention purge removes an expired event after export acknowledgement');
 
 select ok(has_function_privilege('service_role', 'public.qnotes_vault_claim_audit_outbox(integer)', 'EXECUTE'), 'service_role can claim outbox work without table update access');
