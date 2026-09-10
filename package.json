@@ -13,6 +13,7 @@
     "verify:local": "node scripts/verify-local.mjs",
     "test:mcp": "pnpm --filter @qnotes/mcp-server test",
     "evaluate:search": "node scripts/evaluate-search.mjs",
+    "measure:search-recall": "node scripts/measure-tenant-vector-recall.mjs",
     "benchmark:seed": "node scripts/seed-search-benchmark.mjs",
     "benchmark:search": "node scripts/search-benchmark.mjs",
     "verify:search": "node scripts/verify-search-regression.mjs",
