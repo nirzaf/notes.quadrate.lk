@@ -12,7 +12,7 @@ const repoRoot = resolve(testDirectory, '../../..');
 const launcher = join(repoRoot, 'integrations', 'hermes-plugin', 'launch.mjs');
 
 test('standalone endpoint policy rejects empty delimiters and encoded dot segments', () => {
-  for (const value of ['https://example.test?', 'https://example.test#', 'https://example.test/functions/%2e%2e/qnotes-api', 'https://example.test/functions/%2f../qnotes-api']) {
+  for (const value of ['https://example.test?', 'https://example.test#', 'https://example.test/functions/%2e%2e/qnotes-api', 'https://example.test/functions/%2f../qnotes-api', 'https://example.test/functions/%5c..%5cqnotes-api']) {
     assert.throws(() => validateApiEndpoint(value), /API endpoint/);
   }
 });
