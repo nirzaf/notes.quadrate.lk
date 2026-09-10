@@ -47,8 +47,10 @@ begin
   where id = secret_row.id and owner_id = p_owner_id
   returning * into secret_row;
   response := jsonb_build_object('secret', jsonb_build_object('id', secret_row.id, 'projectId', secret_row.project_id, 'environmentId', secret_row.environment_id, 'name', secret_row.name, 'description', secret_row.description, 'version', secret_row.version, 'createdAt', secret_row.created_at, 'updatedAt', secret_row.updated_at, 'rotatedAt', secret_row.rotated_at, 'deletedAt', secret_row.deleted_at));
-  insert into notesdb.vault_audit_events (owner_id, actor_kind, actor_token_id, action, project_id, environment_id, secret_id, success, result_code, request_id)
-  values (p_owner_id, p_actor_kind, p_actor_token_id, 'secret:write', secret_row.project_id, secret_row.environment_id, secret_row.id, true, 'rotated', p_request_id);
+  perform public.qnotes_vault_append_audit_event(
+    p_owner_id, p_actor_kind, p_actor_token_id, 'secret:write', secret_row.project_id,
+    secret_row.environment_id, secret_row.id, null, true, 'rotated', p_request_id, p_mutation_id, null
+  );
   insert into notesdb.vault_mutations (owner_id, mutation_id, operation, request_hash, secret_id, resulting_version, response)
   values (p_owner_id, p_mutation_id, 'rotated', p_request_hash, secret_row.id, secret_row.version, response);
   return jsonb_build_object('status', 'ok') || response;

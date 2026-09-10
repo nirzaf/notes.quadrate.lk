@@ -88,14 +88,15 @@ function isGrant(value: unknown): value is VaultAgentGrant {
 }
 
 function isAuditEvent(value: unknown): value is VaultAuditEvent {
-  return isRecord(value) && hasExactKeys(value, ['id', 'actorKind', 'actorTokenId', 'actorTokenName', 'actorTokenPrefix', 'action', 'projectId', 'environmentId', 'secretId', 'purpose', 'success', 'resultCode', 'requestId', 'occurredAt'])
-    && isString(value.id) && ['user_jwt', 'vault_agent'].includes(String(value.actorKind))
-    && isNullableUuid(value.actorTokenId) && isNullableString(value.actorTokenName)
+  return isRecord(value) && hasExactKeys(value, ['id', 'actorKind', 'actorTokenId', 'actorTokenName', 'actorTokenPrefix', 'targetTokenId', 'action', 'projectId', 'environmentId', 'secretId', 'purpose', 'success', 'resultCode', 'requestId', 'operationId', 'policyRevision', 'retentionExpiresAt', 'occurredAt'])
+    && isString(value.id) && ['user_jwt', 'vault_agent', 'system'].includes(String(value.actorKind))
+    && isNullableUuid(value.actorTokenId) && isNullableString(value.actorTokenName) && isNullableUuid(value.targetTokenId)
     && (value.actorTokenPrefix === null || (isString(value.actorTokenPrefix) && /^qvt_[A-Za-z0-9_-]{8}$/.test(value.actorTokenPrefix)))
-    && ['metadata:read', 'secret:reveal', 'secret:write', 'secret:delete'].includes(String(value.action))
+    && ['metadata:read', 'secret:reveal', 'secret:write', 'secret:delete', 'secret:use', 'token:issue', 'token:revoke', 'grant:replace', 'auth:step_up', 'approval:issue', 'approval:consume', 'access:denied', 'admin:recovery'].includes(String(value.action))
     && isNullableString(value.projectId) && isNullableString(value.environmentId) && isNullableString(value.secretId)
     && isNullableString(value.purpose) && typeof value.success === 'boolean' && isNullableString(value.resultCode)
-    && isNullableString(value.requestId) && isString(value.occurredAt);
+    && isNullableString(value.requestId) && isNullableString(value.operationId) && isString(value.policyRevision)
+    && isString(value.retentionExpiresAt) && isString(value.occurredAt);
 }
 
 function listPayload<T>(value: unknown, validator: (item: unknown) => item is T, resource: string): T[] {

@@ -15,6 +15,7 @@ as $$
 declare
   selector_item jsonb;
   resolved_item jsonb;
+  audit_item jsonb;
   resolved_selectors jsonb := '[]'::jsonb;
   items jsonb := '[]'::jsonb;
   audit_rows jsonb := '[]'::jsonb;
@@ -109,16 +110,16 @@ begin
 
   if total_bytes > 262144 then return jsonb_build_object('status', 'batch_too_large'); end if;
 
-  insert into notesdb.vault_audit_events (
-    owner_id, actor_kind, actor_token_id, action, project_id, environment_id, secret_id,
-    purpose, success, result_code, request_id
-  )
-  select p_owner_id, p_actor_kind, p_actor_token_id, 'secret:reveal',
-         (audit_item->>'projectId')::uuid,
-         (audit_item->>'environmentId')::uuid,
-         (audit_item->>'secretId')::uuid,
-         p_purpose, true, 'revealed', p_request_id
-  from jsonb_array_elements(audit_rows) as audit_items(audit_item);
+  for audit_item in select value from jsonb_array_elements(audit_rows)
+  loop
+    perform public.qnotes_vault_append_audit_event(
+      p_owner_id, p_actor_kind, p_actor_token_id, 'secret:reveal',
+      (audit_item->>'projectId')::uuid,
+      (audit_item->>'environmentId')::uuid,
+      (audit_item->>'secretId')::uuid,
+      p_purpose, true, 'revealed', p_request_id, p_request_id, null
+    );
+  end loop;
 
   return jsonb_build_object('status', 'ok', 'items', items);
 end;

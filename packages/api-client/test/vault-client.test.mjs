@@ -169,6 +169,7 @@ test('QVaultClient rejects unexpected and secret-bearing fields across Vault pay
     actorTokenId: null,
     actorTokenName: null,
     actorTokenPrefix: null,
+    targetTokenId: null,
     action: 'metadata:read',
     projectId: project.id,
     environmentId: environment.id,
@@ -177,6 +178,9 @@ test('QVaultClient rejects unexpected and secret-bearing fields across Vault pay
     success: true,
     resultCode: null,
     requestId: 'aa0e8400-e29b-41d4-a716-446655440000',
+    operationId: 'aa0e8400-e29b-41d4-a716-446655440000',
+    policyRevision: 'vault-audit-v1',
+    retentionExpiresAt: '2033-01-01T00:00:00.000Z',
     occurredAt: '2026-01-03T00:00:00.000Z',
   };
   const token = `qvt_${'B'.repeat(43)}`;
@@ -236,6 +240,7 @@ test('QVaultClient validates safe audit actor identity and rejects secret fields
     actorTokenId: '990e8400-e29b-41d4-a716-446655440000',
     actorTokenName: 'Deploy agent',
     actorTokenPrefix: 'qvt_12345678',
+    targetTokenId: null,
     action: 'secret:reveal',
     projectId: project.id,
     environmentId: secret.environmentId,
@@ -244,6 +249,9 @@ test('QVaultClient validates safe audit actor identity and rejects secret fields
     success: false,
     resultCode: 'access_denied',
     requestId: 'aa0e8400-e29b-41d4-a716-446655440000',
+    operationId: 'aa0e8400-e29b-41d4-a716-446655440000',
+    policyRevision: 'vault-audit-v1',
+    retentionExpiresAt: '2033-01-01T00:00:00.000Z',
     occurredAt: '2026-01-03T00:00:00.000Z',
   };
   const userEvent = { ...event, id: 'aa0e8400-e29b-41d4-a716-446655440000', actorKind: 'user_jwt', actorTokenId: null, actorTokenName: null, actorTokenPrefix: null };
