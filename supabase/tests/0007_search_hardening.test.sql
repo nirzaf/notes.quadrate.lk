@@ -1,5 +1,5 @@
 begin;
-select plan(25);
+select plan(37);
 
 -- Stable create input, including a title that falls back to note-untitled in
 -- the API, is idempotent even when the retry supplies a fresh candidate ID.
@@ -188,6 +188,54 @@ insert into notesdb.search_documents (owner_id, note_id, source_type, source_id,
 values ((select id from auth.users where email = 'owner@qnotes.local'), '77777777-7777-4777-8777-777777777722', 'attachment_chunk', '77777777-7777-4777-8777-777777777723', 'attachment:77777777-7777-4777-8777-777777777723:page:3:abc', 'file.pdf — page 3', 'Page 3', 'page marker', 'attachment-page-hash', 0, 'pending', '2026-01-01T00:00:00Z');
 select is((select page_number from notesdb.search_documents where source_key like 'attachment:%:page:3:%'), 3, 'attachment page number is persisted from provenance');
 select ok((select pending_documents > 0 and oldest_queued_at <= '2026-01-01T00:00:00Z' from public.qnotes_search_freshness((select id from auth.users where email = 'owner@qnotes.local'))), 'freshness reports pending count and oldest queue age');
+
+-- US-11: note replacement owns note-derived documents only; attachment
+-- extraction and deletion remain in the attachment lifecycle.
+select is((public.qnotes_create_note(
+  (select id from auth.users where email = 'owner@qnotes.local'),
+  '77777777-7777-4777-8777-777777777740', 'attachment-preserved', 'Attachment Note',
+  '# Attachment Note\n\nold body', 'Attachment Note old body', '{}',
+  '77777777-7777-4777-8777-777777777741', '77777777-7777-4777-8777-777777777742',
+  'attachment-create-hash', '[]'::jsonb,
+  '[{"sourceType":"note_chunk","sourceKey":"us11-old","sourceTitle":"Attachment Note","headingPath":null,"content":"old body","contentHash":"us11-old-hash","position":0}]'::jsonb,
+  null, null
+)->>'status'), 'ok', 'attachment preservation fixture is created');
+insert into notesdb.attachments (id, owner_id, note_id, object_path, original_file_name, mime_type, size_bytes, checksum_sha256, extraction_status)
+values ('77777777-7777-4777-8777-777777777743', (select id from auth.users where email = 'owner@qnotes.local'), '77777777-7777-4777-8777-777777777740', 'us11/attachment-preserved/file.txt', 'file.txt', 'text/plain', 9, 'us11-attachment-checksum', 'ready');
+insert into notesdb.search_documents (id, owner_id, note_id, source_type, source_id, source_key, source_title, content, content_hash, position, embedding_status)
+values ('77777777-7777-4777-8777-777777777744', (select id from auth.users where email = 'owner@qnotes.local'), '77777777-7777-4777-8777-777777777740', 'attachment_chunk', '77777777-7777-4777-8777-777777777743', 'attachment:77777777-7777-4777-8777-777777777743:page:1:hash', 'file.txt', 'attachment body', 'us11-attachment-content-hash', 0, 'pending');
+select is((public.qnotes_update_note(
+  (select id from auth.users where email = 'owner@qnotes.local'),
+  '77777777-7777-4777-8777-777777777740', 'attachment-preserved', 'Attachment Note Updated',
+  '# Attachment Note Updated\n\nnew body', 'Attachment Note Updated new body', '{}', 1,
+  '77777777-7777-4777-8777-777777777741', '77777777-7777-4777-8777-777777777745',
+  'attachment-update-hash', '[]'::jsonb,
+  '[{"sourceType":"note_chunk","sourceKey":"us11-new","sourceTitle":"Attachment Note Updated","headingPath":null,"content":"new body","contentHash":"us11-new-hash","position":0}]'::jsonb
+)->>'status'), 'ok', 'ordinary note update succeeds with an attachment document present');
+select is((select count(*)::integer from notesdb.search_documents where id = '77777777-7777-4777-8777-777777777744' and source_type = 'attachment_chunk' and content_hash = 'us11-attachment-content-hash'), 1, 'ordinary note update preserves attachment document identity and hash');
+select is((select count(*)::integer from notesdb.search_documents where note_id = '77777777-7777-4777-8777-777777777740' and source_type = 'note_chunk' and source_key = 'us11-old'), 0, 'removed note chunks are deleted');
+select is((select source_title from notesdb.search_documents where note_id = '77777777-7777-4777-8777-777777777740' and source_type = 'note_metadata'), 'Attachment Note Updated', 'note metadata follows the replacement title');
+update notesdb.attachments set extraction_status = 'deleted', deleted_at = '2026-01-03T00:00:00Z' where id = '77777777-7777-4777-8777-777777777743';
+select is((select count(*)::integer from notesdb.search_documents where id = '77777777-7777-4777-8777-777777777744'), 0, 'attachment deletion removes its search documents');
+
+insert into notesdb.attachments (id, owner_id, note_id, object_path, original_file_name, mime_type, size_bytes, checksum_sha256, extraction_status)
+values
+  ('77777777-7777-4777-8777-777777777746', (select id from auth.users where email = 'owner@qnotes.local'), '77777777-7777-4777-8777-777777777740', 'us11/missing/file.txt', 'missing.txt', 'text/plain', 4, 'us11-missing-checksum', 'ready'),
+  ('77777777-7777-4777-8777-777777777747', (select id from auth.users where email = 'owner@qnotes.local'), '77777777-7777-4777-8777-777777777740', 'us11/unsupported/file.bin', 'unsupported.bin', 'application/octet-stream', 4, null, 'unsupported'),
+  ('77777777-7777-4777-8777-777777777748', (select id from auth.users where email = 'owner@qnotes.local'), '77777777-7777-4777-8777-777777777740', 'us11/deleted/file.txt', 'deleted.txt', 'text/plain', 4, 'us11-deleted-checksum', 'deleted');
+update notesdb.attachments set deleted_at = '2026-01-03T00:00:00Z' where id = '77777777-7777-4777-8777-777777777748';
+select ok((select count(*) = 1 and bool_and(action = 'would_requeue') from public.qnotes_repair_attachment_search('77777777-7777-4777-8777-777777777749', true, 100)), 'dry-run repair reports only active ready attachments missing search documents');
+select is((select action from public.qnotes_repair_attachment_search('77777777-7777-4777-8777-777777777749', false, 100)), 'requeued', 'approved repair requeues the missing attachment');
+select is((select count(*)::integer from pgmq.read('attachment-processing', 0, 100) where message->>'attachmentId' = '77777777-7777-4777-8777-777777777746' and message->>'repairOperationId' = '77777777-7777-4777-8777-777777777749'), 1, 'repair queue message carries the stable operation identity');
+select is((select action from public.qnotes_repair_attachment_search('77777777-7777-4777-8777-777777777749', false, 100)), 'already_recorded', 'repeating a repair operation does not enqueue a duplicate');
+select is((select count(*)::integer from pgmq.read('attachment-processing', 0, 100) where message->>'attachmentId' = '77777777-7777-4777-8777-777777777746' and message->>'repairOperationId' = '77777777-7777-4777-8777-777777777749'), 1, 'repeating a repair operation leaves one queue message');
+select ok((
+  select not has_function_privilege('anon', p.oid, 'EXECUTE')
+    and not has_function_privilege('authenticated', p.oid, 'EXECUTE')
+    and has_function_privilege('service_role', p.oid, 'EXECUTE')
+  from pg_proc p
+  where p.oid = 'public.qnotes_repair_attachment_search(uuid,boolean,integer)'::regprocedure
+), 'attachment search repair is service-role only');
 
 select * from finish();
 rollback;
