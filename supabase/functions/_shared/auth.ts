@@ -3,11 +3,12 @@ import type { Context } from 'hono';
 import { appDbClient, serviceClient } from './database.ts';
 import { ApiError } from './errors.ts';
 import { shouldUpdateLastUsedAt } from './auth-telemetry.ts';
+import { isOAuthAccessToken, verifyOAuthAccessToken } from './oauth-grant.ts';
 import { hashPersonalToken, isPersonalToken } from './token.ts';
 
 export interface AuthContext {
   userId: string;
-  authKind: 'jwt' | 'personal';
+  authKind: 'jwt' | 'personal' | 'oauth';
   scopes: ApiTokenScope[] | null;
   tokenId?: string;
   accessMode: 'account' | 'notebooks';
@@ -37,6 +38,7 @@ export async function authenticateRequest(request: Request): Promise<AuthContext
   if (!header?.startsWith('Bearer ')) throw new ApiError(401, 'AUTH_REQUIRED', 'Authentication is required.');
   const credential = header.slice(7).trim();
   if (!credential) throw new ApiError(401, 'AUTH_REQUIRED', 'Authentication is required.');
+  if (isOAuthAccessToken(credential)) return authenticateOAuthGrant(credential);
   if (isPersonalToken(credential)) {
     const tokenHash = await hashPersonalToken(credential);
     const { data, error } = await appDbClient.from('api_tokens').select('id, owner_id, scopes, expires_at, last_used_at, revoked_at').eq('token_hash', tokenHash).maybeSingle();
@@ -64,6 +66,35 @@ export async function authenticateRequest(request: Request): Promise<AuthContext
   const { data, error } = await serviceClient.auth.getUser(credential);
   if (error || !data.user) throw new ApiError(401, 'INVALID_TOKEN', 'The access token is invalid.');
   return { userId: data.user.id, authKind: 'jwt', scopes: null, accessMode: 'account', notebookIds: [], allowUnfiled: true, policyRevision: 0 };
+}
+
+async function authenticateOAuthGrant(credential: string): Promise<AuthContext> {
+  let access;
+  try {
+    access = await verifyOAuthAccessToken(credential);
+  } catch {
+    throw new ApiError(503, 'AUTH_POLICY_UNAVAILABLE', 'The token access policy is unavailable.');
+  }
+  const supabaseUrl = Deno.env.get('SUPABASE_URL')?.replace(/\/$/, '');
+  const resource = supabaseUrl ? `${supabaseUrl}/functions/v1/qnotes-mcp` : null;
+  if (!access || !resource || access.resource !== resource || access.expiresAt <= Math.floor(Date.now() / 1000)) {
+    throw new ApiError(401, 'INVALID_TOKEN', 'The access token is invalid.');
+  }
+  const result = await serviceClient.rpc('qnotes_oauth_grant_context', {
+    p_grant_id: access.grantId,
+    p_client_id: access.clientId,
+    p_resource: access.resource,
+  } as never) as unknown as { data: unknown; error: { message: string } | null };
+  if (result.error) throw new ApiError(503, 'AUTH_POLICY_UNAVAILABLE', 'The token access policy is unavailable.');
+  const rows = Array.isArray(result.data) ? result.data : [];
+  const row = rows[0];
+  if (rows.length !== 1 || !row || typeof row !== 'object' || Array.isArray(row)) throw new ApiError(401, 'INVALID_TOKEN', 'The access token is invalid.');
+  const policy = policyFromRow(row);
+  const values = row as Record<string, unknown>;
+  const ownerId = values.owner_id;
+  const scopes = values.scopes;
+  if (typeof ownerId !== 'string' || !isUUID(ownerId) || !Array.isArray(scopes) || scopes.some((scope) => typeof scope !== 'string')) throw new ApiError(503, 'AUTH_POLICY_UNAVAILABLE', 'The token access policy is unavailable.');
+  return { userId: ownerId, authKind: 'oauth', scopes: scopes as ApiTokenScope[], tokenId: access.grantId, ...policy };
 }
 
 export function authFromContext(context: Context): AuthContext {
