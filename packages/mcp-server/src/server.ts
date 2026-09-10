@@ -54,7 +54,8 @@ const searchInputSchema = strictInput({
 const readContextInputSchema = strictInput({ documentId: z.string().uuid(), before: z.number().int().min(0).max(5).optional(), after: z.number().int().min(0).max(5).optional(), maxTokens: z.number().int().min(1).max(4000).optional(), continuation: z.string().max(8192).optional() });
 const blockInputSchema = strictInput({ noteRef: z.string().min(1).max(200), blockKey: z.string().min(1).max(MAX_BLOCK_KEY_LENGTH) });
 const noInputSchema = strictInput({});
-const publicShareInputSchema = strictInput({ noteId: z.string().uuid(), expectedVersion: z.number().int().min(1), confirm: z.literal(true) });
+// Keep the legacy shape parseable so deployed clients receive a safe migration error instead of a schema break.
+const publicShareInputSchema = strictInput({ noteId: z.string().uuid(), expectedVersion: z.number().int().min(1).optional(), confirm: z.literal(true).optional() });
 const captureInputSchema = strictInput({ title: z.string().min(1).max(MAX_TITLE_LENGTH), contentMarkdown: utf8AtMost(MAX_MARKDOWN_CODE_UNITS * 4).max(MAX_MARKDOWN_CODE_UNITS), tags: z.array(z.string().min(1).max(MAX_TAG_LENGTH)).max(MAX_TAG_COUNT).optional(), slug: z.string().min(1).max(MAX_SLUG_LENGTH).optional(), notebookId: z.string().uuid().nullable().optional(), dedupeKey: z.string().min(1).max(MAX_DEDUPE_KEY_LENGTH).optional(), mutationId: z.string().uuid().optional() });
 const appendInputSchema = strictInput({ noteId: z.string().uuid(), contentMarkdown: utf8AtMost(MAX_MARKDOWN_CODE_UNITS * 4).max(MAX_MARKDOWN_CODE_UNITS), expectedVersion: z.number().int().min(1).optional(), mutationId: z.string().uuid().optional() });
 const updateInputSchema = strictInput({ noteId: z.string().uuid(), title: z.string().min(1).max(MAX_TITLE_LENGTH), slug: z.string().min(1).max(MAX_SLUG_LENGTH), contentMarkdown: utf8AtMost(MAX_MARKDOWN_CODE_UNITS * 4).max(MAX_MARKDOWN_CODE_UNITS), tags: z.array(z.string().min(1).max(MAX_TAG_LENGTH)).max(MAX_TAG_COUNT).optional(), expectedVersion: z.number().int().min(1), mutationId: z.string().uuid().optional() });
@@ -81,7 +82,7 @@ export function createQNotesMcpServer(client: QNotesClient & ReadQNotesClient, p
   registerNotesResources(server, client);
 
   if (profile === 'share' || (profile === 'write' && options.allowPublicShare === true)) {
-    server.registerTool('create_public_share', { description: 'Create one 24-hour public snapshot for the exact saved note version the user reviewed. Sensitive-classified notes are rejected and the note content is never returned or included in errors.', inputSchema: publicShareInputSchema, outputSchema: publicShareSchema, annotations: writeAnnotations }, safeTool((args: Record<string, unknown>) => createPublicShareTool(client, args as Parameters<typeof createPublicShareTool>[1])));
+    server.registerTool('create_public_share', { description: 'Create one 24-hour public snapshot for the exact saved note version the user reviewed. Pass expectedVersion and confirm=true; the legacy {noteId} shape is retained only to return a safe migration error. Sensitive-classified notes are rejected and the note content is never returned or included in errors.', inputSchema: publicShareInputSchema, outputSchema: publicShareSchema, annotations: writeAnnotations }, safeTool((args: Record<string, unknown>) => createPublicShareTool(client, args as Parameters<typeof createPublicShareTool>[1])));
   }
   if (profile === 'write') {
     const writeClient = client as QNotesClient & WriteQNotesClient;

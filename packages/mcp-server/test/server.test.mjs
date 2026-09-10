@@ -90,6 +90,21 @@ test('MCP create_public_share uses an exact one-day expiry and constructs the pu
   });
 });
 
+test('MCP create_public_share keeps the legacy input parseable but fails closed', async () => {
+  let calls = 0;
+  await assert.rejects(() => createPublicShareTool({
+    async getNote() {
+      calls += 1;
+      throw new Error('must not be called');
+    },
+    async createPublicShare() {
+      calls += 1;
+      throw new Error('must not be called');
+    },
+  }, { noteId: '550e8400-e29b-41d4-a716-446655440000' }), /requires expectedVersion and confirm=true/);
+  assert.equal(calls, 0);
+});
+
 test('MCP create_public_share rejects sensitive notes before calling the share API', async () => {
   let shareCalls = 0;
   await assert.rejects(() => createPublicShareTool({

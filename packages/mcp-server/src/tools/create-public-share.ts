@@ -23,12 +23,12 @@ export function containsSensitiveContent(title: string, contentMarkdown: string)
 
 export async function createPublicShareTool(
   client: CreatePublicShareQNotesClient,
-  args: { noteId: string; expectedVersion: number; confirm: true },
+  args: { noteId: string; expectedVersion?: number; confirm?: true },
   options: CreatePublicShareToolOptions = {},
 ) {
   if (!isUUID(args.noteId)) throw new Error('noteId must be a valid UUID.');
+  if (args.expectedVersion === undefined || args.confirm !== true) throw new Error('Public snapshot creation now requires expectedVersion and confirm=true after reviewing the saved note.');
   if (!Number.isSafeInteger(args.expectedVersion) || args.expectedVersion < 1) throw new Error('expectedVersion must be a positive integer.');
-  if (args.confirm !== true) throw new Error('Explicit confirmation is required after reviewing the saved note.');
 
   const invokedAt = options.now?.() ?? new Date();
   if (Number.isNaN(invokedAt.getTime())) throw new Error('Unable to determine the share expiration time.');
