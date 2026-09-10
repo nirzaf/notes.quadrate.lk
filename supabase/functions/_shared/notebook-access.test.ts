@@ -31,6 +31,10 @@ test('search scope is intersected before retrieval and caller filters are remove
   assert.deepEqual(plan.filters, { tags: ['operations'] });
   assert.equal(plan.empty, false);
   assert.equal(scopedSearchPlan(auth, { notebookIds: ['00000000-0000-4000-8000-000000000003'] }).allowUnfiled, false);
+  const notebookAndUnfiled = scopedSearchPlan(auth, { notebookIds: ['00000000-0000-4000-8000-000000000003'], unfiled: true });
+  assert.deepEqual(notebookAndUnfiled.notebookIds, ['00000000-0000-4000-8000-000000000003']);
+  assert.equal(notebookAndUnfiled.allowUnfiled, false);
+  assert.equal(notebookAndUnfiled.empty, false);
   assert.equal(scopedSearchPlan(auth, { unfiled: true }).empty, true);
 });
 

@@ -122,6 +122,39 @@ test('first/reset recovery still reconciles collections when there are no change
   for (const queryKey of [keys.homeFamily, keys.sidebarFamily, keys.trashFamily, keys.searchFamily]) assert.equal(hasQueryKey(queryClient.calls, queryKey), 1);
 });
 
+test('policy-invalidated recovery clears remembered notes and restarts from the current scope', async () => {
+  const userId = 'user-a';
+  const keys = noteQueryKeys.forUser(userId);
+  const queryClient = recordingQueryClient();
+  const syncCursors = [];
+  const writes = [];
+  let cleared = 0;
+  let attempt = 0;
+
+  await runSyncRecovery({
+    userId,
+    queryClient,
+    api: { sync: async (cursor) => {
+      syncCursors.push(cursor);
+      if (attempt++ === 0) throw { status: 422, code: 'VALIDATION_ERROR', message: 'cursor is invalid or expired.' };
+      return { changes: [], nextCursor: null, hasMore: false };
+    } },
+    readSyncCursor: async () => 'revoked-scope-cursor',
+    writeSyncCursor: async (cursor) => { writes.push(cursor); },
+    removeRememberedNote: async () => {},
+    clearRememberedNotes: async () => { cleared += 1; },
+    generation: 0,
+    getGeneration: () => 0,
+    signal: new AbortController().signal,
+  });
+
+  assert.deepEqual(syncCursors, ['revoked-scope-cursor', undefined]);
+  assert.deepEqual(writes, [null, null]);
+  assert.equal(cleared, 1);
+  assert.ok(queryClient.calls.some((queryKey) => JSON.stringify(queryKey) === JSON.stringify(keys.all)));
+  for (const queryKey of [keys.homeFamily, keys.sidebarFamily, keys.trashFamily, keys.searchFamily]) assert.equal(hasQueryKey(queryClient.calls, queryKey), 1);
+});
+
 test('recovery stops before cursor advancement or invalidation when its generation becomes stale', async () => {
   const events = [];
   const queryClient = recordingQueryClient(events);

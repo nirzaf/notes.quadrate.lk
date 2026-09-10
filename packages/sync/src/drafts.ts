@@ -128,6 +128,10 @@ export class IndexedDbDraftStore implements DraftStore {
     await this.write('recentNotes', (store) => store.delete(noteId));
   }
 
+  async clearRecent(): Promise<void> {
+    await this.write('recentNotes', (store) => store.clear());
+  }
+
   async listRecent(limit = 500): Promise<NoteSummary[]> {
     const database = await this.open();
     if (!database) return [];

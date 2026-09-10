@@ -66,12 +66,41 @@ begin
     return old;
   end if;
 
+  if tg_op = 'UPDATE' and old.token_id is distinct from new.token_id then
+    update notesdb.api_tokens
+    set policy_revision = policy_revision + 1
+    where id = old.token_id;
+  end if;
+
   update notesdb.api_tokens
   set policy_revision = policy_revision + 1
   where id = new.token_id;
   return new;
 end;
 $$;
+
+create or replace function public.qnotes_bump_tokens_on_notebook_move()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+begin
+  if old.notebook_id is distinct from new.notebook_id then
+    update notesdb.api_tokens
+    set policy_revision = policy_revision + 1
+    where owner_id = new.owner_id
+      and access_mode = 'notebooks'
+      and revoked_at is null;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists notes_bump_scoped_token_policy_on_notebook_move on notesdb.notes;
+create trigger notes_bump_scoped_token_policy_on_notebook_move
+after update of notebook_id on notesdb.notes
+for each row execute function public.qnotes_bump_tokens_on_notebook_move();
 
 drop trigger if exists api_token_notebook_grants_policy_revision on notesdb.api_token_notebook_grants;
 create trigger api_token_notebook_grants_policy_revision

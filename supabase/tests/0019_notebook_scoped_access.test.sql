@@ -1,5 +1,5 @@
 begin;
-select plan(21);
+select plan(25);
 
 select has_table('notesdb', 'api_token_notebook_grants', 'token notebook grants exist');
 select has_column('notesdb', 'api_tokens', 'access_mode', 'tokens record the access mode');
@@ -48,6 +48,27 @@ select is((select count(*)::integer from public.qnotes_keyword_search_scoped((se
 select is((select count(*)::integer from public.qnotes_search_freshness_scoped((select id from auth.users where email = 'owner@qnotes.local'), ARRAY['a9000000-0000-4000-8000-000000000001']::uuid[], false)), 1, 'freshness counts only authorized notebook documents');
 
 select is((select policy_revision from notesdb.api_tokens where token_hash = repeat('b', 64)), 2::bigint, 'policy revision records the grant creation');
+create temporary table us09_grant_move_token on commit drop as
+select public.qnotes_create_api_token(
+  (select id from auth.users where email = 'owner@qnotes.local'), 'US09 moved grant', 'qnt_us09_moved', repeat('c', 64), ARRAY['notes:read']::text[], null,
+  'notebooks', false, '{}'::uuid[]
+) as response;
+update notesdb.api_token_notebook_grants
+set token_id = (select id from notesdb.api_tokens where token_hash = repeat('c', 64))
+where token_id = (select id from notesdb.api_tokens where token_hash = repeat('b', 64));
+select is((select policy_revision from notesdb.api_tokens where token_hash = repeat('b', 64)), 3::bigint, 'moving a grant advances the source token policy revision');
+select is((select policy_revision from notesdb.api_tokens where token_hash = repeat('c', 64)), 2::bigint, 'moving a grant advances the destination token policy revision');
+update notesdb.api_token_notebook_grants
+set token_id = (select id from notesdb.api_tokens where token_hash = repeat('b', 64))
+where token_id = (select id from notesdb.api_tokens where token_hash = repeat('c', 64));
+select is((select policy_revision from notesdb.api_tokens where token_hash = repeat('b', 64)), 4::bigint, 'moving a grant back advances the destination policy revision');
+update notesdb.notes
+set notebook_id = 'a9000000-0000-4000-8000-000000000002'
+where id = 'a9000000-0000-4000-8000-000000000011';
+select ok((select policy_revision > 4 from notesdb.api_tokens where token_hash = repeat('b', 64)), 'moving a note advances scoped token policy revisions');
+update notesdb.notes
+set notebook_id = 'a9000000-0000-4000-8000-000000000001'
+where id = 'a9000000-0000-4000-8000-000000000011';
 delete from notesdb.api_token_notebook_grants where token_id = (select id from notesdb.api_tokens where token_hash = repeat('b', 64));
 select ok((select policy_revision > 2 from notesdb.api_tokens where token_hash = repeat('b', 64)), 'grant revocation advances the policy revision');
 select is((select cardinality(notebook_ids) from public.qnotes_api_token_access((select id from notesdb.api_tokens where token_hash = repeat('b', 64)), (select id from auth.users where email = 'owner@qnotes.local'))), 0, 'revoked grants are absent from the next policy snapshot');
