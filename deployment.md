@@ -265,11 +265,16 @@ The additive migrations `20260907000200_agent_vault.sql`,
 `20260909000100_agent_vault_rotate_replay_compat.sql` add the isolated Agent
 Vault plane, Supabase Vault-backed service-only RPCs, qvt grants, audit, replay
 receipts, bounded batch reveal, and unchanged pre-`expectedVersion` rotate
-replay compatibility. The `20260910001200_reviewed_public_snapshots.sql`
-migration adds reviewed, version-bound immutable public snapshots and the
-service-only create/resolve contract. Before any non-local rollout, provision the
+replay compatibility. Before any non-local rollout, provision the
 server-only `QNOTES_VAULT_TOKEN_PEPPER` in the Edge Function environment and
 run the readiness gate above. Do not put it in `VITE_*`, browser storage, Git,
 or GitHub Actions secrets. This feature must not change qnt/qns Notes or
 hosted-MCP behavior, and the migrations must be reviewed and applied before
 frontend deployment.
+
+## Public snapshot release notes
+
+The `20260910001200_reviewed_public_snapshots.sql` migration adds reviewed,
+version-bound immutable public snapshots and the service-only create/resolve
+contract. It does not use Agent Vault or require `QNOTES_VAULT_TOKEN_PEPPER`;
+review and apply it before deploying the updated API or frontend.

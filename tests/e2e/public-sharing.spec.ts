@@ -182,6 +182,7 @@ test('share dialog shows the raw link once and safe metadata after reopening', a
   await page.getByRole('button', { name: 'Share', exact: true }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
+  await dialog.getByRole('checkbox', { name: /Review saved version/ }).check();
   await dialog.getByRole('button', { name: 'Create public link' }).click();
   await expect(dialog).toContainText('Public link created');
   const rawLink = await dialog.locator('.q-public-share-link code').textContent();
