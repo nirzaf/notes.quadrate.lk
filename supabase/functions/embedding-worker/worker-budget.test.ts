@@ -11,6 +11,8 @@ import {
   WORKER_BATCH_SIZE,
   WORKER_DRAIN_BUDGET_MS,
   WORKER_VISIBILITY_LEASE_SECONDS,
+  MAX_PROVIDER_ATTEMPTS,
+  shouldTerminallyFail,
 } from './worker-budget.ts';
 
 test('visibility lease exceeds the bounded drain budget', () => {
@@ -44,4 +46,13 @@ test('provider timeout is bounded and remains identifiable as retryable', async 
     boundProviderEmbedding(pendingProvider, 5),
     (error: unknown) => isProviderEmbeddingTimeout(error),
   );
+});
+
+test('only actual provider attempts reach the terminal retry boundary', () => {
+  assert.equal(MAX_PROVIDER_ATTEMPTS, 5);
+  assert.equal(shouldTerminallyFail(0), false);
+  assert.equal(shouldTerminallyFail(MAX_PROVIDER_ATTEMPTS - 1), false);
+  assert.equal(shouldTerminallyFail(MAX_PROVIDER_ATTEMPTS), true);
+  assert.equal(shouldTerminallyFail(MAX_PROVIDER_ATTEMPTS + 1), true);
+  assert.equal(shouldTerminallyFail(Number.NaN), false);
 });

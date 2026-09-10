@@ -104,7 +104,7 @@ pnpm exec supabase secrets set --project-ref ciyoandzjezgqxjpcrin \
   QNOTES_CLIENT_IP_HEADER="x-forwarded-for"
 ```
 
-Production must not set `QNOTES_FAKE_EMBEDDINGS=1`.
+Production must not set `QNOTES_FAKE_EMBEDDINGS=1`, `QNOTES_ENVIRONMENT=test`, or `QNOTES_EMBEDDING_MODE=synthetic-test-v1`. The worker rejects a synthetic configuration before leasing queue messages. Local and staging structural tests must set all three synthetic-mode values together; a fake flag without the explicit test identity fails closed.
 
 The Edge Functions reject request bodies before parsing them: general API
 requests are capped at 8 MiB, public-share resolution at 1 KiB, Vault requests

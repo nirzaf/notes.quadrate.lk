@@ -1,7 +1,7 @@
 import { archiveQueueMessage, deleteQueueMessage, readQueue } from '../_shared/queue.ts';
-import { appDbClient } from '../_shared/database.ts';
+import { appDbClient, serviceClient } from '../_shared/database.ts';
 import { embeddingDocumentFromRow } from './adapter.ts';
-import { EMBEDDING_MODEL, EMBEDDING_MODEL_VERSION, createEmbedding, embeddingInput, embeddingInputHash } from './embedding.ts';
+import { EMBEDDING_MODEL, EMBEDDING_MODEL_VERSION, createEmbedding, embeddingInput, embeddingInputHash, resolveEmbeddingMode } from './embedding.ts';
 import {
   boundProviderEmbedding,
   canStartWork,
@@ -12,6 +12,8 @@ import {
   WORKER_BATCH_SIZE,
   WORKER_VISIBILITY_LEASE_SECONDS,
   PROVIDER_EMBEDDING_TIMEOUT_MS,
+  MAX_PROVIDER_ATTEMPTS,
+  shouldTerminallyFail,
   type WorkerBudget,
 } from './worker-budget.ts';
 
@@ -28,17 +30,18 @@ function validMessage(value: unknown): value is EmbeddingJob {
     && typeof (value as { contentHash?: unknown }).contentHash === 'string';
 }
 
-async function processMessage(message: { message_id: number; read_count: number; message: unknown }, budget: WorkerBudget): Promise<WorkerOutcome> {
+async function processMessage(message: { message_id: number; read_count: number; message: unknown }, budget: WorkerBudget, embeddingMode: string): Promise<WorkerOutcome> {
   if (!validMessage(message.message)) {
     await archiveQueueMessage(queueName, message.message_id);
     return 'failed';
   }
   const job = message.message;
   let failureInputHash: string | null = null;
+  let providerAttempt: number | null = null;
   try {
     const { data: document, error } = await appDbClient
       .from('search_documents')
-      .select('id, owner_id, content, source_title, heading_path, content_hash, embedding_input_hash, embedding_status, embedding_model, embedding_model_version')
+      .select('id, owner_id, content, source_title, heading_path, content_hash, embedding_input_hash, embedding_status, embedding_model, embedding_model_version, embedding_attempts, embedding_mode')
       .eq('id', job.searchDocumentId)
       .eq('owner_id', job.ownerId)
       .maybeSingle();
@@ -63,21 +66,92 @@ async function processMessage(message: { message_id: number; read_count: number;
       && document.embedding_model === EMBEDDING_MODEL
       && document.embedding_model_version === EMBEDDING_MODEL_VERSION
       && document.embedding_input_hash === expectedInputHash
+      && document.embedding_mode === embeddingMode
     ) {
       await deleteQueueMessage(queueName, message.message_id);
       return 'skipped';
     }
 
+    const modeMismatch = (document.embedding_status === 'ready' || document.embedding_status === 'pending')
+      && document.embedding_mode !== embeddingMode;
+    if (modeMismatch) {
+      const { data: reset, error: resetError } = await appDbClient
+        .from('search_documents')
+        .update({
+          embedding: null,
+          embedding_status: 'pending',
+          embedding_error: null,
+          embedding_attempts: 0,
+          embedding_mode: embeddingMode,
+          embedding_queued_at: new Date().toISOString(),
+        })
+        .eq('id', job.searchDocumentId)
+        .eq('owner_id', job.ownerId)
+        .eq('content_hash', job.contentHash)
+        .eq('embedding_input_hash', expectedInputHash)
+        .in('embedding_status', ['ready', 'pending'])
+        .eq('embedding_mode', document.embedding_mode)
+        .select('id')
+        .maybeSingle();
+      if (resetError) throw resetError;
+      if (!reset) {
+        await deleteQueueMessage(queueName, message.message_id);
+        return 'skipped';
+      }
+    }
+
     if (!canStartWork(budget, Date.now())) return 'retried';
     const remainingBudgetMs = remainingWorkerBudgetMs(budget, Date.now());
     if (!remainingBudgetMs) return 'retried';
+    const expectedAttempt = modeMismatch ? 0 : Number(document.embedding_attempts ?? 0);
+    const { data: claimed, error: claimError } = await appDbClient
+      .from('search_documents')
+      .update({
+        embedding_status: 'pending',
+        embedding_attempts: expectedAttempt + 1,
+        embedding_mode: embeddingMode,
+        embedding_queued_at: new Date().toISOString(),
+      })
+      .eq('id', job.searchDocumentId)
+      .eq('owner_id', job.ownerId)
+      .eq('content_hash', job.contentHash)
+      .eq('embedding_input_hash', expectedInputHash)
+      .in('embedding_status', ['pending', 'failed'])
+      .eq('embedding_model', EMBEDDING_MODEL)
+      .eq('embedding_model_version', EMBEDDING_MODEL_VERSION)
+      .eq('embedding_attempts', expectedAttempt)
+      .lt('embedding_attempts', MAX_PROVIDER_ATTEMPTS)
+      .select('embedding_attempts')
+      .maybeSingle();
+    if (claimError) throw claimError;
+    if (!claimed) {
+      const { data: terminal, error: terminalError } = await appDbClient
+        .from('search_documents')
+        .update({ embedding_status: 'failed', embedding_error: 'EMBEDDING_FAILED', embedding_queued_at: null })
+        .eq('id', job.searchDocumentId)
+        .eq('owner_id', job.ownerId)
+        .eq('content_hash', job.contentHash)
+        .eq('embedding_input_hash', expectedInputHash)
+        .eq('embedding_model', EMBEDDING_MODEL)
+        .eq('embedding_model_version', EMBEDDING_MODEL_VERSION)
+        .eq('embedding_mode', embeddingMode)
+        .eq('embedding_attempts', MAX_PROVIDER_ATTEMPTS)
+        .eq('embedding_status', 'pending')
+        .lte('embedding_queued_at', new Date(Date.now() - WORKER_VISIBILITY_LEASE_SECONDS * 1000).toISOString())
+        .select('id')
+        .maybeSingle();
+      if (terminalError) throw terminalError;
+      await archiveQueueMessage(queueName, message.message_id);
+      return terminal ? 'failed' : 'skipped';
+    }
+    providerAttempt = Number((claimed as { embedding_attempts?: unknown }).embedding_attempts);
     const vector = await boundProviderEmbedding(
       createEmbedding(embeddingInput(embeddingDocument)),
       Math.min(PROVIDER_EMBEDDING_TIMEOUT_MS, remainingBudgetMs),
     );
     const { data: current, error: currentError } = await appDbClient
       .from('search_documents')
-      .select('content, source_title, heading_path, content_hash, embedding_input_hash')
+      .select('content, source_title, heading_path, content_hash, embedding_input_hash, embedding_attempts, embedding_mode')
       .eq('id', job.searchDocumentId)
       .eq('owner_id', job.ownerId)
       .maybeSingle();
@@ -102,26 +176,30 @@ async function processMessage(message: { message_id: number; read_count: number;
       .eq('owner_id', job.ownerId)
       .eq('content_hash', job.contentHash)
       .eq('embedding_input_hash', expectedInputHash)
-      .in('embedding_status', ['pending', 'failed'])
+      .eq('embedding_status', 'pending')
       .eq('embedding_model', EMBEDDING_MODEL)
       .eq('embedding_model_version', EMBEDDING_MODEL_VERSION)
+      .eq('embedding_attempts', providerAttempt)
+      .eq('embedding_mode', embeddingMode)
       .select('id')
       .maybeSingle();
     if (updateError) throw updateError;
     await deleteQueueMessage(queueName, message.message_id);
     return updated ? 'completed' : 'skipped';
   } catch (error) {
-    if (isProviderEmbeddingTimeout(error)) return 'retried';
-    if (message.read_count >= 5) {
+    const terminal = providerAttempt !== null && shouldTerminallyFail(providerAttempt);
+    if (terminal) {
       const failed = await appDbClient
         .from('search_documents')
-        .update({ embedding_status: 'failed', embedding_error: 'EMBEDDING_FAILED' })
+        .update({ embedding_status: 'failed', embedding_error: isProviderEmbeddingTimeout(error) ? 'EMBEDDING_PROVIDER_TIMEOUT' : 'EMBEDDING_FAILED' })
         .eq('id', job.searchDocumentId)
         .eq('owner_id', job.ownerId)
         .eq('content_hash', job.contentHash)
         .eq('embedding_input_hash', failureInputHash ?? job.embeddingInputHash ?? '')
         .eq('embedding_model', EMBEDDING_MODEL)
         .eq('embedding_model_version', EMBEDDING_MODEL_VERSION)
+        .eq('embedding_attempts', providerAttempt)
+        .eq('embedding_mode', embeddingMode)
         .eq('embedding_status', 'pending')
         .select('id')
         .maybeSingle();
@@ -129,6 +207,7 @@ async function processMessage(message: { message_id: number; read_count: number;
       await archiveQueueMessage(queueName, message.message_id);
       return failed.data ? 'failed' : 'skipped';
     }
+    if (isProviderEmbeddingTimeout(error)) return 'retried';
     return 'retried';
   }
 }
@@ -136,6 +215,7 @@ async function processMessage(message: { message_id: number; read_count: number;
 async function processBounded(
   messages: Array<{ message_id: number; read_count: number; message: unknown }>,
   budget: WorkerBudget,
+  embeddingMode: string,
 ): Promise<WorkerOutcome[]> {
   const results: WorkerOutcome[] = [];
   let nextIndex = 0;
@@ -145,7 +225,7 @@ async function processBounded(
       const index = nextIndex;
       nextIndex += 1;
       const message = messages[index];
-      if (message) results[index] = await processMessage(message, budget);
+      if (message) results[index] = await processMessage(message, budget, embeddingMode);
     }
   }
   const workerCount = Math.min(WORKER_CONCURRENCY, messages.length);
@@ -155,12 +235,19 @@ async function processBounded(
 
 async function processRequest(request: Request): Promise<Response> {
   if (request.headers.get('x-qnotes-worker-secret') !== Deno.env.get('QNOTES_INTERNAL_WORKER_SECRET')) return Response.json({ error: 'unauthorized' }, { status: 401 });
+  // Reject a misconfigured synthetic mode before leasing any queue work.
+  const embeddingMode = resolveEmbeddingMode(Deno.env);
+  const { error: modeRequeueError } = await serviceClient.rpc('qnotes_requeue_embedding_mode_mismatches', {
+    p_embedding_mode: embeddingMode,
+    p_limit: 100,
+  });
+  if (modeRequeueError) throw modeRequeueError;
   const budget = createWorkerBudget(Date.now());
   const outcomes: WorkerOutcome[] = [];
   for (let batch = 0; shouldStartBatch(batch, budget, Date.now()); batch += 1) {
     const messages = await readQueue(queueName, WORKER_VISIBILITY_LEASE_SECONDS, WORKER_BATCH_SIZE);
     if (!messages.length) break;
-    outcomes.push(...await processBounded(messages, budget));
+    outcomes.push(...await processBounded(messages, budget, embeddingMode));
   }
   return Response.json({
     data: {

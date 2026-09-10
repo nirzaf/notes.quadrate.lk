@@ -1,7 +1,7 @@
 import type { Context } from 'hono';
 import { DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT, QNotesValidationError, resolveAutoSearchMode, validateSearchRequest, validateLimit, validateSearchMode, validateSearchQuery } from '@qnotes/shared';
 import type { ResolvedSearchMode, SearchFilters, SearchIndexMetadata, SearchRequest, SearchResponseMetadata, SearchResult } from '@qnotes/shared';
-import { EMBEDDING_MODEL, EMBEDDING_MODEL_VERSION, createEmbedding } from '../embedding-worker/embedding.ts';
+import { EMBEDDING_MODEL, EMBEDDING_MODEL_VERSION, createEmbedding, resolveEmbeddingMode } from '../embedding-worker/embedding.ts';
 import { authFromContext, requireScope } from '../_shared/auth.ts';
 import { ApiError } from '../_shared/errors.ts';
 import { appDbClient, decodeSearchCursor, encodeSearchCursor, requestHash, searchResultFromRow, serviceClient } from '../_shared/database.ts';
@@ -126,10 +126,11 @@ function normalizeResult(item: SearchResult, note: SearchNoteRow | undefined, qu
   };
 }
 
-function requestFingerprint(request: SearchRequest, resolvedMode: ResolvedSearchMode): Promise<string> {
+function requestFingerprint(request: SearchRequest, resolvedMode: ResolvedSearchMode, embeddingMode: string): Promise<string> {
   return requestHash({
     query: request.query,
     mode: resolvedMode,
+    embeddingMode,
     filters: request.filters,
     maxPerNote: request.maxPerNote,
     minimumRelativeScore: request.minimumRelativeScore,
@@ -234,13 +235,15 @@ export async function searchNotes(context: Context): Promise<Response> {
     await enforceRequestBudget('embedding', `user:${auth.userId}`, Math.max(1, Math.ceil(request.limit / 100)));
     context.set('limitDecision', 'embedding-allowed');
   }
-  const fingerprint = await requestFingerprint(request, mode);
+  const embeddingMode = resolveEmbeddingMode(Deno.env);
+  const fingerprint = await requestFingerprint(request, mode, embeddingMode);
   const offset = cursorOffset(request, fingerprint);
   const retrievalLimit = request.limit + 1;
   const queryId = crypto.randomUUID();
   const embeddingStarted = performance.now();
   let embeddingMs = 0;
   let embedding: number[] | undefined;
+  const searchFilters = { ...request.filters, embeddingMode };
   if (mode !== 'keyword') {
     try {
       embedding = await cachedQueryEmbedding(request.query);
@@ -248,7 +251,7 @@ export async function searchNotes(context: Context): Promise<Response> {
     } catch {
       embeddingMs = elapsedMilliseconds(embeddingStarted);
       const retrievalStarted = performance.now();
-      const fallbackItems = await keywordSearch(auth.userId, request.query, retrievalLimit, request.filters, offset, request.maxPerNote);
+      const fallbackItems = await keywordSearch(auth.userId, request.query, retrievalLimit, searchFilters, offset, request.maxPerNote);
       const retrievalMs = elapsedMilliseconds(retrievalStarted);
       const metadataStarted = performance.now();
       const fallbackNotes = await noteMetadata(auth.userId, [...new Set(fallbackItems.map((item) => item.noteId))]);
@@ -266,18 +269,18 @@ export async function searchNotes(context: Context): Promise<Response> {
   let rawItems: SearchResult[];
   try {
     if (mode === 'keyword') {
-      rawItems = await keywordSearch(auth.userId, request.query, retrievalLimit, request.filters, offset, request.maxPerNote);
+      rawItems = await keywordSearch(auth.userId, request.query, retrievalLimit, searchFilters, offset, request.maxPerNote);
     } else {
       const result = mode === 'semantic'
-        ? await serviceClient.rpc('qnotes_semantic_search', { p_owner_id: auth.userId, p_query: request.query, p_embedding: embedding!, p_limit: retrievalLimit, p_filters: request.filters, p_offset: offset, p_max_per_note: request.maxPerNote })
-        : await serviceClient.rpc('qnotes_hybrid_search', { p_owner_id: auth.userId, p_query: request.query, p_embedding: embedding!, p_limit: retrievalLimit, p_rrf_k: 60, p_filters: request.filters, p_offset: offset, p_max_per_note: request.maxPerNote });
+        ? await serviceClient.rpc('qnotes_semantic_search', { p_owner_id: auth.userId, p_query: request.query, p_embedding: embedding!, p_limit: retrievalLimit, p_filters: searchFilters, p_offset: offset, p_max_per_note: request.maxPerNote })
+        : await serviceClient.rpc('qnotes_hybrid_search', { p_owner_id: auth.userId, p_query: request.query, p_embedding: embedding!, p_limit: retrievalLimit, p_rrf_k: 60, p_filters: searchFilters, p_offset: offset, p_max_per_note: request.maxPerNote });
       if (result.error) throw new ApiError(503, 'SEMANTIC_SEARCH_UNAVAILABLE', 'Semantic search is temporarily unavailable.');
       rawItems = (Array.isArray(result.data) ? result.data : []).map((row) => searchResultFromRow(row as Record<string, unknown>));
     }
     retrievalMs = elapsedMilliseconds(retrievalStarted);
   } catch (error: unknown) {
     if (mode === 'keyword') throw error;
-    const fallbackItems = await keywordSearch(auth.userId, request.query, retrievalLimit, request.filters, offset, request.maxPerNote);
+    const fallbackItems = await keywordSearch(auth.userId, request.query, retrievalLimit, searchFilters, offset, request.maxPerNote);
     retrievalMs = elapsedMilliseconds(retrievalStarted);
     const metadataStarted = performance.now();
     const fallbackNotes = await noteMetadata(auth.userId, [...new Set(fallbackItems.map((item) => item.noteId))]);

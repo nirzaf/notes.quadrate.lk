@@ -335,6 +335,8 @@ export type Database = {
           embedding_input_hash: string | null
           embedding_queued_at: string | null
           embedding_status: string
+          embedding_attempts: number
+          embedding_mode: string
           heading_path: string | null
           id: string
           note_id: string
@@ -359,6 +361,8 @@ export type Database = {
           embedding_input_hash?: string | null
           embedding_queued_at?: string | null
           embedding_status?: string
+          embedding_attempts?: number
+          embedding_mode?: string
           heading_path?: string | null
           id?: string
           note_id: string
@@ -380,6 +384,8 @@ export type Database = {
           embedding_model?: string | null
           embedding_model_version?: string | null
           embedding_status?: string
+          embedding_attempts?: number
+          embedding_mode?: string
           heading_path?: string | null
           id?: string
           note_id?: string
@@ -594,6 +600,22 @@ export type Database = {
           message_id: number
           read_count: number
         }[]
+      }
+      qnotes_reset_embedding_retry_state: {
+        Args: Record<PropertyKey, never>
+        Returns: undefined
+      }
+      qnotes_requeue_embedding_failures: {
+        Args: { p_limit?: number }
+        Returns: number
+      }
+      qnotes_requeue_embedding_mode_mismatches: {
+        Args: { p_embedding_mode: string; p_limit?: number }
+        Returns: number
+      }
+      qnotes_requeue_stale_embeddings: {
+        Args: { p_stale_after?: string }
+        Returns: number
       }
       qnotes_restore_note: {
         Args: {

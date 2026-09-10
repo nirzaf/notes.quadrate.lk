@@ -161,11 +161,13 @@ async function seedCorpus(env, fixture) {
   const envText = await readFile(join(root, 'supabase/functions/.env.test'), 'utf8').catch(() => '');
   const workerSecret = envText.split(/\r?\n/).find((line) => line.startsWith('QNOTES_INTERNAL_WORKER_SECRET='))?.slice('QNOTES_INTERNAL_WORKER_SECRET='.length);
   if (workerSecret) {
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      const worker = await fetch(`${env.supabaseUrl}/functions/v1/attachment-worker`, { method: 'POST', headers: { 'x-qnotes-worker-secret': workerSecret, 'Content-Type': 'application/json' }, body: '{}' });
-      if (!worker.ok) break;
-      const result = await worker.json().catch(() => null);
-      if (!result?.data?.completed) break;
+    for (const workerName of ['embedding-worker', 'attachment-worker']) {
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const worker = await fetch(`${env.supabaseUrl}/functions/v1/${workerName}`, { method: 'POST', headers: { 'x-qnotes-worker-secret': workerSecret, 'Content-Type': 'application/json' }, body: '{}' });
+        if (!worker.ok) break;
+        const result = await worker.json().catch(() => null);
+        if (!result?.data?.completed) break;
+      }
     }
   }
   return token;

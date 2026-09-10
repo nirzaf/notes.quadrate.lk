@@ -18,6 +18,7 @@ export const WORKER_DRAIN_BUDGET_MS = 90_000;
  * must not turn a slow provider into a permanent failed/archive outcome.
  */
 export const PROVIDER_EMBEDDING_TIMEOUT_MS = 10_000;
+export const MAX_PROVIDER_ATTEMPTS = 5;
 
 export interface WorkerBudget {
   readonly drainDeadlineMs: number;
@@ -59,6 +60,10 @@ export class ProviderEmbeddingTimeoutError extends Error {
 
 export function isProviderEmbeddingTimeout(error: unknown): error is ProviderEmbeddingTimeoutError {
   return error instanceof ProviderEmbeddingTimeoutError;
+}
+
+export function shouldTerminallyFail(attempt: number, maxAttempts = MAX_PROVIDER_ATTEMPTS): boolean {
+  return Number.isSafeInteger(attempt) && attempt >= 1 && Number.isSafeInteger(maxAttempts) && maxAttempts >= 1 && attempt >= maxAttempts;
 }
 
 export async function boundProviderEmbedding<T>(providerPromise: Promise<T>, timeoutMs: number): Promise<T> {

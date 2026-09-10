@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeEmbedding } from '../../supabase/functions/embedding-worker/embedding.ts';
+import { normalizeEmbedding, resolveEmbeddingMode, SYNTHETIC_EMBEDDING_MODE } from '../../supabase/functions/embedding-worker/embedding.ts';
 
 test('rejects invalid embedding vectors before normalization', () => {
   assert.throws(() => normalizeEmbedding([]), /invalid vector/);
@@ -15,4 +15,16 @@ test('normalizes a finite non-zero embedding vector', () => {
   assert.equal(normalized.length, 384);
   assert.equal(normalized[0], 1);
   assert.equal(normalized.slice(1).every((value) => value === 0), true);
+});
+
+test('synthetic embeddings require an explicit test-only identity', () => {
+  assert.equal(resolveEmbeddingMode(new Map()), 'provider');
+  assert.throws(() => resolveEmbeddingMode(new Map([
+    ['QNOTES_FAKE_EMBEDDINGS', '1'],
+  ])), /explicit test environment/);
+  assert.equal(resolveEmbeddingMode(new Map([
+    ['QNOTES_FAKE_EMBEDDINGS', '1'],
+    ['QNOTES_ENVIRONMENT', 'test'],
+    ['QNOTES_EMBEDDING_MODE', SYNTHETIC_EMBEDDING_MODE],
+  ])), SYNTHETIC_EMBEDDING_MODE);
 });
