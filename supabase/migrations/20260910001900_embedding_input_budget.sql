@@ -173,6 +173,7 @@ declare
   content text;
   chunk_hash text;
   chunk_position integer;
+  next_position integer := 0;
 begin
   for item in select value from jsonb_array_elements(coalesce(p_documents, '[]'::jsonb))
   loop
@@ -182,14 +183,16 @@ begin
     source_type := coalesce(item->>'sourceType', 'note_chunk');
     content := coalesce(item->>'content', '');
     if octet_length(public.qnotes_embedding_input(source_title, heading_path, content)) <= 496 then
-      expanded := expanded || jsonb_build_array(item);
+      expanded := expanded || jsonb_build_array(jsonb_set(item, '{position}', to_jsonb(next_position), true));
+      next_position := next_position + 1;
       continue;
     end if;
 
     for chunk in select * from public.qnotes_embedding_content_chunks(source_title, heading_path, content)
     loop
       chunk_hash := encode(digest(chunk.content, 'sha256'), 'hex');
-      chunk_position := least(2147483647::bigint, greatest(0::bigint, coalesce((item->>'position')::bigint, 0) + chunk.chunk_index))::integer;
+      chunk_position := next_position;
+      next_position := next_position + 1;
       expanded := expanded || jsonb_build_array(jsonb_build_object(
         'sourceType', source_type,
         'sourceId', item->>'sourceId',
@@ -679,7 +682,9 @@ begin
             ) order by d.position, d.id), '[]'::jsonb)
             into documents
             from notesdb.search_documents d
-            where d.note_id = document_record.note_id and d.owner_id = document_record.owner_id;
+            where d.note_id = document_record.note_id
+              and d.owner_id = document_record.owner_id
+              and d.source_type <> 'attachment_chunk';
             perform public.qnotes_sync_note_content(document_record.note_id, document_record.owner_id, blocks, documents);
           end if;
           processed_attachments := array_append(processed_attachments, document_record.source_id);
@@ -712,7 +717,9 @@ begin
         ) order by d.position, d.id), '[]'::jsonb)
         into documents
         from notesdb.search_documents d
-        where d.note_id = document_record.note_id and d.owner_id = document_record.owner_id;
+        where d.note_id = document_record.note_id
+          and d.owner_id = document_record.owner_id
+          and d.source_type <> 'attachment_chunk';
         perform public.qnotes_sync_note_content(document_record.note_id, document_record.owner_id, blocks, documents);
         processed_notes := array_append(processed_notes, document_record.note_id);
         queued_count := queued_count + 1;

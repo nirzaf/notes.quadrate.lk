@@ -1,5 +1,5 @@
 begin;
-select plan(14);
+select plan(15);
 
 select is(
   public.qnotes_embedding_input('Title', 'Heading', 'Body'),
@@ -101,6 +101,30 @@ select ok(
    ))))
    where value->>'sourceType' = 'code_block'),
   'expanded code documents carry versioned deterministic chunk keys'
+);
+with input as (
+  select jsonb_build_array(
+    jsonb_build_object(
+      'sourceType', 'note_chunk', 'sourceKey', 'first', 'sourceTitle', 'First',
+      'content', repeat('x', 5000), 'position', 2
+    ),
+    jsonb_build_object(
+      'sourceType', 'note_chunk', 'sourceKey', 'second', 'sourceTitle', 'Second',
+      'content', 'later document', 'position', 3
+    )
+  ) as documents
+), expanded as (
+  select public.qnotes_expand_embedding_documents(documents) as value
+  from input
+), rows as (
+  select item->>'sourceKey' as source_key, (item->>'position')::integer as position
+  from expanded cross join lateral jsonb_array_elements(expanded.value) as items(item)
+)
+select ok(
+  (select count(*) = count(distinct position) from rows)
+    and (select max(position) from rows where source_key like 'first:chunk:%')
+      < (select min(position) from rows where source_key = 'second'),
+  'expanded chunks occupy distinct positions before the next document'
 );
 select ok(
   public.qnotes_embedding_input_hash('Title', 'Heading', 'Body') <> encode(extensions.digest(
