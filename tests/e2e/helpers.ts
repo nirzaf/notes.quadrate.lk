@@ -140,6 +140,21 @@ export async function clearApplicationData(): Promise<void> {
     ids.push(found.id);
     await removeObjects(client, found.id);
   }
+  const vaultSecrets = await client.from('vault_secrets').select('id, owner_id, version').in('owner_id', ids).is('deleted_at', null);
+  if (vaultSecrets.error) throw vaultSecrets.error;
+  for (const row of Array.isArray(vaultSecrets.data) ? vaultSecrets.data : []) {
+    const result = await client.rpc('qnotes_vault_delete_secret', {
+      p_owner_id: row.owner_id,
+      p_secret_id: row.id,
+      p_expected_version: row.version,
+      p_mutation_id: crypto.randomUUID(),
+      p_request_hash: '0'.repeat(64),
+      p_actor_token_id: null,
+      p_request_id: crypto.randomUUID(),
+      p_actor_kind: 'user_jwt',
+    });
+    if (result.error || !result.data || !['ok', 'idempotent'].includes(String((result.data as { status?: unknown }).status))) throw result.error ?? new Error('Unable to remove a local encrypted Vault value during cleanup.');
+  }
   for (const table of ['vault_operation_approvals', 'vault_audit_events', 'vault_mutations', 'vault_agent_tokens', 'vault_projects']) {
     const result = await client.from(table).delete().in('owner_id', ids);
     if (result.error) throw result.error;
