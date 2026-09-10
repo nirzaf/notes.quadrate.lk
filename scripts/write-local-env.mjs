@@ -34,6 +34,7 @@ const webEnv = [
   `VITE_SUPABASE_URL=${supabaseUrl}`,
   `VITE_SUPABASE_PUBLISHABLE_KEY=${publishableKey}`,
   `VITE_QNOTES_API_URL=${apiUrl}`,
+  'VITE_ALLOW_INSECURE_LOOPBACK=true',
   '',
 ].join('\n');
 const functionEnv = [
