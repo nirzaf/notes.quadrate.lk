@@ -92,9 +92,11 @@ as $$
          or position(p.normalized_query in lower(coalesce(b.source_key, ''))) > 0
          or position(p.normalized_query in lower(coalesce(b.content, ''))) > 0
        ))
-       or lower(coalesce(b.source_title, '')) like '%' || p.like_query || '%' escape E'\\'
-       or lower(coalesce(b.source_key, '')) like '%' || p.like_query || '%' escape E'\\'
-       or lower(coalesce(b.content, '')) like '%' || p.like_query || '%' escape E'\\'
+       or (length(p.normalized_query) >= 3 and (
+         lower(b.source_title) like '%' || p.like_query || '%' escape E'\\'
+         or lower(b.source_key) like '%' || p.like_query || '%' escape E'\\'
+         or lower(b.content) like '%' || p.like_query || '%' escape E'\\'
+       ))
   ),
   keyword_scores as (
     select id, sum(weight / (60.0 + channel_rank))::double precision as score
