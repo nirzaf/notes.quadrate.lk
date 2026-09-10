@@ -1,5 +1,5 @@
 begin;
-select plan(17);
+select plan(18);
 
 select ok(exists (
   select 1 from information_schema.columns
@@ -46,6 +46,11 @@ select ok(
      repeat('長', 100), repeat('見出し', 100), repeat('x', 2000) || chr(10) || 'US25_TAIL_FACT'
    )),
   'every SQL chunk stays inside the conservative provider input budget'
+);
+select ok(
+  (select count(*) > 1
+   from public.qnotes_embedding_content_chunks('Title', null, repeat('x', 200000))),
+  'a very long single line is chunked with bounded memory movement'
 );
 
 with input as (

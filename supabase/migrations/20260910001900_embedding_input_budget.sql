@@ -114,7 +114,9 @@ declare
   line text;
   current text := '';
   candidate text;
-  remaining text;
+  line_bytes bytea;
+  part_bytes bytea;
+  byte_offset integer;
   part text;
   number integer := 0;
 begin
@@ -135,15 +137,24 @@ begin
         return next;
         current := '';
       end if;
-      remaining := line;
-      while remaining <> '' loop
-        part := public.qnotes_utf8_prefix(remaining, max_bytes);
+      line_bytes := convert_to(line, 'utf8');
+      byte_offset := 0;
+      while byte_offset < octet_length(line_bytes) loop
+        part_bytes := substring(line_bytes from byte_offset + 1 for max_bytes);
+        loop
+          begin
+            part := convert_from(part_bytes, 'utf8');
+            exit;
+          exception when character_not_in_repertoire then
+            part_bytes := substring(part_bytes from 1 for octet_length(part_bytes) - 1);
+          end;
+        end loop;
         if part = '' then raise exception 'embedding chunk budget cannot hold one UTF-8 character'; end if;
         chunk_index := number;
         content := part;
         number := number + 1;
         return next;
-        remaining := substr(remaining, char_length(part) + 1);
+        byte_offset := byte_offset + octet_length(part_bytes);
       end loop;
       continue;
     end if;
@@ -657,8 +668,12 @@ begin
       )
     order by d.id
     limit p_limit
-    for update of d skip locked
   loop
+    -- Direct attachment completion locks the attachment before replacing its
+    -- documents; avoid holding a document row lock across that call.
+    if not pg_try_advisory_xact_lock(hashtextextended(document_record.id::text, 0)) then
+      continue;
+    end if;
     if octet_length(public.qnotes_embedding_input(document_record.source_title, document_record.heading_path, document_record.content)) > 496 then
       if document_record.source_type = 'attachment_chunk' and document_record.source_id is not null then
         if not document_record.source_id = any(processed_attachments) then
@@ -666,7 +681,8 @@ begin
           from notesdb.attachments a
           where a.id = document_record.source_id
             and a.owner_id = document_record.owner_id
-            and a.deleted_at is null;
+            and a.deleted_at is null
+          for update;
           select coalesce(jsonb_agg(jsonb_build_object(
             'sourceId', d.source_id,
             'sourceKey', d.source_key,
