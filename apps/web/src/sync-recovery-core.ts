@@ -81,7 +81,7 @@ export async function runSyncRecovery({ userId, queryClient, api, readSyncCursor
   } else if (initialCursor === null) {
     await refreshNoteCollections(queryClient, userId);
   }
-  if (reset) await queryClient.invalidateQueries({ queryKey: noteQueryKeys.forUser(userId).all });
+  if (reset) await queryClient.invalidateQueries({ queryKey: noteQueryKeys.forUser(userId).root });
 }
 
 function isInvalidCursorError(error: unknown): boolean {

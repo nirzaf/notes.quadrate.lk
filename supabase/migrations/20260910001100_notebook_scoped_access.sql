@@ -87,11 +87,23 @@ set search_path = public, extensions
 as $$
 begin
   if old.notebook_id is distinct from new.notebook_id then
-    update notesdb.api_tokens
-    set policy_revision = policy_revision + 1
-    where owner_id = new.owner_id
-      and access_mode = 'notebooks'
-      and revoked_at is null;
+    update notesdb.api_tokens t
+    set policy_revision = t.policy_revision + 1
+    where t.owner_id = new.owner_id
+      and t.access_mode = 'notebooks'
+      and t.revoked_at is null
+      and (
+        (old.notebook_id is null and t.allow_unfiled)
+        or (old.notebook_id is not null and exists (
+          select 1 from notesdb.api_token_notebook_grants g
+          where g.token_id = t.id and g.notebook_id = old.notebook_id
+        ))
+        or (new.notebook_id is null and t.allow_unfiled)
+        or (new.notebook_id is not null and exists (
+          select 1 from notesdb.api_token_notebook_grants g
+          where g.token_id = t.id and g.notebook_id = new.notebook_id
+        ))
+      );
   end if;
   return new;
 end;

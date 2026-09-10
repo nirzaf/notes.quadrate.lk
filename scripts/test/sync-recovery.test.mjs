@@ -151,7 +151,7 @@ test('policy-invalidated recovery clears remembered notes and restarts from the 
   assert.deepEqual(syncCursors, ['revoked-scope-cursor', undefined]);
   assert.deepEqual(writes, [null, null]);
   assert.equal(cleared, 1);
-  assert.ok(queryClient.calls.some((queryKey) => JSON.stringify(queryKey) === JSON.stringify(keys.all)));
+  assert.ok(queryClient.calls.some((queryKey) => JSON.stringify(queryKey) === JSON.stringify(keys.root)));
   for (const queryKey of [keys.homeFamily, keys.sidebarFamily, keys.trashFamily, keys.searchFamily]) assert.equal(hasQueryKey(queryClient.calls, queryKey), 1);
 });
 

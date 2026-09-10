@@ -66,11 +66,13 @@ update notesdb.notes
 set notebook_id = 'a9000000-0000-4000-8000-000000000002'
 where id = 'a9000000-0000-4000-8000-000000000011';
 select ok((select policy_revision > 4 from notesdb.api_tokens where token_hash = repeat('b', 64)), 'moving a note advances scoped token policy revisions');
+select is((select policy_revision from notesdb.api_tokens where token_hash = repeat('c', 64)), 3::bigint, 'moving a note leaves unrelated scoped token policy revisions unchanged');
 update notesdb.notes
 set notebook_id = 'a9000000-0000-4000-8000-000000000001'
 where id = 'a9000000-0000-4000-8000-000000000011';
+select is((select policy_revision from notesdb.api_tokens where token_hash = repeat('b', 64)), 6::bigint, 'grant revocation test starts from the current exact policy revision');
 delete from notesdb.api_token_notebook_grants where token_id = (select id from notesdb.api_tokens where token_hash = repeat('b', 64));
-select ok((select policy_revision > 2 from notesdb.api_tokens where token_hash = repeat('b', 64)), 'grant revocation advances the policy revision');
+select is((select policy_revision from notesdb.api_tokens where token_hash = repeat('b', 64)), 7::bigint, 'grant revocation advances the policy revision exactly once');
 select is((select cardinality(notebook_ids) from public.qnotes_api_token_access((select id from notesdb.api_tokens where token_hash = repeat('b', 64)), (select id from auth.users where email = 'owner@qnotes.local'))), 0, 'revoked grants are absent from the next policy snapshot');
 
 select * from finish();

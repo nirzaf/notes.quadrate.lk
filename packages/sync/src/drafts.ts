@@ -29,6 +29,7 @@ export interface DraftStore {
   get(noteId: UUID): Promise<NoteDraft | null>;
   put(draft: NoteDraft): Promise<void>;
   delete(noteId: UUID): Promise<void>;
+  clearRecent(): Promise<void>;
   listRecent(limit?: number): Promise<NoteSummary[]>;
   putSearchSelection(selection: SearchSelection): Promise<void>;
 }
@@ -171,6 +172,10 @@ export class MemoryDraftStore implements DraftStore {
 
   async listRecent(limit = 500): Promise<NoteSummary[]> {
     return [...this.recent.values()].sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)).slice(0, limit);
+  }
+
+  async clearRecent(): Promise<void> {
+    this.recent.clear();
   }
 
   async putSearchSelection(selection: SearchSelection): Promise<void> {
