@@ -204,7 +204,7 @@ begin
   response := jsonb_build_object('secret', jsonb_build_object('id', secret_row.id, 'projectId', secret_row.project_id, 'environmentId', secret_row.environment_id, 'name', secret_row.name, 'description', secret_row.description, 'version', secret_row.version, 'createdAt', secret_row.created_at, 'updatedAt', secret_row.updated_at, 'rotatedAt', secret_row.rotated_at, 'deletedAt', secret_row.deleted_at));
   perform public.qnotes_vault_append_audit_event(
     p_owner_id, p_actor_kind, p_actor_token_id, 'secret:write', p_project_id,
-    p_environment_id, secret_row.id, null, true, 'created', p_request_id, p_request_id, null
+    p_environment_id, secret_row.id, null, true, 'created', p_request_id, p_mutation_id, null
   );
   insert into notesdb.vault_mutations (owner_id, mutation_id, operation, request_hash, secret_id, resulting_version, response)
   values (p_owner_id, p_mutation_id, 'created', p_request_hash, secret_row.id, secret_row.version, response);
@@ -252,7 +252,7 @@ begin
   response := jsonb_build_object('secret', jsonb_build_object('id', secret_row.id, 'projectId', secret_row.project_id, 'environmentId', secret_row.environment_id, 'name', secret_row.name, 'description', secret_row.description, 'version', secret_row.version, 'createdAt', secret_row.created_at, 'updatedAt', secret_row.updated_at, 'rotatedAt', secret_row.rotated_at, 'deletedAt', secret_row.deleted_at));
   perform public.qnotes_vault_append_audit_event(
     p_owner_id, p_actor_kind, p_actor_token_id, 'secret:write', secret_row.project_id,
-    secret_row.environment_id, secret_row.id, null, true, 'rotated', p_request_id, p_request_id, null
+    secret_row.environment_id, secret_row.id, null, true, 'rotated', p_request_id, p_mutation_id, null
   );
   insert into notesdb.vault_mutations (owner_id, mutation_id, operation, request_hash, secret_id, resulting_version, response)
   values (p_owner_id, p_mutation_id, 'rotated', p_request_hash, secret_row.id, secret_row.version, response);
@@ -296,7 +296,7 @@ begin
   response := jsonb_build_object('secret', jsonb_build_object('id', secret_row.id, 'projectId', secret_row.project_id, 'environmentId', secret_row.environment_id, 'name', secret_row.name, 'description', secret_row.description, 'version', secret_row.version, 'createdAt', secret_row.created_at, 'updatedAt', secret_row.updated_at, 'rotatedAt', secret_row.rotated_at, 'deletedAt', secret_row.deleted_at));
   perform public.qnotes_vault_append_audit_event(
     p_owner_id, p_actor_kind, p_actor_token_id, 'secret:delete', secret_row.project_id,
-    secret_row.environment_id, secret_row.id, null, true, 'deleted', p_request_id, p_request_id, null
+    secret_row.environment_id, secret_row.id, null, true, 'deleted', p_request_id, p_mutation_id, null
   );
   insert into notesdb.vault_mutations (owner_id, mutation_id, operation, request_hash, secret_id, resulting_version, response)
   values (p_owner_id, p_mutation_id, 'deleted', p_request_hash, secret_row.id, secret_row.version, response);

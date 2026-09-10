@@ -487,6 +487,7 @@ export async function revokeVaultAgentToken(context: Context): Promise<Response>
   const auth = vaultAuthFromContext(context);
   requireVaultUserJwt(auth);
   const tokenId = context.req.param('tokenId') ?? '';
+  if (!isUUID(tokenId)) throw new ApiError(422, 'VALIDATION_ERROR', 'tokenId must be a valid UUID.');
   await requireVaultOperationApproval(context, auth, { action: 'token:revoke', projectId: null, environmentId: null, secretId: null, targetTokenId: tokenId, expectedVersion: null, requestHash: await hashVaultApprovalRequest({ operation: 'token-revoked', tokenId }) });
   const result = record(assertSupabase(await serviceClient.rpc('qnotes_revoke_vault_agent_token', { p_owner_id: auth.userId, p_token_id: tokenId, p_request_id: context.get('requestId') })));
   if (result.status === 'not_found') throw new ApiError(404, 'VAULT_AGENT_TOKEN_NOT_FOUND', 'The Vault agent token was not found.');
@@ -546,6 +547,7 @@ export async function replaceVaultAgentGrants(context: Context): Promise<Respons
   const auth = vaultAuthFromContext(context);
   requireVaultUserJwt(auth);
   const tokenId = context.req.param('tokenId') ?? '';
+  if (!isUUID(tokenId)) throw new ApiError(422, 'VALIDATION_ERROR', 'tokenId must be a valid UUID.');
   const validation = validateReplaceVaultAgentGrantsInput(await context.req.json());
   await requireVaultOperationApproval(context, auth, { action: 'grant:replace', projectId: null, environmentId: null, secretId: null, targetTokenId: tokenId, expectedVersion: null, requestHash: await hashVaultApprovalRequest({ operation: 'grants-replaced', tokenId, grants: validation.grants }) });
   const result = assertSupabase(await serviceClient.rpc('qnotes_replace_vault_agent_grants', { p_owner_id: auth.userId, p_token_id: tokenId, p_grants: validation.grants, p_request_id: context.get('requestId') }));

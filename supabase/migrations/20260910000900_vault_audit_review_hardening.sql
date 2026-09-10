@@ -75,10 +75,13 @@ $$;
 
 alter function notesdb.vault_audit_outbox_insert() owner to qnotes_vault_audit_maintenance;
 
+-- Backfill existing rows before the append-only trigger is active for normal writes.
+alter table notesdb.vault_audit_events disable trigger vault_audit_events_append_only;
 update notesdb.vault_audit_events
 set operation_id = request_id
 where operation_id is null
   and request_id is not null;
+alter table notesdb.vault_audit_events enable trigger vault_audit_events_append_only;
 
 update notesdb.vault_audit_outbox o
 set payload = o.payload || jsonb_build_object(
@@ -425,8 +428,8 @@ begin
   end if;
   insert into notesdb.vault_operation_approvals (owner_id, session_id, action, project_id, environment_id, secret_id, expected_version, request_hash, approval_hash, expires_at)
   values (p_owner_id, p_session_id, p_action, p_project_id, p_environment_id, p_secret_id, p_expected_version, p_request_hash, p_approval_hash, expires_at);
-  perform public.qnotes_vault_append_audit_event(p_owner_id, 'user_jwt', null, 'auth:step_up', null, null, null, 'Vault step-up verified', true, 'verified', p_request_id, p_request_id, null);
-  perform public.qnotes_vault_append_audit_event(p_owner_id, 'user_jwt', null, 'approval:issue', null, null, null, 'Vault operation approval issued', true, 'issued', p_request_id, p_request_id, null);
+  perform public.qnotes_vault_append_audit_event(p_owner_id, 'user_jwt', null, 'auth:step_up', p_project_id, p_environment_id, p_secret_id, 'Vault step-up verified', true, 'verified', p_request_id, p_request_id, null);
+  perform public.qnotes_vault_append_audit_event(p_owner_id, 'user_jwt', null, 'approval:issue', p_project_id, p_environment_id, p_secret_id, 'Vault operation approval issued', true, 'issued', p_request_id, p_request_id, null);
   return jsonb_build_object('status', 'ok', 'expiresAt', expires_at);
 end;
 $$;
@@ -471,7 +474,7 @@ begin
   update notesdb.vault_operation_approvals
   set used_at = clock_timestamp()
   where id = approval_row.id;
-  perform public.qnotes_vault_append_audit_event(p_owner_id, 'user_jwt', null, 'approval:consume', null, null, null, 'Vault operation approval consumed', true, 'consumed', p_request_id, p_request_id, null);
+  perform public.qnotes_vault_append_audit_event(p_owner_id, 'user_jwt', null, 'approval:consume', p_project_id, p_environment_id, p_secret_id, 'Vault operation approval consumed', true, 'consumed', p_request_id, p_request_id, null);
   return jsonb_build_object('status', 'ok');
 end;
 $$;

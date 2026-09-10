@@ -29,13 +29,15 @@ select public.qnotes_vault_append_audit_event(
   'synthetic maintenance recovery', false, 'recovery_required',
   'a8000000-0000-4000-8000-000000000001',
   'a8000000-0000-4000-8000-000000000001',
-  null
+  'a8000000-0000-4000-8000-000000000003'
 ) as event_id;
 
 select ok((select event_id is not null from audit_integrity_event), 'the controlled writer returns an event identity');
 select ok((select action = 'admin:recovery' and actor_kind = 'system' and not success and policy_revision = 'vault-audit-v1'
+  and target_token_id = 'a8000000-0000-4000-8000-000000000003'::uuid
   from notesdb.vault_audit_events where id = (select event_id from audit_integrity_event)), 'administrative recovery events carry safe typed metadata');
 select ok((select event_id = (select event_id from audit_integrity_event) and payload->>'action' = 'admin:recovery'
+  and payload->>'targetTokenId' = 'a8000000-0000-4000-8000-000000000003'
   from notesdb.vault_audit_outbox where event_id = (select event_id from audit_integrity_event)), 'every event is durably queued for export without secret fields');
 select ok((select not (payload ? 'value') and not (payload ? 'requestBody') from notesdb.vault_audit_outbox where event_id = (select event_id from audit_integrity_event)), 'the export payload excludes secret values and whole requests');
 
