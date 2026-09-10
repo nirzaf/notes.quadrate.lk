@@ -35,8 +35,11 @@ test('search scope is intersected before retrieval and caller filters are remove
 });
 
 test('cursor policy uses the namespaced principal and current revision', () => {
+  const accountWide = { ...auth, accessMode: 'account' as const, notebookIds: [], allowUnfiled: true };
   assert.equal(authPrincipal(auth), 'personal:00000000-0000-4000-8000-000000000002');
   assert.doesNotThrow(() => requireCursorPolicy(auth, authPrincipal(auth), 2));
+  assert.doesNotThrow(() => requireCursorPolicy(accountWide, undefined, undefined));
   assert.throws(() => requireCursorPolicy(auth, auth.userId, 2), { code: 'VALIDATION_ERROR' });
   assert.throws(() => requireCursorPolicy(auth, authPrincipal(auth), 1), { code: 'VALIDATION_ERROR' });
+  assert.throws(() => requireCursorPolicy(auth, undefined, undefined), { code: 'VALIDATION_ERROR' });
 });

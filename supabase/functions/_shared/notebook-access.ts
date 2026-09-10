@@ -76,5 +76,6 @@ function withoutScopeFilters(filters: SearchFilters): SearchFilters {
 }
 
 export function requireCursorPolicy(auth: AuthContext, principal: unknown, policyRevision: unknown): void {
+  if (principal === undefined && policyRevision === undefined && isAccountWide(auth)) return;
   if (principal !== authPrincipal(auth) || policyRevision !== auth.policyRevision) throw new ApiError(422, 'VALIDATION_ERROR', 'cursor is invalid or expired.');
 }
