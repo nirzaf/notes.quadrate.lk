@@ -199,6 +199,11 @@ begin
 
   begin
     perform public.qnotes_configure_hnsw_search(use_exact);
+    if use_exact then
+      -- Keep the small-set exact path off HNSW while retaining the operator
+      -- ordering for the shared query body.
+      perform set_config('enable_indexscan', 'off', true);
+    end if;
 
     return query
       with params as (
@@ -325,9 +330,10 @@ as $$
     select
       case
         when cardinality(requested.notebook_ids) > 0 then requested.notebook_ids
+        when requested.unfiled then '{}'::uuid[]
         else coalesce((select array_agg(n.id) from notesdb.notebooks n where n.owner_id = p_owner_id), '{}'::uuid[])
       end as notebook_ids,
-      requested.unfiled or cardinality(requested.notebook_ids) = 0 as allow_unfiled
+      cardinality(requested.notebook_ids) = 0 as allow_unfiled
     from requested
   )
   select scoped.*

@@ -1,5 +1,5 @@
 begin;
-select plan(13);
+select plan(14);
 
 select ok(
   has_function_privilege(
@@ -138,6 +138,22 @@ select is(
   ),
   1,
   'combined notebook and unfiled filters retain the requested notebook scope'
+);
+select is(
+  (
+    select count(*)::integer
+    from public.qnotes_semantic_search(
+      (select id from auth.users where email = 'owner@qnotes.local'),
+      'unfiled only',
+      ('[1,0,' || repeat('0,', 381) || '0]')::extensions.vector,
+      10,
+      '{"unfiled":true}'::jsonb,
+      0,
+      2
+    )
+  ),
+  0,
+  'unfiled-only filters do not widen to every notebook'
 );
 select ok(
   (
