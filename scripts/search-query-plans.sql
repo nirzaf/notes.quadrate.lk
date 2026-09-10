@@ -51,6 +51,7 @@ join notesdb.notes n on n.id = d.note_id
 where d.owner_id = (select id from auth.users where email = 'hermes-evaluation@qnotes.local')
   and n.owner_id = d.owner_id
   and n.deleted_at is null
+  and (d.embedding is null or d.embedding_mode = 'synthetic-test-v1')
   and (lower(n.title) = 'erpnext production rollback' or lower(n.slug) = 'erpnext-production-rollback')
 order by d.id
 limit 51;
@@ -61,6 +62,7 @@ select d.id, ts_rank_cd(d.search_vector, websearch_to_tsquery('simple', 'rollbac
 from notesdb.search_documents d
 join notesdb.notes n on n.id = d.note_id and n.owner_id = d.owner_id and n.deleted_at is null
 where d.owner_id = (select id from auth.users where email = 'hermes-evaluation@qnotes.local')
+  and (d.embedding is null or d.embedding_mode = 'synthetic-test-v1')
   and d.search_vector @@ websearch_to_tsquery('simple', 'rollback production')
 order by rank desc, d.id
 limit 51;
@@ -81,6 +83,7 @@ select d.id, greatest(similarity(lower(d.source_title), 'erp nxt production roll
 from notesdb.search_documents d
 join notesdb.notes n on n.id = d.note_id and n.owner_id = d.owner_id and n.deleted_at is null
 where d.owner_id = (select id from auth.users where email = 'hermes-evaluation@qnotes.local')
+  and (d.embedding is null or d.embedding_mode = 'synthetic-test-v1')
   and (lower(d.source_title) % 'erp nxt production rollbak' or lower(d.content) % 'erp nxt production rollbak')
 order by similarity desc, d.id
 limit 51;
@@ -137,6 +140,7 @@ from notesdb.search_documents d
 join notesdb.notes n on n.id = d.note_id and n.owner_id = d.owner_id and n.deleted_at is null
 where d.owner_id = (select id from auth.users where email = 'hermes-evaluation@qnotes.local')
   and n.tags @> array['operations']::text[]
+  and (d.embedding is null or d.embedding_mode = 'synthetic-test-v1')
   and d.search_vector @@ websearch_to_tsquery('simple', 'release')
 order by ts_rank_cd(d.search_vector, websearch_to_tsquery('simple', 'release')) desc, d.id
 limit 51;

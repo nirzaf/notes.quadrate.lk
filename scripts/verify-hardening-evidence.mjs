@@ -39,7 +39,7 @@ const incompleteMatrixRows = matrixRows
   .filter((cells) => cells.length !== 3 || cells.some((cell) => cell.length === 0))
   .map((cells) => cells[0] || '<missing story>');
 const evidencePaths = [...new Set(
-  matrixRows.flatMap((cells) => [...cells[2].matchAll(/`([^`]+)`/g)])
+  matrixRows.flatMap((cells) => [...(cells[2] ?? '').matchAll(/`([^`]+)`/g)])
     .flatMap(([, value]) => value.split(';').map((part) => part.split(' — ')[0].trim()))
     .filter(Boolean),
 )];

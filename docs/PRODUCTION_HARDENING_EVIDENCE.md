@@ -31,7 +31,7 @@ release identity above. A skipped gate stays visible as unavailable.
 | Focused browser security | `pnpm exec playwright test tests/e2e/accessibility.spec.ts tests/e2e/auth.spec.ts tests/e2e/attachments.spec.ts tests/e2e/notebooks.spec.ts tests/e2e/notes.spec.ts tests/e2e/oauth-replay.spec.ts tests/e2e/public-sharing.spec.ts tests/e2e/search.spec.ts tests/e2e/tokens-cli.spec.ts tests/e2e/vault-browser-safety.spec.ts tests/e2e/vault.spec.ts --project=chromium` (manual; no CI job) | `unavailable` | Focused accessibility, auth, notebook, note editing, search, token/share, attachment privacy, OAuth replay, and Vault secret-safety coverage |
 | Browser recovery round-trip | `pnpm exec playwright test tests/e2e/workspace-recovery.spec.ts --project=chromium` (manual; no CI job) | `unavailable` | Dry-run safety, conflicts, private attachments, token/share exclusion, and retry idempotency |
 | Vault readiness | `pnpm run verify:vault` | `TBD` | Synthetic readiness checks and documented isolation residual |
-| Tenant vector recall | `pnpm run evaluate:search -- --seed` / `search evaluator` | `unavailable` | Uses the checked-in `scripts/evaluate-search.mjs`; the provider-backed tenant recall probe is not present at this commit, so synthetic vectors do not support a semantic quality claim |
+| Tenant vector recall | `pnpm run evaluate:search -- --seed` (manual; no CI job) | `unavailable` | Uses the checked-in `scripts/evaluate-search.mjs`; the provider-backed tenant recall probe is not present at this commit, so synthetic vectors do not support a semantic quality claim |
 | Workflow aggregation | `release gate` | `TBD` | Required job names and results are recorded from GitHub |
 
 ## Finding-to-evidence matrix
