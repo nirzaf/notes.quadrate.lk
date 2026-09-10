@@ -1,5 +1,14 @@
+import {
+  EMBEDDING_INPUT_BYTE_BUDGET,
+  EMBEDDING_INPUT_VERSION,
+  embeddingInput as buildEmbeddingInput,
+  embeddingInputByteLength,
+  embeddingInputHash as hashEmbeddingInput,
+} from '@qnotes/markdown';
+
 export const EMBEDDING_MODEL = 'gte-small';
 export const EMBEDDING_MODEL_VERSION = 'v2';
+export { EMBEDDING_INPUT_BYTE_BUDGET, EMBEDDING_INPUT_VERSION };
 export const SYNTHETIC_EMBEDDING_MODE = 'synthetic-test-v1';
 
 export type EmbeddingMode = 'provider' | typeof SYNTHETIC_EMBEDDING_MODE;
@@ -42,17 +51,9 @@ export async function fakeEmbedding(value: string): Promise<number[]> {
   return vector.map((item) => item / magnitude);
 }
 
-export function embeddingInput(document: { content: string; sourceTitle?: string | null; headingPath?: string | null }): string {
-  return [document.sourceTitle, document.headingPath, document.content]
-    .map((value) => typeof value === 'string' ? value.trim() : '')
-    .filter(Boolean)
-    .join('\n\n');
-}
+export const embeddingInput = buildEmbeddingInput;
 
-export async function embeddingInputHash(document: { content: string; sourceTitle?: string | null; headingPath?: string | null }): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(embeddingInput(document)));
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
+export const embeddingInputHash = hashEmbeddingInput;
 
 export function normalizeEmbedding(value: unknown): number[] {
   if (!Array.isArray(value) || value.length !== 384 || !value.every((item) => typeof item === 'number' && Number.isFinite(item))) {
@@ -75,6 +76,9 @@ function getSession(): EmbeddingSession {
 }
 
 export async function createEmbedding(value: string): Promise<number[]> {
+  if (embeddingInputByteLength(value) > EMBEDDING_INPUT_BYTE_BUDGET) {
+    throw new Error(`Embedding input exceeds the conservative ${EMBEDDING_INPUT_BYTE_BUDGET}-byte provider budget.`);
+  }
   if (resolveEmbeddingMode(Deno.env) === SYNTHETIC_EMBEDDING_MODE) return fakeEmbedding(value);
   const result = await getSession().run(value);
   return normalizeEmbedding(result);

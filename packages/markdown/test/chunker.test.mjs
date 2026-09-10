@@ -1,6 +1,29 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chunkMarkdown, chunkText, estimateTokenCount } from '../dist/index.js';
+import {
+  EMBEDDING_INPUT_BYTE_BUDGET,
+  embeddingInput,
+  embeddingInputByteLength,
+  embeddingInputHash,
+  splitEmbeddingContent,
+  chunkMarkdown,
+  chunkText,
+  estimateTokenCount,
+} from '../dist/index.js';
+
+test('bounds complete embedding inputs and keeps oversized tail content', async () => {
+  const sourceTitle = 'Long title '.repeat(30);
+  const headingPath = '設定 > 長い見出し '.repeat(40);
+  const content = Array.from({ length: 40 }, (_, index) => `const setting_${index} = "value-${index}";`).join('\n')
+    + '\nTAIL_RETRIEVAL_MARKER_8241';
+  const chunks = splitEmbeddingContent(content, sourceTitle, headingPath);
+
+  assert.ok(chunks.length > 1);
+  assert.deepEqual(chunks, splitEmbeddingContent(content, sourceTitle, headingPath));
+  assert.match(chunks.at(-1), /TAIL_RETRIEVAL_MARKER_8241/);
+  assert.ok(chunks.every((chunk) => embeddingInputByteLength(embeddingInput({ content: chunk, sourceTitle, headingPath })) <= EMBEDDING_INPUT_BYTE_BUDGET));
+  assert.equal(await embeddingInputHash({ content: chunks[0], sourceTitle, headingPath }), await embeddingInputHash({ content: chunks[0], sourceTitle, headingPath }));
+});
 
 test('splits an unbroken token to the deterministic token budget', () => {
   const chunks = chunkText('x'.repeat(5000), 10, 0);

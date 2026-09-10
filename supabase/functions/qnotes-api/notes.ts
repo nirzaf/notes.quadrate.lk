@@ -1,6 +1,7 @@
 import type { Context } from 'hono';
 import { deriveSlug, isUUID, MAX_MARKDOWN_CODE_UNITS, MAX_PATCH_REPLACEMENT_BYTES, MAX_SEARCH_LIMIT, MAX_SYNC_LIMIT, normalizeSlug, QNotesValidationError, validateAppendNoteInput, validateCreateNoteInput, validateListNotesQuery, validateMoveNoteToNotebookInput, validatePatchNoteSectionInput, validateUpdateNoteInput, validateVersionedMutation, type ApiTokenScope, type CreateNoteInput, type PatchNoteSectionInput } from '@qnotes/shared';
 import { getMarkdownOutline, MarkdownParseError, MarkdownPatchError, parseMarkdown, patchMarkdownSection } from '@qnotes/markdown';
+import { splitEmbeddingContent } from '@qnotes/markdown';
 import { authFromContext, requireScope } from '../_shared/auth.ts';
 import { ApiError } from '../_shared/errors.ts';
 import { appDbClient, assertSupabase, noteFromRow, requestHash, serviceClient, summaryFromRow } from '../_shared/database.ts';
@@ -115,16 +116,27 @@ export function mutationResponse(context: Context, result: NoteResult): Response
   return response;
 }
 
-function blockDocuments(parsed: Awaited<ReturnType<typeof parseMarkdown>>, title: string) {
-  return parsed.blocks.map((block) => ({
-    sourceType: block.explicit ? 'copy_block' : 'code_block',
-    sourceKey: block.blockKey,
-    sourceTitle: block.title ?? block.language ?? title,
-    headingPath: null,
-    content: block.content,
-    contentHash: block.contentHash,
-    position: block.position,
-  }));
+async function blockDocuments(parsed: Awaited<ReturnType<typeof parseMarkdown>>, title: string) {
+  const documents: Array<Record<string, unknown>> = [];
+  for (const block of parsed.blocks) {
+    const sourceType = block.explicit ? 'copy_block' : 'code_block';
+    const sourceTitle = block.title ?? block.language ?? title;
+    const parts = splitEmbeddingContent(block.content, sourceTitle, null);
+    const safeParts = parts.length ? parts : [block.content];
+    for (const [index, content] of safeParts.entries()) {
+      const contentHash = await sha256Hex(content.trim());
+      documents.push({
+        sourceType,
+        sourceKey: safeParts.length > 1 ? `${block.blockKey}:chunk:${index}-${contentHash.slice(0, 16)}` : block.blockKey,
+        sourceTitle,
+        headingPath: null,
+        content,
+        contentHash,
+        position: block.position * 1_000_000 + index,
+      });
+    }
+  }
+  return documents;
 }
 
 function appendMarkdown(existing: string, addition: string): string {
@@ -139,7 +151,7 @@ async function parsedContent(markdown: string, title: string) {
   try {
     const parsed = await parseMarkdown(markdown);
     const blocks = parsed.blocks.map(({ explicit: _explicit, ...block }) => block);
-    return { parsed, blocks, documents: [...parsed.chunks.map((chunk) => ({ sourceType: 'note_chunk', ...chunk })), ...blockDocuments(parsed, title)] };
+    return { parsed, blocks, documents: [...parsed.chunks.map((chunk) => ({ sourceType: 'note_chunk', ...chunk })), ...(await blockDocuments(parsed, title))] };
   } catch (error: unknown) {
     if (error instanceof MarkdownParseError) throw new ApiError(422, error.code, error.message, error.details);
     throw error;

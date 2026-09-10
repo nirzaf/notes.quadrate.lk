@@ -1,0 +1,437 @@
+-- US-25: keep embedding inputs inside the verified provider boundary while
+-- retaining the full source in note_blocks for exact block retrieval.
+
+create or replace function public.qnotes_utf8_prefix(p_value text, p_max_bytes integer)
+returns text
+language plpgsql
+immutable
+set search_path = public, extensions
+as $$
+declare
+  result text := '';
+  character text;
+  character_index integer;
+begin
+  if p_value is null or p_max_bytes <= 0 then return ''; end if;
+  for character_index in 1..char_length(p_value)
+  loop
+    character := substr(p_value, character_index, 1);
+    exit when octet_length(result || character) > p_max_bytes;
+    result := result || character;
+  end loop;
+  return result;
+end;
+$$;
+
+create or replace function public.qnotes_embedding_text(p_value text)
+returns text
+language sql
+immutable
+set search_path = public, extensions
+as $$
+  select btrim(replace(replace(coalesce(p_value, ''), chr(13) || chr(10), chr(10)), chr(13), chr(10)));
+$$;
+
+create or replace function public.qnotes_embedding_prefix(
+  p_source_title text,
+  p_heading_path text
+) returns text
+language plpgsql
+immutable
+set search_path = public, extensions
+as $$
+declare
+  title text := public.qnotes_utf8_prefix(public.qnotes_embedding_text(p_source_title), 128);
+  heading text := public.qnotes_utf8_prefix(public.qnotes_embedding_text(p_heading_path), 256);
+begin
+  if title = '' then return heading; end if;
+  if heading = '' then return title; end if;
+  return title || chr(10) || chr(10) || public.qnotes_utf8_prefix(heading, 256 - octet_length(title) - 2);
+end;
+$$;
+
+create or replace function public.qnotes_embedding_input(
+  p_source_title text,
+  p_heading_path text,
+  p_content text
+) returns text
+language sql
+immutable
+set search_path = public, extensions
+as $$
+  select case
+    when public.qnotes_embedding_prefix(p_source_title, p_heading_path) = '' then public.qnotes_embedding_text(p_content)
+    when public.qnotes_embedding_text(p_content) = '' then public.qnotes_embedding_prefix(p_source_title, p_heading_path)
+    else public.qnotes_embedding_prefix(p_source_title, p_heading_path) || chr(10) || chr(10) || public.qnotes_embedding_text(p_content)
+  end;
+$$;
+
+create or replace function public.qnotes_embedding_input_hash(
+  p_source_title text,
+  p_heading_path text,
+  p_content text
+) returns text
+language sql
+immutable
+set search_path = public, extensions
+as $$
+  select encode(digest(
+    convert_to('v3', 'utf8') || decode('00', 'hex') ||
+      convert_to(public.qnotes_embedding_input(p_source_title, p_heading_path, p_content), 'utf8'),
+    'sha256'
+  ), 'hex');
+$$;
+
+-- The model limit is 512 tokens. The byte ceiling is the conservative
+-- tokenizer-independent boundary used by the Edge adapter, with 16 tokens
+-- reserved for provider-added special tokens.
+create or replace function public.qnotes_embedding_content_chunks(
+  p_source_title text,
+  p_heading_path text,
+  p_content text
+) returns table (chunk_index integer, content text)
+language plpgsql
+immutable
+set search_path = public, extensions
+as $$
+declare
+  normalized text := public.qnotes_embedding_text(p_content);
+  prefix text := public.qnotes_embedding_prefix(p_source_title, p_heading_path);
+  max_bytes integer := 496 - octet_length(prefix) - case when prefix = '' then 0 else 2 end;
+  lines text[];
+  line text;
+  current text := '';
+  candidate text;
+  remaining text;
+  part text;
+  number integer := 0;
+begin
+  if normalized = '' then return; end if;
+
+  select coalesce(array_agg(value order by ordinality), '{}')
+  into lines
+  from unnest(string_to_array(normalized, chr(10))) with ordinality as split(value, ordinality)
+  where btrim(value) <> '';
+
+  foreach line in array lines
+  loop
+    if octet_length(line) > max_bytes then
+      if current <> '' then
+        chunk_index := number;
+        content := current;
+        number := number + 1;
+        return next;
+        current := '';
+      end if;
+      remaining := line;
+      while remaining <> '' loop
+        part := public.qnotes_utf8_prefix(remaining, max_bytes);
+        if part = '' then raise exception 'embedding chunk budget cannot hold one UTF-8 character'; end if;
+        chunk_index := number;
+        content := part;
+        number := number + 1;
+        return next;
+        remaining := substr(remaining, char_length(part) + 1);
+      end loop;
+      continue;
+    end if;
+
+    candidate := case when current = '' then line else current || chr(10) || line end;
+    if current <> '' and octet_length(candidate) > max_bytes then
+      chunk_index := number;
+      content := current;
+      number := number + 1;
+      return next;
+      current := line;
+    else
+      current := candidate;
+    end if;
+  end loop;
+
+  if current <> '' then
+    chunk_index := number;
+    content := current;
+    return next;
+  end if;
+end;
+$$;
+
+create or replace function public.qnotes_expand_embedding_documents(p_documents jsonb)
+returns jsonb
+language plpgsql
+immutable
+set search_path = public, extensions
+as $$
+declare
+  item jsonb;
+  chunk record;
+  expanded jsonb := '[]'::jsonb;
+  source_key text;
+  source_title text;
+  heading_path text;
+  source_type text;
+  content text;
+  chunk_hash text;
+  chunk_position integer;
+begin
+  for item in select value from jsonb_array_elements(coalesce(p_documents, '[]'::jsonb))
+  loop
+    source_key := coalesce(item->>'sourceKey', 'document');
+    source_title := item->>'sourceTitle';
+    heading_path := item->>'headingPath';
+    source_type := coalesce(item->>'sourceType', 'note_chunk');
+    content := coalesce(item->>'content', '');
+    if octet_length(public.qnotes_embedding_input(source_title, heading_path, content)) <= 496 then
+      expanded := expanded || jsonb_build_array(item);
+      continue;
+    end if;
+
+    for chunk in select * from public.qnotes_embedding_content_chunks(source_title, heading_path, content)
+    loop
+      chunk_hash := encode(digest(chunk.content, 'sha256'), 'hex');
+      chunk_position := coalesce((item->>'position')::integer, 0) * 1000000 + chunk.chunk_index;
+      expanded := expanded || jsonb_build_array(jsonb_build_object(
+        'sourceType', source_type,
+        'sourceId', item->>'sourceId',
+        'sourceKey', source_key || ':chunk:' || chunk.chunk_index::text || '-' || left(chunk_hash, 16),
+        'sourceTitle', source_title,
+        'headingPath', heading_path,
+        'content', chunk.content,
+        'contentHash', chunk_hash,
+        'position', chunk_position
+      ));
+    end loop;
+  end loop;
+  return expanded;
+end;
+$$;
+
+-- Keep the existing sync contract and make the SQL fallback obey the same
+-- chunking boundary as the API parser.
+create or replace function public.qnotes_sync_note_content(
+  p_note_id uuid,
+  p_owner_id uuid,
+  p_blocks jsonb,
+  p_documents jsonb
+)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  item jsonb;
+  existing notesdb.search_documents%rowtype;
+  found_document boolean;
+  should_enqueue boolean;
+  document_id uuid;
+  source_type_value text;
+  source_key_value text;
+  source_title text;
+  heading_path text;
+  content text;
+  content_hash text;
+  position_value integer;
+begin
+  p_blocks := coalesce(p_blocks, '[]'::jsonb);
+  p_documents := coalesce(p_documents, '[]'::jsonb);
+
+  if jsonb_array_length(p_documents) = 0 then
+    select case
+      when n.content_plain <> '' then jsonb_build_array(jsonb_build_object(
+        'sourceType', 'note_chunk',
+        'sourceKey', 'note:full',
+        'sourceTitle', n.title,
+        'headingPath', n.title,
+        'content', n.content_plain,
+        'contentHash', encode(digest(n.content_plain, 'sha256'), 'hex'),
+        'position', 0
+      ))
+      else '[]'::jsonb
+    end
+    into p_documents
+    from notesdb.notes n
+    where n.id = p_note_id and n.owner_id = p_owner_id;
+    p_documents := coalesce(p_documents, '[]'::jsonb);
+  end if;
+  p_documents := public.qnotes_expand_embedding_documents(p_documents);
+
+  delete from notesdb.note_blocks b
+  where b.note_id = p_note_id
+    and not exists (
+      select 1 from jsonb_array_elements(p_blocks) x
+      where x->>'blockKey' = b.block_key
+    );
+
+  for item in select value from jsonb_array_elements(p_blocks)
+  loop
+    insert into notesdb.note_blocks (
+      owner_id, note_id, block_key, block_type, title, language, content,
+      position, copyable, content_hash
+    ) values (
+      p_owner_id,
+      p_note_id,
+      item->>'blockKey',
+      item->>'blockType',
+      item->>'title',
+      item->>'language',
+      item->>'content',
+      (item->>'position')::integer,
+      coalesce((item->>'copyable')::boolean, true),
+      item->>'contentHash'
+    )
+    on conflict (note_id, block_key) do update set
+      owner_id = excluded.owner_id,
+      block_type = excluded.block_type,
+      title = excluded.title,
+      language = excluded.language,
+      content = excluded.content,
+      position = excluded.position,
+      copyable = excluded.copyable,
+      content_hash = excluded.content_hash;
+  end loop;
+
+  delete from notesdb.search_documents d
+  where d.note_id = p_note_id
+    and d.source_type in ('note_chunk', 'copy_block', 'code_block')
+    and not exists (
+      select 1 from jsonb_array_elements(p_documents) x
+      where x->>'sourceType' = d.source_type and x->>'sourceKey' = d.source_key
+    );
+
+  for item in select value from jsonb_array_elements(p_documents)
+  loop
+    source_type_value := item->>'sourceType';
+    source_key_value := item->>'sourceKey';
+    source_title := coalesce(item->>'sourceTitle', '');
+    heading_path := item->>'headingPath';
+    content := coalesce(item->>'content', '');
+    content_hash := item->>'contentHash';
+    position_value := (item->>'position')::integer;
+    existing := null;
+    select * into existing
+    from notesdb.search_documents d
+    where d.note_id = p_note_id
+      and d.source_type = source_type_value
+      and d.source_key = source_key_value
+    for update;
+    found_document := found;
+    should_enqueue := not found_document
+      or (existing.embedding_status = 'failed'
+        and existing.content_hash = content_hash
+        and coalesce(existing.embedding_attempts, 0) > 0
+        and coalesce(existing.embedding_attempts, 0) < 5);
+
+    insert into notesdb.search_documents (
+      owner_id, note_id, source_type, source_id, source_key, source_title,
+      heading_path, content, content_hash, position, embedding_status
+    ) values (
+      p_owner_id,
+      p_note_id,
+      source_type_value,
+      nullif(item->>'sourceId', '')::uuid,
+      source_key_value,
+      source_title,
+      heading_path,
+      content,
+      content_hash,
+      position_value,
+      'pending'
+    )
+    on conflict (note_id, source_type, source_key) do update set
+      owner_id = excluded.owner_id,
+      source_id = excluded.source_id,
+      source_title = excluded.source_title,
+      heading_path = excluded.heading_path,
+      content = excluded.content,
+      content_hash = excluded.content_hash,
+      position = excluded.position,
+      embedding = case
+        when notesdb.search_documents.content_hash = excluded.content_hash
+          and notesdb.search_documents.embedding_status = 'ready'
+        then notesdb.search_documents.embedding
+        else null
+      end,
+      embedding_status = case
+        when notesdb.search_documents.content_hash = excluded.content_hash
+          and notesdb.search_documents.embedding_status = 'ready'
+        then 'ready'
+        else 'pending'
+      end,
+      embedding_error = case
+        when notesdb.search_documents.content_hash = excluded.content_hash
+          and notesdb.search_documents.embedding_status = 'ready'
+        then notesdb.search_documents.embedding_error
+        else null
+      end,
+      embedding_model = case
+        when notesdb.search_documents.content_hash = excluded.content_hash
+          and notesdb.search_documents.embedding_status = 'ready'
+        then notesdb.search_documents.embedding_model
+        else null
+      end,
+      embedding_model_version = case
+        when notesdb.search_documents.content_hash = excluded.content_hash
+          and notesdb.search_documents.embedding_status = 'ready'
+        then notesdb.search_documents.embedding_model_version
+        else null
+      end
+    returning id into document_id;
+
+    if should_enqueue then
+      perform public.qnotes_enqueue_embedding(document_id, p_owner_id, content_hash);
+    end if;
+  end loop;
+
+  perform public.qnotes_sync_note_metadata(p_note_id, p_owner_id);
+end;
+$$;
+
+-- Reindex only a bounded batch of documents whose input generation is stale.
+-- The trigger computes the current hash and enqueues the exact CAS identity.
+create or replace function public.qnotes_requeue_embedding_generation(p_limit integer default 100)
+returns integer
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  document_record record;
+  queued_count integer := 0;
+begin
+  if p_limit is null or p_limit < 1 or p_limit > 1000 then
+    raise exception using errcode = '22023', message = 'embedding generation limit must be between 1 and 1000';
+  end if;
+
+  for document_record in
+    select d.id
+    from notesdb.search_documents d
+    join notesdb.notes n on n.id = d.note_id and n.owner_id = d.owner_id and n.deleted_at is null
+    where d.embedding_input_hash is distinct from public.qnotes_embedding_input_hash(d.source_title, d.heading_path, d.content)
+    order by d.id
+    limit p_limit
+    for update of d skip locked
+  loop
+    update notesdb.search_documents
+    set embedding = null,
+        embedding_status = 'pending',
+        embedding_error = null,
+        embedding_attempts = 0,
+        embedding_mode = 'provider',
+        embedding_queued_at = timezone('utc', now())
+    where id = document_record.id;
+    queued_count := queued_count + 1;
+  end loop;
+  return queued_count;
+end;
+$$;
+
+revoke all on function public.qnotes_utf8_prefix(text, integer) from public, anon, authenticated;
+revoke all on function public.qnotes_embedding_text(text) from public, anon, authenticated;
+revoke all on function public.qnotes_embedding_prefix(text, text) from public, anon, authenticated;
+revoke all on function public.qnotes_embedding_content_chunks(text, text, text) from public, anon, authenticated;
+revoke all on function public.qnotes_expand_embedding_documents(jsonb) from public, anon, authenticated;
+revoke all on function public.qnotes_requeue_embedding_generation(integer) from public, anon, authenticated;
+grant execute on function public.qnotes_requeue_embedding_generation(integer) to service_role;
+revoke all on function public.qnotes_sync_note_content(uuid, uuid, jsonb, jsonb) from public, anon, authenticated;
+grant execute on function public.qnotes_sync_note_content(uuid, uuid, jsonb, jsonb) to service_role;
