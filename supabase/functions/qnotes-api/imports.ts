@@ -5,6 +5,7 @@ import { ApiError } from '../_shared/errors.ts';
 import { enforceRequestBudget } from '../_shared/request-limits.ts';
 import { workspaceMaxBytes } from './exports.ts';
 import { createNoteMutation } from './notes.ts';
+import { requireAccountWide } from '../_shared/notebook-access.ts';
 import {
   inspectWorkspaceArchive,
   safeImportFileName,
@@ -287,6 +288,7 @@ function summary(inspection: WorkspaceArchiveInspection, archiveBytes: number, c
 export async function inspectWorkspaceImport(context: Context): Promise<Response> {
   const auth = authFromContext(context);
   requireScope(auth, 'notes:read', 'notes:write', 'attachments:read', 'attachments:write');
+  requireAccountWide(auth, 'Workspace import requires an account-wide token access grant.');
   const confirmed = context.req.query('confirm') === 'true';
   if (context.req.query('dryRun') === 'false' && !confirmed) throw new ApiError(409, 'VALIDATION_ERROR', 'Workspace restore requires explicit confirm=true after a successful dry run.');
   await enforceRequestBudget('workspace-import', `user:${auth.userId}`, confirmed ? 2 : 1);

@@ -1,5 +1,6 @@
 import type {
   ApiTokenScope,
+  ApiTokenAccess,
   AppendNoteInput,
   CreateApiTokenInput,
   CreatePublicShareInput,
@@ -288,7 +289,28 @@ export function validateTokenInput(value: unknown): CreateApiTokenInput {
     if (!scopes.includes(scope as ApiTokenScope)) scopes.push(scope as ApiTokenScope);
   }
   if (value.expiresAt !== null && value.expiresAt !== undefined && (typeof value.expiresAt !== 'string' || Number.isNaN(Date.parse(value.expiresAt)))) throw new QNotesValidationError('expiresAt must be an ISO date or null.');
-  return { name: value.name.trim(), scopes, expiresAt: value.expiresAt === undefined ? null : value.expiresAt as string | null };
+  const rawAccess = value.access === undefined
+    ? (value.notebookIds !== undefined || value.allowUnfiled !== undefined
+      ? { mode: 'notebooks', notebookIds: value.notebookIds, allowUnfiled: value.allowUnfiled }
+      : { mode: 'account' })
+    : value.access;
+  if (!isRecord(rawAccess) || (rawAccess.mode !== 'account' && rawAccess.mode !== 'notebooks')) throw new QNotesValidationError('access.mode must be account or notebooks.');
+  if (rawAccess.mode === 'account') {
+    if (rawAccess.notebookIds !== undefined && (!Array.isArray(rawAccess.notebookIds) || rawAccess.notebookIds.length > 0)) throw new QNotesValidationError('Account-wide access cannot include notebook IDs.');
+    if (rawAccess.allowUnfiled !== undefined && rawAccess.allowUnfiled !== true) throw new QNotesValidationError('Account-wide access must include unfiled notes.');
+    const access: ApiTokenAccess = { mode: 'account', notebookIds: [], allowUnfiled: true };
+    return { name: value.name.trim(), scopes, access, expiresAt: value.expiresAt === undefined ? null : value.expiresAt as string | null };
+  }
+  if (!Array.isArray(rawAccess.notebookIds) || rawAccess.notebookIds.length > 100) throw new QNotesValidationError('Notebook access must contain at most 100 UUIDs.');
+  const notebookIds: UUID[] = [];
+  for (const notebookId of rawAccess.notebookIds) {
+    const normalized = requireUUID(notebookId, 'notebookId');
+    if (!notebookIds.includes(normalized)) notebookIds.push(normalized);
+  }
+  const allowUnfiled = rawAccess.allowUnfiled === undefined ? false : rawAccess.allowUnfiled;
+  if (typeof allowUnfiled !== 'boolean') throw new QNotesValidationError('access.allowUnfiled must be a boolean.');
+  const access: ApiTokenAccess = { mode: 'notebooks', notebookIds, allowUnfiled };
+  return { name: value.name.trim(), scopes, access, expiresAt: value.expiresAt === undefined ? null : value.expiresAt as string | null };
 }
 
 const ISO_DATE_TIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;

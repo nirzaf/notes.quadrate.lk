@@ -1,4 +1,4 @@
-import { refreshNoteCollections, refreshNoteViewsForNotes } from './note-query-keys.ts';
+import { noteQueryKeys, refreshNoteCollections, refreshNoteViewsForNotes } from './note-query-keys.ts';
 
 export interface SyncRecoveryChange {
   noteId: string;
@@ -26,24 +26,39 @@ interface SyncRecoveryOptions {
   readSyncCursor: (userId: string) => Promise<string | null>;
   writeSyncCursor: (cursor: string | null, userId: string) => Promise<void>;
   removeRememberedNote: (noteId: string, userId: string) => Promise<void>;
+  clearRememberedNotes?: (userId: string) => Promise<void>;
   generation: number;
   getGeneration: () => number;
   signal: AbortSignal;
 }
 
-export async function runSyncRecovery({ userId, queryClient, api, readSyncCursor, writeSyncCursor, removeRememberedNote, generation, getGeneration, signal }: SyncRecoveryOptions): Promise<void> {
+export async function runSyncRecovery({ userId, queryClient, api, readSyncCursor, writeSyncCursor, removeRememberedNote, clearRememberedNotes, generation, getGeneration, signal }: SyncRecoveryOptions): Promise<void> {
   const isStale = () => signal.aborted || generation !== getGeneration();
   if (isStale()) return;
 
   let cursor = await readSyncCursor(userId);
-  const initialCursor = cursor;
+  let initialCursor = cursor;
+  let reset = false;
   const changedNoteIds = new Set<string>();
   const deletedNoteIds = new Set<string>();
   let hasMore = true;
 
   while (hasMore) {
     if (isStale()) return;
-    const page = await api.sync(cursor ?? undefined, undefined, { signal });
+    let page: SyncRecoveryPage;
+    try {
+      page = await api.sync(cursor ?? undefined, undefined, { signal });
+    } catch (error: unknown) {
+      if (cursor === null || !isInvalidCursorError(error)) throw error;
+      cursor = null;
+      initialCursor = null;
+      reset = true;
+      changedNoteIds.clear();
+      deletedNoteIds.clear();
+      await writeSyncCursor(null, userId);
+      await clearRememberedNotes?.(userId);
+      continue;
+    }
     if (isStale()) return;
     for (const change of page.changes) {
       changedNoteIds.add(change.noteId);
@@ -66,4 +81,11 @@ export async function runSyncRecovery({ userId, queryClient, api, readSyncCursor
   } else if (initialCursor === null) {
     await refreshNoteCollections(queryClient, userId);
   }
+  if (reset) await queryClient.invalidateQueries({ queryKey: noteQueryKeys.forUser(userId).root });
+}
+
+function isInvalidCursorError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const value = error as { status?: unknown; code?: unknown; message?: unknown };
+  return value.status === 422 && value.code === 'VALIDATION_ERROR' && value.message === 'cursor is invalid or expired.';
 }

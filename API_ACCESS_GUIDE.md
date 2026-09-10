@@ -43,9 +43,10 @@ Create a token in the web app:
 1. Sign in to [QNotes](https://notes.quadrate.lk/).
 2. Open [Integrations](https://notes.quadrate.lk/settings/integrations) (the legacy `/settings/tokens` route remains available).
 3. Choose the read-only profile unless the client must create public links or write notes, then select the smallest profile and a real expiry. The public-sharing profile requires `notes:read`, `search:read`, and `shares:write`.
-4. Create the token and copy the complete `qnt_...` value immediately.
+4. Select **Selected notebooks** and choose the notebooks the token may use. Enable **Unfiled notes** separately when needed. Choose **All notebooks** only when account-wide access is intentional.
+5. Create the token and copy the complete `qnt_...` value immediately.
 
-The full token is returned only once and is held only in the Integrations page’s transient state; the settings page shows only its prefix afterward. The guided form offers 7-day, 30-day, 90-day, 1-year, and no-expiry choices and sends the corresponding ISO `expiresAt` (or `null`) to the existing token API. Tokens remain revocable.
+The full token is returned only once and is held only in the Integrations page’s transient state; the settings page shows only its prefix afterward. The guided form offers 7-day, 30-day, 90-day, 1-year, and no-expiry choices and sends the corresponding ISO `expiresAt` (or `null`) to the existing token API. Tokens remain revocable. Every token has an explicit access mode. Existing tokens are recorded as account-wide during the forward migration so an empty notebook-grant list never changes an older token into a deny-all token.
 
 ### Scopes
 
@@ -58,7 +59,7 @@ The full token is returned only once and is held only in the Integrations page�
 | `attachments:read` | List attachments and create 60-second download URLs |
 | `attachments:write` | Request signed uploads, finalize uploads, and delete attachments |
 
-Workspace ZIP export requires both `notes:read` and `attachments:read`.
+Workspace ZIP export requires both `notes:read` and `attachments:read`. A notebook-scoped token receives only its granted notebooks and permitted unfiled notes. Workspace import requires an account-wide token because an archive can create new notebook identities; a scoped token fails closed.
 
 For a read-only text-search assistant, start with:
 
@@ -79,10 +80,10 @@ curl -fsS -X POST \
   -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
   -H 'Content-Type: application/json' \
   "$QNOTES_URL/api/tokens" \
-  --data '{"name":"Backup script","scopes":["notes:read","attachments:read"],"expiresAt":null}'
+  --data '{"name":"Backup script","scopes":["notes:read","attachments:read"],"access":{"mode":"notebooks","notebookIds":["NOTEBOOK_UUID"],"allowUnfiled":false},"expiresAt":null}'
 ```
 
-Use `GET /api/tokens` to list token metadata and `DELETE /api/tokens/:tokenId` to revoke a token. Listing returns prefixes and metadata, never full token values.
+Use `GET /api/tokens` to list token metadata and `DELETE /api/tokens/:tokenId` to revoke a token. Listing returns prefixes, scopes, and the access mode plus notebook IDs, never full token values. The account-wide request shape is `"access":{"mode":"account","notebookIds":[],"allowUnfiled":true}`. Older clients that omit `access` remain account-wide for compatibility and should be reissued with an explicit access object.
 
 ## Public note sharing
 
@@ -312,7 +313,7 @@ curl -fsS --get \
   --data 'before=1' --data 'after=1' --data 'maxTokens=1800'
 ```
 
-The context response contains `noteId`, `noteVersion`, `documentId`, stable URI, title, heading path, bounded `content`, `previous` and `next` neighboring chunks, `updatedAt`, `sourceType`, `sourceId`, `sourceKey`, `sourceTitle`, and attachment `pageNumber` when applicable. It also includes an explicit `truncated` flag, an approximate-token `tokenBudget`, the center `sourceHash`, and additive `previousSources`/`nextSources` entries with independent document IDs, source keys, hashes, versions, and attachment/page provenance. When `truncated` is true for the center content, follow `continuation.cursor` by passing it as `continuation` on the next context request; the cursor is bound to the document, note version, and source hash and must not be reused after an edit. The legacy string arrays remain available for compatibility. The route enforces ownership, excludes deleted notes, and keeps neighbors within the same note source; attachment neighbors are restricted to the same attachment. If the owning note changes during the read, the route returns a retriable `NOTE_VERSION_CONFLICT` instead of claiming that the context is internally consistent.
+The context response contains `noteId`, `noteVersion`, `documentId`, stable URI, title, heading path, bounded `content`, `previous` and `next` neighboring chunks, `updatedAt`, `sourceType`, `sourceId`, `sourceKey`, `sourceTitle`, and attachment `pageNumber` when applicable. It also includes an explicit `truncated` flag, an approximate-token `tokenBudget`, the center `sourceHash`, and additive `previousSources`/`nextSources` entries with independent document IDs, source keys, hashes, versions, and attachment/page provenance. When `truncated` is true for the center content, follow `continuation.cursor` by passing it as `continuation` on the next context request; the cursor is bound to the document, note version, source hash, token principal, and notebook-policy revision and must not be reused after an edit or access-grant change. The legacy string arrays remain available for compatibility. The route enforces ownership and notebook grants, excludes deleted notes, and keeps neighbors within the same note source; attachment neighbors are restricted to the same attachment. If the owning note changes during the read, the route returns a retriable `NOTE_VERSION_CONFLICT` instead of claiming that the context is internally consistent.
 
 ### Create, update, and organize notes
 
@@ -428,7 +429,7 @@ curl -fsS \
   "$QNOTES_URL/api/notes?limit=500&cursor=NEXT_CURSOR"
 ```
 
-`GET /api/sync` returns lightweight note metadata changes rather than note bodies. Its default page size is 200 and maximum is 500. Persist the cursor in the calling application and continue while `hasMore` is true:
+`GET /api/sync` returns lightweight note metadata changes rather than note bodies. Its default page size is 200 and maximum is 500. Persist the cursor in the calling application and continue while `hasMore` is true. Personal-token cursors are bound to the token and its current notebook policy; a grant revocation or notebook move can return `422 VALIDATION_ERROR` with `cursor is invalid or expired.`, after which the client must restart without a cursor. The browser performs that reset online and clears remembered note summaries while retaining drafts; an offline device cannot be remotely purged.
 
 ```bash
 curl -fsS \

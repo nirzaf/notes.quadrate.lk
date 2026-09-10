@@ -83,6 +83,12 @@ export type ApiTokenScope =
   | 'attachments:read'
   | 'attachments:write';
 
+export interface ApiTokenAccess {
+  mode: 'account' | 'notebooks';
+  notebookIds: UUID[];
+  allowUnfiled: boolean;
+}
+
 export interface Note {
   id: UUID;
   slug: string;
@@ -271,6 +277,8 @@ export interface SearchContextContinuation {
   noteVersion: number;
   sourceHash: string;
   nextOffset: number;
+  principal?: string;
+  policyRevision?: number;
 }
 
 export interface SearchContext {
@@ -379,6 +387,7 @@ export interface ApiTokenMetadata {
   name: string;
   tokenPrefix: string;
   scopes: ApiTokenScope[];
+  access: ApiTokenAccess;
   expiresAt: ISODateTime | null;
   lastUsedAt: ISODateTime | null;
   revokedAt: ISODateTime | null;
@@ -388,6 +397,7 @@ export interface ApiTokenMetadata {
 export interface CreateApiTokenInput {
   name: string;
   scopes: ApiTokenScope[];
+  access: ApiTokenAccess;
   expiresAt: ISODateTime | null;
 }
 

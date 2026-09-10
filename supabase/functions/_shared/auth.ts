@@ -1,4 +1,4 @@
-import type { ApiTokenScope } from '@qnotes/shared';
+import { isUUID, type ApiTokenScope } from '@qnotes/shared';
 import type { Context } from 'hono';
 import { appDbClient, serviceClient } from './database.ts';
 import { ApiError } from './errors.ts';
@@ -10,6 +10,26 @@ export interface AuthContext {
   authKind: 'jwt' | 'personal';
   scopes: ApiTokenScope[] | null;
   tokenId?: string;
+  accessMode: 'account' | 'notebooks';
+  notebookIds: string[];
+  allowUnfiled: boolean;
+  policyRevision: number;
+}
+
+function policyFromRow(value: unknown): Pick<AuthContext, 'accessMode' | 'notebookIds' | 'allowUnfiled' | 'policyRevision'> {
+  const row = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  const accessMode = row.access_mode;
+  const policyRevision = Number(row.policy_revision);
+  const notebookIds = Array.isArray(row.notebook_ids) ? row.notebook_ids.map(String) : [];
+  if ((accessMode !== 'account' && accessMode !== 'notebooks') || !Number.isSafeInteger(policyRevision) || policyRevision < 1 || notebookIds.some((id) => !isUUID(id))) {
+    throw new ApiError(503, 'AUTH_POLICY_UNAVAILABLE', 'The token access policy is unavailable.');
+  }
+  return {
+    accessMode,
+    notebookIds: accessMode === 'account' ? [] : notebookIds,
+    allowUnfiled: accessMode === 'account' ? true : row.allow_unfiled === true,
+    policyRevision,
+  };
 }
 
 export async function authenticateRequest(request: Request): Promise<AuthContext> {
@@ -35,11 +55,15 @@ export async function authenticateRequest(request: Request): Promise<AuthContext
         // Last-used telemetry is best effort and must not block authentication.
       }
     }
-    return { userId: data.owner_id, authKind: 'personal', scopes: data.scopes as ApiTokenScope[], tokenId: data.id };
+    const policy = await serviceClient.rpc('qnotes_api_token_access', { p_token_id: data.id, p_owner_id: data.owner_id });
+    if (policy.error) throw new ApiError(503, 'AUTH_POLICY_UNAVAILABLE', 'The token access policy is unavailable.');
+    const policyRow = Array.isArray(policy.data) ? policy.data[0] : policy.data;
+    if (!policyRow) throw new ApiError(401, 'INVALID_TOKEN', 'The personal token is invalid.');
+    return { userId: data.owner_id, authKind: 'personal', scopes: data.scopes as ApiTokenScope[], tokenId: data.id, ...policyFromRow(policyRow) };
   }
   const { data, error } = await serviceClient.auth.getUser(credential);
   if (error || !data.user) throw new ApiError(401, 'INVALID_TOKEN', 'The access token is invalid.');
-  return { userId: data.user.id, authKind: 'jwt', scopes: null };
+  return { userId: data.user.id, authKind: 'jwt', scopes: null, accessMode: 'account', notebookIds: [], allowUnfiled: true, policyRevision: 0 };
 }
 
 export function authFromContext(context: Context): AuthContext {

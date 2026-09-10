@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { QNotesClient } from '@qnotes/api-client';
-import type { ApiTokenMetadata, ApiTokenScope, HermesVaultMcpProfile } from '@qnotes/shared';
+import type { ApiTokenMetadata, ApiTokenScope, HermesVaultMcpProfile, Notebook } from '@qnotes/shared';
 import { buildHermesMcpConfig } from '@qnotes/shared';
 import { api } from '../api';
 import { env } from '../env';
@@ -79,10 +79,14 @@ function expiryLabel(value: string | null): string {
 
 export function TokenManager(): JSX.Element {
   const [tokens, setTokens] = useState<ApiTokenMetadata[]>([]);
+  const [notebooks, setNotebooks] = useState<Notebook[]>([]);
   const [name, setName] = useState('');
   const [profile, setProfile] = useState<IntegrationProfile>('read');
   const [vaultProfile, setVaultProfile] = useState<HermesVaultMcpProfile>('none');
   const [extraScopes, setExtraScopes] = useState<ApiTokenScope[]>([]);
+  const [accessMode, setAccessMode] = useState<'account' | 'notebooks'>('account');
+  const [selectedNotebookIds, setSelectedNotebookIds] = useState<string[]>([]);
+  const [allowUnfiled, setAllowUnfiled] = useState(false);
   const [expiry, setExpiry] = useState<ExpiryChoice>('30d');
   const [issued, setIssued] = useState<IssuedToken | null>(null);
   const [creating, setCreating] = useState(false);
@@ -107,12 +111,16 @@ export function TokenManager(): JSX.Element {
   }, [toast, userId]);
   useEffect(() => {
     setTokens([]); setIssued(null); setVerification('idle'); setCreating(false);
+    setNotebooks([]); setAccessMode('account'); setSelectedNotebookIds([]); setAllowUnfiled(false);
     if (!userId) return undefined;
     const requestUserId = userId;
     const controller = new AbortController();
     void api.listTokens({ signal: controller.signal }).then((next) => {
       if (mountedRef.current && userIdRef.current === requestUserId) setTokens(next);
     }).catch((error: unknown) => { if (error instanceof DOMException && error.name === 'AbortError') return; if (mountedRef.current && userIdRef.current === requestUserId) toast('Unable to load tokens.', 'error'); });
+    void api.listNotebooks({ signal: controller.signal }).then((next) => {
+      if (mountedRef.current && userIdRef.current === requestUserId) setNotebooks(next.items);
+    }).catch((error: unknown) => { if (error instanceof DOMException && error.name === 'AbortError') return; if (mountedRef.current && userIdRef.current === requestUserId) toast('Unable to load notebooks.', 'error'); });
     return () => controller.abort();
   }, [toast, userId]);
 
@@ -139,7 +147,10 @@ export function TokenManager(): JSX.Element {
     setCreating(true);
     setVerification('idle');
     try {
-      const result = await api.createToken({ name: name.trim(), scopes, expiresAt: selectedExpiry(expiry) });
+      const access = accessMode === 'account'
+        ? { mode: 'account' as const, notebookIds: [], allowUnfiled: true }
+        : { mode: 'notebooks' as const, notebookIds: selectedNotebookIds, allowUnfiled };
+      const result = await api.createToken({ name: name.trim(), scopes, access, expiresAt: selectedExpiry(expiry) });
       if (!mountedRef.current || userIdRef.current !== requestUserId) return;
       const deviceId = profile === 'write' ? crypto.randomUUID() : undefined;
       setIssued({ token: result.token, metadata: result.metadata, profile, vaultProfile, ...(deviceId ? { deviceId } : {}) });
@@ -204,8 +215,20 @@ export function TokenManager(): JSX.Element {
             })}
           </div>
         </fieldset>
+        <fieldset className="q-integration-fieldset">
+          <legend className="q-label">Notebook access</legend>
+          <div className="q-integration-profiles">
+            <label className="q-integration-profile"><input type="radio" name="qnotes-access-mode" checked={accessMode === 'notebooks'} onChange={() => setAccessMode('notebooks')} /><span><strong>Selected notebooks</strong><small>Limit this token to the notebooks selected below and optional unfiled notes.</small></span></label>
+            <label className="q-integration-profile"><input type="radio" name="qnotes-access-mode" checked={accessMode === 'account'} onChange={() => setAccessMode('account')} /><span><strong>All notebooks</strong><small>Explicit account-wide access, including unfiled notes.</small></span></label>
+          </div>
+          {accessMode === 'notebooks' && <div className="q-integration-scopes">
+            {notebooks.map((notebook) => <label className="q-integration-scope" key={notebook.id}><input type="checkbox" checked={selectedNotebookIds.includes(notebook.id)} disabled={selectedNotebookIds.length >= 100 && !selectedNotebookIds.includes(notebook.id)} onChange={(event) => setSelectedNotebookIds((current) => event.target.checked ? [...current, notebook.id] : current.filter((id) => id !== notebook.id))} /><span><strong>{notebook.name}</strong><small>Allow note, search, block, attachment, export, and share access within this notebook when the matching scope is granted.</small></span></label>)}
+            <label className="q-integration-scope"><input type="checkbox" checked={allowUnfiled} onChange={(event) => setAllowUnfiled(event.target.checked)} /><span><strong>Unfiled notes</strong><small>Allow access to notes without a notebook.</small></span></label>
+            {!notebooks.length && <span className="q-field-help">No notebooks are available yet. Select unfiled notes or use explicit account-wide access.</span>}
+          </div>}
+        </fieldset>
         <label className="q-field"><span className="q-label">Token expiry</span><select className="q-input" value={expiry} onChange={(event) => setExpiry(event.target.value as ExpiryChoice)}>{expiryChoices.map((choice) => <option value={choice.value} key={choice.value}>{choice.label}</option>)}</select><span className="q-field-help">Choose “Does not expire” only when a long-lived token is intentional.</span></label>
-        <Button type="submit" disabled={creating || !name.trim()}>{creating ? 'Creating token…' : `Create ${profile === 'write' ? 'writing' : profile === 'share' ? 'sharing' : 'read-only'} token`}</Button>
+        <Button type="submit" disabled={creating || !name.trim() || (accessMode === 'notebooks' && !allowUnfiled && !selectedNotebookIds.length)}>{creating ? 'Creating token…' : `Create ${profile === 'write' ? 'writing' : profile === 'share' ? 'sharing' : 'read-only'} token`}</Button>
       </form>
       {issued && <div className="q-token-issued" aria-live="polite">
         <div className="q-token-issued-heading"><strong>Token created successfully</strong><span className="q-small">{issued.metadata.name} · {expiryLabel(issued.metadata.expiresAt)}</span></div>
@@ -221,7 +244,7 @@ export function TokenManager(): JSX.Element {
         </>}
       </div>}
     </section>
-    <section className="q-card q-card-pad q-panel"><h3>Existing tokens</h3><div className="q-token-list">{tokens.length ? tokens.map((token) => <div className="q-token-row" key={token.id}><div><div className="q-token-name">{token.name}</div><div className="q-small">{token.tokenPrefix} · {token.scopes.join(', ')} · {expiryLabel(token.expiresAt)}{token.revokedAt ? ' · revoked' : ''}</div></div>{!token.revokedAt && <Button variant="ghost" size="sm" onClick={() => void revoke(token.id)}>Revoke</Button>}</div>) : <p>No personal tokens yet.</p>}</div></section>
+    <section className="q-card q-card-pad q-panel"><h3>Existing tokens</h3><div className="q-token-list">{tokens.length ? tokens.map((token) => <div className="q-token-row" key={token.id}><div><div className="q-token-name">{token.name}</div><div className="q-small">{token.tokenPrefix} · {token.access.mode === 'account' ? 'all notebooks' : `${token.access.notebookIds.length} notebook${token.access.notebookIds.length === 1 ? '' : 's'}${token.access.allowUnfiled ? ' + unfiled' : ''}`} · {token.scopes.join(', ')} · {expiryLabel(token.expiresAt)}{token.revokedAt ? ' · revoked' : ''}</div></div>{!token.revokedAt && <Button variant="ghost" size="sm" onClick={() => void revoke(token.id)}>Revoke</Button>}</div>) : <p>No personal tokens yet.</p>}</div></section>
     <section className="q-card q-card-pad q-panel"><h3>Finish setup in Hermes</h3><p>Build this repository’s MCP server, put the selected Notes token in Hermes’ environment-backed secret file, paste the generated entry into <code>~/.hermes/config.yaml</code>, then run <code>hermes mcp test qnotes_&lt;profile&gt;</code>. The test result is the Hermes verification; an API check in this browser is only token/API verification.</p><p>If you selected a Vault profile, create a separate qvt Vault agent token in Agent Vault and provide it as <code>QVAULT_TOKEN</code> in the same Hermes secret environment. The generated configuration supplies only the placeholder and profile name; it never contains the raw Vault token. A share token must retain <code>shares:write</code> and is used as the caller-owned credential for share management. For a writing token, retain the generated <code>QNOTES_MCP_DEVICE_ID</code> value across process restarts. Pass the same <code>mutationId</code> when retrying an ambiguous capture, append, or update. Omitting it remains supported, but each call is treated as a new operation.</p></section>
     <section className="q-card q-card-pad q-panel"><h3>QNotes for Hermes companion</h3><p>The companion plugin adds offline-safe <code>/qnotes</code> guidance, <code>/qnotes-status</code>, and the explicitly loadable <code>qnotes:workflow</code> skill. It uses this repository’s existing stdio MCP server; the raw MCP setup above remains supported.</p><ol><li>Build a trusted QNotes checkout with <code>pnpm install --frozen-lockfile</code> and <code>pnpm run build</code>.</li><li>Use the documented exporter to generate a reviewable fragment with placeholders only; merge only its intended MCP and plugin settings into your selected Hermes profile.</li><li>Install and enable the plugin from a reviewed, pinned commit after it is published, then restart Hermes and run <code>/qnotes-status</code>.</li></ol><p className="q-field-help">Vault access remains independently selected and defaults to none. The plugin never configures <code>QVAULT_URL</code>, retrieves secrets automatically, or deploys QNotes. Disabling the plugin, removing the MCP entry, deleting local credential inputs, and revoking qnt/qvt tokens are separate operator actions.</p></section>
   </div>;

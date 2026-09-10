@@ -3,6 +3,7 @@ import { validateLimit } from '@qnotes/shared';
 import { authFromContext, requireScope } from '../_shared/auth.ts';
 import { ApiError } from '../_shared/errors.ts';
 import { appDbClient, decodeCursor, encodeCursor } from '../_shared/database.ts';
+import { applyNotebookAccess, authPrincipal, requireCursorPolicy } from '../_shared/notebook-access.ts';
 
 export async function syncNotes(context: Context): Promise<Response> {
   const auth = authFromContext(context);
@@ -10,8 +11,10 @@ export async function syncNotes(context: Context): Promise<Response> {
   const params = context.req.query();
   const limit = validateLimit(params.limit, 500, 200);
   let query = appDbClient.from('notes').select('id, slug, title, tags, notebook_id, version, updated_at, deleted_at').eq('owner_id', auth.userId);
+  query = applyNotebookAccess(query, auth);
   if (params.cursor) {
     const cursor = decodeCursor(params.cursor);
+    requireCursorPolicy(auth, cursor.principal, cursor.policyRevision);
     query = query.or(`updated_at.gt.${cursor.updatedAt},and(updated_at.eq.${cursor.updatedAt},id.gt.${cursor.id})`);
   }
   const { data, error } = await query.order('updated_at', { ascending: true }).order('id', { ascending: true }).limit(limit + 1);
@@ -29,5 +32,5 @@ export async function syncNotes(context: Context): Promise<Response> {
     updatedAt: String(row.updated_at),
     deletedAt: row.deleted_at ? String(row.deleted_at) : null,
   }));
-  return context.json({ data: { changes, nextCursor: last ? encodeCursor({ updatedAt: String(last.updated_at), id: String(last.id) }) : params.cursor ?? null, hasMore: rows.length > limit } });
+  return context.json({ data: { changes, nextCursor: last ? encodeCursor({ updatedAt: String(last.updated_at), id: String(last.id), principal: authPrincipal(auth), policyRevision: auth.policyRevision }) : params.cursor ?? null, hasMore: rows.length > limit } });
 }

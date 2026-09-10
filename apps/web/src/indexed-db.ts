@@ -42,6 +42,9 @@ export async function removeRememberedNote(noteId: string, userId: string): Prom
   await getAccountDraftStore(userId).deleteRecent(noteId);
 }
 
+export async function clearRememberedNotes(userId: string): Promise<void> {
+  await getAccountDraftStore(userId).clearRecent();
+}
 
 export async function readSyncCursor(userId: string): Promise<string | null> {
   return getAccountDraftStore(userId).getCursor();

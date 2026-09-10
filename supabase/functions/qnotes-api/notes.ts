@@ -4,6 +4,7 @@ import { MarkdownParseError, parseMarkdown } from '@qnotes/markdown';
 import { authFromContext, requireScope } from '../_shared/auth.ts';
 import { ApiError } from '../_shared/errors.ts';
 import { appDbClient, assertSupabase, noteFromRow, requestHash, serviceClient, summaryFromRow } from '../_shared/database.ts';
+import { applyNotebookAccess, assertNotebookAccess, assertNoteAccess, assertUnfiledAccess, authPrincipal, requireCursorPolicy } from '../_shared/notebook-access.ts';
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -105,6 +106,12 @@ export async function findOwnedNote(ownerId: string, noteRef: string, includeDel
   return noteFromRow(record(data));
 }
 
+export async function findAuthorizedNote(auth: ReturnType<typeof authFromContext>, noteRef: string, includeDeleted = false): Promise<ReturnType<typeof noteFromRow>> {
+  const note = await findOwnedNote(auth.userId, noteRef, includeDeleted);
+  assertNoteAccess(auth, note.notebookId);
+  return note;
+}
+
 export async function listNotes(context: Context): Promise<Response> {
   const auth = authFromContext(context);
   requireScope(auth, 'notes:read');
@@ -117,6 +124,7 @@ export async function listNotes(context: Context): Promise<Response> {
   }
   const { limit, includeDeleted, deletedOnly, unfiled, notebookId, tag } = query;
   let builder = appDbClient.from('notes').select('id, slug, title, content_plain, tags, notebook_id, version, created_at, updated_at, deleted_at').eq('owner_id', auth.userId);
+  builder = applyNotebookAccess(builder, auth);
   if (deletedOnly) builder = builder.not('deleted_at', 'is', null);
   else if (!includeDeleted) builder = builder.is('deleted_at', null);
   if (notebookId) builder = builder.eq('notebook_id', notebookId);
@@ -124,6 +132,7 @@ export async function listNotes(context: Context): Promise<Response> {
   if (tag) builder = builder.contains('tags', [tag]);
   if (query.cursor) {
     const cursor = (await import('../_shared/database.ts')).decodeCursor(query.cursor);
+    requireCursorPolicy(auth, cursor.principal, cursor.policyRevision);
     builder = builder.or(`updated_at.lt.${cursor.updatedAt},and(updated_at.eq.${cursor.updatedAt},id.lt.${cursor.id})`);
   }
   const { data, error } = await builder.order('updated_at', { ascending: false }).order('id', { ascending: false }).limit(limit + 1);
@@ -132,14 +141,14 @@ export async function listNotes(context: Context): Promise<Response> {
   const pageRows = rows.slice(0, limit);
   const items = pageRows.map(summaryFromRow);
   const last = pageRows.at(-1);
-  const nextCursor = rows.length > limit && last ? (await import('../_shared/database.ts')).encodeCursor({ updatedAt: String(last.updated_at), id: String(last.id) }) : null;
+  const nextCursor = rows.length > limit && last ? (await import('../_shared/database.ts')).encodeCursor({ updatedAt: String(last.updated_at), id: String(last.id), principal: authPrincipal(auth), policyRevision: auth.policyRevision }) : null;
   return dataBody(context, { items, nextCursor });
 }
 
 export async function getNote(context: Context): Promise<Response> {
   const auth = authFromContext(context);
   requireScope(auth, 'notes:read');
-  return dataBody(context, await findOwnedNote(auth.userId, context.req.param('noteRef') ?? '', context.req.query('includeDeleted') === 'true'));
+  return dataBody(context, await findAuthorizedNote(auth, context.req.param('noteRef') ?? '', context.req.query('includeDeleted') === 'true'));
 }
 
 export async function createNoteMutation(ownerId: string, input: CreateNoteInput, noteId: string): Promise<NoteResult> {
@@ -168,7 +177,10 @@ export async function createNote(context: Context): Promise<Response> {
   const auth = authFromContext(context);
   requireScope(auth, 'notes:write');
   const input = validateCreateNoteInput(await context.req.json());
+  if (input.notebookId) assertNotebookAccess(auth, input.notebookId);
+  else assertUnfiledAccess(auth);
   const mapped = await createNoteMutation(auth.userId, input, crypto.randomUUID());
+  assertNoteAccess(auth, mapped.note.notebookId);
   const outcome = mapped.status === 'ok' ? 'created' : mapped.status === 'idempotent' ? 'idempotent' : 'deduplicated';
   const response = dataBody(context, mapped.note, outcome === 'created' ? 201 : 200);
   response.headers.set('x-qnotes-create-outcome', outcome);
@@ -181,8 +193,8 @@ export async function updateNote(context: Context): Promise<Response> {
   const noteId = context.req.param('noteId');
   if (!isUUID(noteId)) throw new ApiError(422, 'VALIDATION_ERROR', 'noteId must be a valid UUID.');
   const input = validateUpdateNoteInput(await context.req.json());
-  const currentNote = input.tags === undefined ? await findOwnedNote(auth.userId, noteId) : null;
-  const tags = input.tags ?? currentNote?.tags ?? [];
+  const currentNote = await findAuthorizedNote(auth, noteId, true);
+  const tags = input.tags ?? currentNote.tags;
   const parsed = await parsedContent(input.contentMarkdown, input.title);
   const normalizedBody = { title: input.title, slug: input.slug, contentMarkdown: parsed.parsed.normalizedMarkdown, ...(input.tags === undefined ? {} : { tags: input.tags }), deviceId: input.deviceId, mutationId: input.mutationId };
   const hash = await requestHash({ userId: auth.userId, operation: 'updated', noteId, expectedVersion: input.expectedVersion, body: normalizedBody });
@@ -200,7 +212,7 @@ export async function appendNote(context: Context): Promise<Response> {
   const noteId = context.req.param('noteId');
   if (!isUUID(noteId)) throw new ApiError(422, 'VALIDATION_ERROR', 'noteId must be a valid UUID.');
   const input = validateAppendNoteInput(await context.req.json());
-  const currentNote = await findOwnedNote(auth.userId, noteId, true);
+  const currentNote = await findAuthorizedNote(auth, noteId, true);
   const expectedVersion = input.expectedVersion ?? currentNote.version;
   const parsed = await parsedContent(appendMarkdown(currentNote.contentMarkdown, input.contentMarkdown), currentNote.title);
   // expectedVersion is an optimistic precondition, not part of the logical
@@ -232,6 +244,9 @@ export async function moveNoteToNotebook(context: Context): Promise<Response> {
   const noteId = context.req.param('noteId');
   if (!isUUID(noteId)) throw new ApiError(422, 'VALIDATION_ERROR', 'noteId must be a valid UUID.');
   const input = validateMoveNoteToNotebookInput(await context.req.json());
+  await findAuthorizedNote(auth, noteId, true);
+  if (input.notebookId) assertNotebookAccess(auth, input.notebookId);
+  else assertUnfiledAccess(auth);
   const hash = await requestHash({ userId: auth.userId, operation: 'updated', noteId, expectedVersion: input.expectedVersion, body: input });
   const result = assertSupabase(await serviceClient.rpc('qnotes_move_note_to_notebook', {
     p_owner_id: auth.userId,
@@ -251,6 +266,7 @@ async function versionedMutation(context: Context, operation: 'deleted' | 'resto
   const noteId = context.req.param('noteId');
   if (!isUUID(noteId)) throw new ApiError(422, 'VALIDATION_ERROR', 'noteId must be a valid UUID.');
   const input = validateVersionedMutation(await context.req.json());
+  await findAuthorizedNote(auth, noteId, true);
   const hash = await requestHash({ userId: auth.userId, operation, noteId, expectedVersion: input.expectedVersion, body: input });
   const functionName = operation === 'deleted' ? 'qnotes_soft_delete_note' : 'qnotes_restore_note';
   const params = operation === 'deleted'
