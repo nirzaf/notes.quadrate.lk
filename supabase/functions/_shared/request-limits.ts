@@ -13,7 +13,7 @@ export type RequestBudgetBucket = 'public-share' | 'oauth' | 'embedding' | 'work
 export const REQUEST_BUDGETS: Record<RequestBudgetBucket, { limit: number; cost: number }> = {
   'public-share': { limit: 60, cost: 1 },
   oauth: { limit: 30, cost: 1 },
-  embedding: { limit: 20, cost: 1 },
+  embedding: { limit: 60, cost: 1 },
   'workspace-export': { limit: 2, cost: 1 },
   'workspace-import': { limit: 2, cost: 1 },
   'attachment-processing': { limit: 20, cost: 1 },
