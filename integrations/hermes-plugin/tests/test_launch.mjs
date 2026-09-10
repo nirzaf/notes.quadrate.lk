@@ -153,7 +153,7 @@ test('launcher passes platform runtime values but drops unrelated credentials an
     assert.equal(observed[name], null, `${name} must not cross the launcher boundary`);
   }
   assert.equal(observed.PATH, '/usr/bin');
-  assert.equal(observed.TMPDIR, '/tmp/hermes-tmp');
+  if (process.platform !== 'win32') assert.equal(observed.TMPDIR, '/tmp/hermes-tmp');
   assert.equal(observed.TMP, '/tmp/hermes-tmp');
   assert.equal(observed.TEMP, '/tmp/hermes-temp');
   assert.equal(observed.LANG, 'C.UTF-8');

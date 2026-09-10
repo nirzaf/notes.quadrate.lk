@@ -79,7 +79,7 @@ settings, proxy variables, and certificate override variables are dropped.
 No proxy or CA override is approved by default; a deployment that needs one
 must add a named variable to the reviewed launcher allowlist and test it.
 
-The launcher starts the supplied absolute `.js` or `.mjs` artifact directly
+The launcher starts the supplied absolute `.js`, `.mjs`, or `.cjs` artifact directly
 with the current Node executable and `shell: false`. Build the runtime from a
 reviewed QNotes commit and pin plugin installation with the full commit SHA.
 Where the delivery system supports artifact hashes, record the digest with
