@@ -6,7 +6,7 @@ import { readNoteContextTool } from '../dist/tools/read-note-context.js';
 import { createPublicShareTool } from '../dist/tools/create-public-share.js';
 import { searchNotesTool } from '../dist/tools/search-notes.js';
 import { appendNoteTool, captureNoteTool, deleteNoteTool, restoreNoteTool, updateNoteTool } from '../dist/tools/write-notes.js';
-import { appendMarkdown, MAX_MCP_TOOL_RESPONSE_BYTES } from '../dist/tools/common.js';
+import { appendMarkdown, MAX_MCP_TOOL_RESPONSE_BYTES, toolResult } from '../dist/tools/common.js';
 import { PROFILE_TOOL_NAMES, READ_TOOL_NAMES, SHARE_PROFILE_TOOL_NAMES, SHARE_TOOL_NAMES, WRITE_PROFILE_TOOL_NAMES, WRITE_TOOL_NAMES, createQNotesMcpServer } from '../dist/server.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -254,6 +254,24 @@ test('MCP collection results are bounded while keeping continuation metadata', a
   assert.equal(notebooks.structuredContent.truncated, true);
   assert.ok(notebooks.structuredContent.items.length < 500);
   await client.close();
+});
+
+test('MCP bounding keeps a full item page when truncation metadata makes it fit', () => {
+  const wireBytes = (value) => new TextEncoder().encode(JSON.stringify({
+    content: [{ type: 'text', text: JSON.stringify(value) }],
+    structuredContent: value,
+  })).byteLength;
+  let low = 0;
+  let high = MAX_MCP_TOOL_RESPONSE_BYTES;
+  while (low < high) {
+    const size = Math.ceil((low + high) / 2);
+    if (wireBytes({ items: [{ value: 'x'.repeat(size) }], truncated: true }) <= MAX_MCP_TOOL_RESPONSE_BYTES) low = size;
+    else high = size - 1;
+  }
+  const value = { items: [{ value: 'x'.repeat(low) }], truncated: false };
+  assert.ok(wireBytes(value) > MAX_MCP_TOOL_RESPONSE_BYTES);
+  const result = toolResult(value);
+  assert.deepEqual(result.structuredContent, { items: value.items, truncated: true });
 });
 
 test('MCP resolve_public_share is read-only and delegates to the public API-client operation', async () => {

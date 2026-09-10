@@ -56,7 +56,7 @@ function boundItems(value: Record<string, unknown>): Record<string, unknown> {
     }
   }
   if (best < 0) throw new Error('MCP tool response exceeds the configured wire-byte limit.');
-  return best === items.length ? value : { ...value, items: items.slice(0, best), truncated: true };
+  return { ...value, items: items.slice(0, best), truncated: true };
 }
 
 export function toolResult(value: unknown, schema?: ZodType) {
