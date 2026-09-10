@@ -64,13 +64,12 @@ select * from public.qnotes_vault_claim_audit_outbox(100)
 where event_id = (select event_id from audit_integrity_ack_event);
 select is(public.qnotes_vault_ack_audit_outbox((select event_id from audit_integrity_ack_event), (select lease_token from audit_integrity_ack_claim)), true, 'a current export lease can acknowledge the event');
 select ok((select exported_at is not null and lease_token is null from notesdb.vault_audit_outbox where event_id = (select event_id from audit_integrity_ack_event)), 'acknowledged events retain export evidence and clear the lease');
-select set_config('qnotes.vault_audit_maintenance', 'on', true);
+-- Expire only these synthetic fixtures; production audit rows remain append-only.
+alter table notesdb.vault_audit_events disable trigger vault_audit_events_append_only;
 update notesdb.vault_audit_events set retention_expires_at = clock_timestamp() - interval '1 second' where id = (select event_id from audit_integrity_event);
-select set_config('qnotes.vault_audit_maintenance', 'off', true);
-select is(public.qnotes_vault_purge_expired_audit_events(clock_timestamp()), 0, 'retention purge preserves an event with an unacknowledged export');
-select set_config('qnotes.vault_audit_maintenance', 'on', true);
 update notesdb.vault_audit_events set retention_expires_at = clock_timestamp() - interval '1 second' where id = (select event_id from audit_integrity_ack_event);
-select set_config('qnotes.vault_audit_maintenance', 'off', true);
+alter table notesdb.vault_audit_events enable trigger vault_audit_events_append_only;
+select is(public.qnotes_vault_purge_expired_audit_events(clock_timestamp()), 0, 'retention purge preserves an event with an unacknowledged export');
 select is(public.qnotes_vault_purge_expired_audit_events(clock_timestamp()), 1, 'retention purge removes an expired event after export acknowledgement');
 
 select ok(has_function_privilege('service_role', 'public.qnotes_vault_claim_audit_outbox(integer)', 'EXECUTE'), 'service_role can claim outbox work without table update access');
