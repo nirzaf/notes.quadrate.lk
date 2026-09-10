@@ -40,7 +40,7 @@ create temporary table atomic_token_a on commit drop as
 select public.qnotes_create_vault_agent_token(
   (select id from auth.users where email = 'owner@qnotes.local'),
   'atomic token A',
-  'qvt_AtomicA',
+  'qvt_AtomicA1',
   repeat('c', 64),
   clock_timestamp() + interval '1 hour',
   jsonb_build_array(
@@ -128,7 +128,7 @@ create temporary table atomic_expired_token on commit drop as
 select public.qnotes_create_vault_agent_token(
   (select id from auth.users where email = 'owner@qnotes.local'),
   'expired atomic token',
-  'qvt_AtomicB',
+  'qvt_AtomicB1',
   repeat('e', 64),
   clock_timestamp() - interval '1 second',
   jsonb_build_array(jsonb_build_object('projectId', 'c1000000-0000-4000-8000-000000000001'::uuid, 'environmentId', 'c1000000-0000-4000-8000-000000000002'::uuid, 'secretId', ((select response->'secret'->>'id' from atomic_secret_a))::uuid, 'action', 'secret:reveal'))

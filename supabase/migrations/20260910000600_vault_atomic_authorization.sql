@@ -16,6 +16,11 @@ security definer
 set search_path = public, notesdb, extensions
 as $$
 begin
+  -- Existing user-JWT routes keep their no-audit failure behavior; agent
+  -- denials are recorded here because the token is the security principal.
+  if p_actor_token_id is null then
+    return;
+  end if;
   if p_owner_id is null
     or p_action not in ('metadata:read', 'secret:reveal', 'secret:write', 'secret:delete')
     or not exists (select 1 from auth.users where id = p_owner_id) then
@@ -114,7 +119,7 @@ begin
     from notesdb.vault_secrets
     where id = p_secret_id and owner_id = p_owner_id
     for update;
-    if not found or secret_row.deleted_at is not null then
+    if not found then
       perform public.qnotes_vault_record_denial(p_owner_id, p_actor_token_id, p_action, p_project_id, p_environment_id, p_secret_id, p_request_id, 'not_found');
       return jsonb_build_object('status', 'not_found');
     end if;
