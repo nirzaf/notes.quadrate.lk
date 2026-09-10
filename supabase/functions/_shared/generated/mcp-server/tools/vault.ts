@@ -25,7 +25,10 @@ export interface VaultMcpClient {
 
 export const VAULT_METADATA_TOOL_NAMES = ['vault_list_projects', 'vault_list_environments', 'vault_list_secrets'] as const;
 export const VAULT_REVEAL_TOOL_NAMES = [...VAULT_METADATA_TOOL_NAMES, 'vault_get_secret', 'vault_get_secrets'] as const;
-export const VAULT_WRITE_TOOL_NAMES = [...VAULT_REVEAL_TOOL_NAMES, 'vault_create_secret', 'vault_rotate_secret', 'vault_delete_secret'] as const;
+export const VAULT_WRITE_TOOL_NAMES = [...VAULT_METADATA_TOOL_NAMES, 'vault_create_secret', 'vault_rotate_secret', 'vault_delete_secret'] as const;
+
+type VaultRevealMcpInput = RevealVaultSecretInput & { confirmPlaintext: true };
+type VaultBatchRevealMcpInput = RevealVaultSecretsInput & { confirmPlaintext: true };
 
 function listItems<T>(value: T[] | { items: T[] }): T[] {
   return Array.isArray(value) ? value : value.items;
@@ -59,14 +62,18 @@ export async function vaultListSecretsTool(client: VaultMcpClient, args: { proje
   return toolResult({ items: listItems(await client.listSecrets(environment.id)) }, vaultSecretsSchema);
 }
 
-export async function vaultGetSecretTool(client: VaultMcpClient, args: RevealVaultSecretInput) {
+export async function vaultGetSecretTool(client: VaultMcpClient, args: VaultRevealMcpInput) {
+  if (args.confirmPlaintext !== true) throw new Error('confirmPlaintext must be true for Vault reveal.');
   if (!args.purpose?.trim()) throw new Error('purpose is required for Vault reveal.');
-  return toolResult(await client.revealSecret(args), vaultSecretSchema);
+  const { confirmPlaintext: _confirmPlaintext, ...input } = args;
+  return toolResult(await client.revealSecret(input), vaultSecretSchema);
 }
 
-export async function vaultGetSecretsTool(client: VaultMcpClient, args: RevealVaultSecretsInput) {
+export async function vaultGetSecretsTool(client: VaultMcpClient, args: VaultBatchRevealMcpInput) {
+  if (args.confirmPlaintext !== true) throw new Error('confirmPlaintext must be true for Vault reveal.');
   if (!args.purpose?.trim()) throw new Error('purpose is required for Vault reveal.');
-  return toolResult(await client.revealSecrets(args), vaultSecretBatchSchema);
+  const { confirmPlaintext: _confirmPlaintext, ...input } = args;
+  return toolResult(await client.revealSecrets(input), vaultSecretBatchSchema);
 }
 
 export async function vaultCreateSecretTool(client: VaultMcpClient, args: { project: string; environment: string; name: string; value: string; description?: string; mutationId: string }) {

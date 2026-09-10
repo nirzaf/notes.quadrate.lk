@@ -35,6 +35,7 @@ test('Vault MCP profiles expose metadata, reveal, and write tools independently'
   await reveal.client.close();
   const write = await connected('write', protocolClient());
   assert.deepEqual((await write.client.listTools()).tools.map((tool) => tool.name).filter((name) => name.startsWith('vault_')), [...VAULT_WRITE_TOOL_NAMES]);
+  assert.equal((await write.client.listTools()).tools.some((tool) => tool.name === 'vault_get_secret'), false);
   await write.client.close();
 });
 
@@ -43,11 +44,13 @@ test('Vault MCP reveal requires purpose and returns the fake value only for exac
   const { client } = await connected('reveal', protocolClient({
     async revealSecret(input) { received = input; return { secretId: 'secret-1', project: 'p', environment: 'e', name: 'KEY', value: 'local-only-secret', version: 1, updatedAt: '2026-01-01' }; },
   }));
-  const result = await client.callTool({ name: 'vault_get_secret', arguments: { project: 'p', environment: 'e', name: 'KEY', purpose: 'local test' } });
+  const result = await client.callTool({ name: 'vault_get_secret', arguments: { project: 'p', environment: 'e', name: 'KEY', purpose: 'local test', confirmPlaintext: true } });
   assert.deepEqual(received, { project: 'p', environment: 'e', name: 'KEY', purpose: 'local test' });
   assert.equal(result.structuredContent.value, 'local-only-secret');
-  const missingPurpose = await client.callTool({ name: 'vault_get_secret', arguments: { project: 'p', environment: 'e', name: 'KEY' } });
+  const missingPurpose = await client.callTool({ name: 'vault_get_secret', arguments: { project: 'p', environment: 'e', name: 'KEY', confirmPlaintext: true } });
   assert.equal(missingPurpose.isError, true);
+  const missingConfirmation = await client.callTool({ name: 'vault_get_secret', arguments: { project: 'p', environment: 'e', name: 'KEY', purpose: 'local test' } });
+  assert.equal(missingConfirmation.isError, true);
   await client.close();
 });
 

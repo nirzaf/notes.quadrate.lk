@@ -95,7 +95,7 @@ test('combines every Vault profile with every Notes profile without exposing raw
     },
     write: {
       parallelWithRead: false,
-      tools: ['vault_list_projects', 'vault_list_environments', 'vault_list_secrets', 'vault_get_secret', 'vault_get_secrets', 'vault_create_secret', 'vault_rotate_secret', 'vault_delete_secret'],
+      tools: ['vault_list_projects', 'vault_list_environments', 'vault_list_secrets', 'vault_create_secret', 'vault_rotate_secret', 'vault_delete_secret'],
       env: { QVAULT_TOKEN: '${QVAULT_TOKEN}', QVAULT_MCP_PROFILE: 'write' },
     },
   };
