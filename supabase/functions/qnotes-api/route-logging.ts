@@ -2,6 +2,9 @@ const ROUTES: Array<[RegExp, string]> = [
   [/^\/api\/notes\/[^/]+\/blocks\/[^/]+$/, '/api/notes/:noteRef/blocks/:blockKey'],
   [/^\/api\/notes\/[^/]+\/attachments$/, '/api/notes/:noteRef/attachments'],
   [/^\/api\/notes\/[^/]+\/append$/, '/api/notes/:noteId/append'],
+  [/^\/api\/notes\/[^/]+\/section$/, '/api/notes/:noteId/section'],
+  [/^\/api\/notes\/[^/]+\/section\/preview$/, '/api/notes/:noteId/section/preview'],
+  [/^\/api\/notes\/[^/]+\/outline$/, '/api/notes/:noteRef/outline'],
   [/^\/api\/notes\/[^/]+\/notebook$/, '/api/notes/:noteId/notebook'],
   [/^\/api\/notes\/[^/]+\/restore$/, '/api/notes/:noteId/restore'],
   [/^\/api\/notes\/[^/]+\/share$/, '/api/notes/:noteId/share'],
@@ -9,6 +12,7 @@ const ROUTES: Array<[RegExp, string]> = [
   [/^\/api\/attachments\/[^/]+$/, '/api/attachments/:attachmentId'],
   [/^\/api\/tokens\/[^/]+$/, '/api/tokens/:tokenId'],
   [/^\/api\/search\/documents\/[^/]+\/context$/, '/api/search/documents/:documentId/context'],
+  [/^\/api\/mutations\/[^/]+$/, '/api/mutations/:mutationId'],
   [/^\/api\/export\/note\/[^/]+$/, '/api/export/note/:noteRef'],
   [/^\/vault\/projects\/[^/]+\/environments\/[^/]+\/secrets$/, '/vault/projects/:projectRef/environments/:environmentRef/secrets'],
   [/^\/vault\/projects\/[^/]+\/environments$/, '/vault/projects/:projectRef/environments'],
@@ -27,7 +31,7 @@ export function normalizeApiRoute(path: string): string {
   for (const [pattern, template] of ROUTES) {
     if (pattern.test(pathname)) return template;
   }
-  if (pathname === '/api/health' || pathname === '/api/notes' || pathname === '/api/notebooks' || pathname === '/api/search' || pathname === '/api/context' || pathname === '/api/sync' || pathname === '/api/tokens' || pathname === '/public/share/resolve' || pathname === '/api/export/workspace' || pathname === '/api/import/workspace' || pathname === '/vault/projects' || pathname === '/vault/secrets/reveal' || pathname === '/vault/approvals' || pathname === '/vault/audit' || pathname === '/vault/agent-tokens' || pathname === '/vault/environments/resolve' || pathname === '/vault/secrets/resolve') return pathname;
+  if (pathname === '/api/health' || pathname === '/api/capabilities' || pathname === '/api/notes' || pathname === '/api/notebooks' || pathname === '/api/search' || pathname === '/api/context' || pathname === '/api/sync' || pathname === '/api/tokens' || pathname === '/public/share/resolve' || pathname === '/api/export/workspace' || pathname === '/api/import/workspace' || pathname === '/vault/projects' || pathname === '/vault/secrets/reveal' || pathname === '/vault/approvals' || pathname === '/vault/audit' || pathname === '/vault/agent-tokens' || pathname === '/vault/environments/resolve' || pathname === '/vault/secrets/resolve') return pathname;
   if (pathname.startsWith('/api/')) return '/api/*';
   if (pathname.startsWith('/vault/')) return '/vault/*';
   return '/unmatched';

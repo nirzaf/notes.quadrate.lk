@@ -1,6 +1,6 @@
 import type { Context } from 'hono';
-import { deriveSlug, isUUID, normalizeSlug, QNotesValidationError, validateAppendNoteInput, validateCreateNoteInput, validateListNotesQuery, validateMoveNoteToNotebookInput, validateUpdateNoteInput, validateVersionedMutation, type CreateNoteInput } from '@qnotes/shared';
-import { MarkdownParseError, parseMarkdown } from '@qnotes/markdown';
+import { deriveSlug, isUUID, MAX_PATCH_REPLACEMENT_BYTES, MAX_SEARCH_LIMIT, MAX_SYNC_LIMIT, normalizeSlug, QNotesValidationError, validateAppendNoteInput, validateCreateNoteInput, validateListNotesQuery, validateMoveNoteToNotebookInput, validatePatchNoteSectionInput, validateUpdateNoteInput, validateVersionedMutation, type ApiTokenScope, type CreateNoteInput, type PatchNoteSectionInput } from '@qnotes/shared';
+import { getMarkdownOutline, MarkdownParseError, MarkdownPatchError, parseMarkdown, patchMarkdownSection } from '@qnotes/markdown';
 import { authFromContext, requireScope } from '../_shared/auth.ts';
 import { ApiError } from '../_shared/errors.ts';
 import { appDbClient, assertSupabase, noteFromRow, requestHash, serviceClient, summaryFromRow } from '../_shared/database.ts';
@@ -30,6 +30,54 @@ function noteFromRpc(value: unknown): ReturnType<typeof noteFromRow> {
     createdAt: String(row.createdAt ?? row.created_at),
     updatedAt: String(row.updatedAt ?? row.updated_at),
     deletedAt: deletedAt ? String(deletedAt) : null,
+  };
+}
+
+const ALL_API_SCOPES: ApiTokenScope[] = ['notes:read', 'notes:write', 'search:read', 'shares:write', 'attachments:read', 'attachments:write'];
+const MAX_OUTLINE_SECTIONS = 500;
+const WRITE_OPERATIONS = ['capture_note', 'append_note', 'update_note', 'preview_note_section', 'patch_note_section', 'delete_note', 'restore_note', 'move_note_to_notebook'];
+
+function hasScope(auth: ReturnType<typeof authFromContext>, scope: ApiTokenScope): boolean {
+  return auth.authKind === 'jwt' || auth.scopes?.includes(scope) === true;
+}
+
+function effectiveProfile(auth: ReturnType<typeof authFromContext>): 'read' | 'share' | 'write' {
+  if (hasScope(auth, 'notes:write')) return 'write';
+  if (hasScope(auth, 'shares:write')) return 'share';
+  return 'read';
+}
+
+function mutationStatusScope(auth: ReturnType<typeof authFromContext>): void {
+  if (!hasScope(auth, 'notes:read') && !hasScope(auth, 'notes:write')) throw new ApiError(403, 'INSUFFICIENT_SCOPE', 'The token does not have a note scope.');
+}
+
+interface StoredMutation {
+  mutationId: string;
+  operation: string;
+  requestHash: string;
+  noteId: string;
+  resultingVersion: number;
+  response: Record<string, unknown>;
+  createdAt: string;
+}
+
+async function findMutation(ownerId: string, mutationId: string): Promise<StoredMutation | null> {
+  const { data, error } = await appDbClient.from('note_mutations')
+    .select('mutation_id, operation, request_hash, note_id, resulting_version, response, created_at')
+    .eq('owner_id', ownerId)
+    .eq('mutation_id', mutationId)
+    .maybeSingle();
+  if (error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to read the mutation receipt.');
+  if (!data) return null;
+  const row = record(data);
+  return {
+    mutationId: String(row.mutation_id),
+    operation: String(row.operation),
+    requestHash: String(row.request_hash),
+    noteId: String(row.note_id),
+    resultingVersion: Number(row.resulting_version),
+    response: record(row.response),
+    createdAt: String(row.created_at),
   };
 }
 
@@ -97,6 +145,36 @@ async function parsedContent(markdown: string, title: string) {
   }
 }
 
+interface NoteUpdateRequest {
+  title: string;
+  slug: string;
+  contentMarkdown: string;
+  tags: string[];
+  expectedVersion: number;
+  deviceId: string;
+  mutationId: string;
+}
+
+async function applyNoteUpdate(ownerId: string, noteId: string, input: NoteUpdateRequest, hash: string): Promise<NoteResult> {
+  const parsed = await parsedContent(input.contentMarkdown, input.title);
+  const result = assertSupabase(await serviceClient.rpc('qnotes_update_note', {
+    p_owner_id: ownerId,
+    p_note_id: noteId,
+    p_slug: normalizeSlug(input.slug, input.title),
+    p_title: input.title,
+    p_content_markdown: parsed.parsed.normalizedMarkdown,
+    p_content_plain: parsed.parsed.plainText,
+    p_tags: input.tags,
+    p_expected_version: input.expectedVersion,
+    p_device_id: input.deviceId,
+    p_mutation_id: input.mutationId,
+    p_request_hash: hash,
+    p_blocks: parsed.blocks,
+    p_documents: parsed.documents,
+  }));
+  return mapMutationResult(result);
+}
+
 export async function findOwnedNote(ownerId: string, noteRef: string, includeDeleted = false): Promise<ReturnType<typeof noteFromRow>> {
   let query = appDbClient.from('notes').select('*').eq('owner_id', ownerId).limit(1);
   if (isUUID(noteRef)) query = query.eq('id', noteRef);
@@ -111,6 +189,157 @@ export async function findAuthorizedNote(auth: ReturnType<typeof authFromContext
   const note = await findOwnedNote(auth.userId, noteRef, includeDeleted);
   assertNoteAccess(auth, note.notebookId);
   return note;
+}
+
+export async function getCapabilities(context: Context): Promise<Response> {
+  const auth = authFromContext(context);
+  const supportedOperations = ['get_capabilities', 'resolve_public_share'];
+  if (hasScope(auth, 'search:read')) supportedOperations.push('search_notes', 'read_note_context');
+  if (hasScope(auth, 'notes:read')) supportedOperations.push('get_block', 'list_notebooks', 'list_note_changes', 'get_note_outline', 'get_mutation_status');
+  if (hasScope(auth, 'notes:write')) supportedOperations.push(...WRITE_OPERATIONS);
+  if (hasScope(auth, 'shares:write')) supportedOperations.push('create_public_share');
+  return dataBody(context, {
+    schemaVersion: 1,
+    effectiveProfile: effectiveProfile(auth),
+    scopes: auth.scopes ? [...auth.scopes] : [...ALL_API_SCOPES],
+    supportedOperations,
+    responseLimits: {
+      searchResults: MAX_SEARCH_LIMIT,
+      contextTokens: 4000,
+      noteChanges: MAX_SYNC_LIMIT,
+      outlineSections: MAX_OUTLINE_SECTIONS,
+      patchReplacementBytes: MAX_PATCH_REPLACEMENT_BYTES,
+    },
+  });
+}
+
+export async function getNoteOutline(context: Context): Promise<Response> {
+  const auth = authFromContext(context);
+  requireScope(auth, 'notes:read');
+  const note = await findAuthorizedNote(auth, context.req.param('noteRef') ?? '');
+  const outline = await getMarkdownOutline(note.contentMarkdown);
+  return dataBody(context, {
+    noteId: note.id,
+    noteVersion: note.version,
+    markdownHash: outline.markdownHash,
+    sections: outline.sections.slice(0, MAX_OUTLINE_SECTIONS),
+    blocks: outline.blocks,
+    truncated: outline.sections.length > MAX_OUTLINE_SECTIONS,
+  });
+}
+
+export async function previewNoteSection(context: Context): Promise<Response> {
+  const auth = authFromContext(context);
+  requireScope(auth, 'notes:write');
+  const noteId = context.req.param('noteId');
+  if (!isUUID(noteId)) throw new ApiError(422, 'VALIDATION_ERROR', 'noteId must be a valid UUID.');
+  let input: PatchNoteSectionInput;
+  try {
+    input = validatePatchNoteSectionInput(await context.req.json());
+  } catch (error: unknown) {
+    if (error instanceof QNotesValidationError) throw new ApiError(422, 'VALIDATION_ERROR', error.message);
+    throw error;
+  }
+  const currentNote = await findAuthorizedNote(auth, noteId);
+  if (currentNote.version !== input.expectedVersion) throw new ApiError(409, 'NOTE_VERSION_CONFLICT', 'The note was changed on another device.', { currentVersion: currentNote.version });
+  let patchedMarkdown: string;
+  let preview: Awaited<ReturnType<typeof getMarkdownOutline>>;
+  try {
+    patchedMarkdown = await patchMarkdownSection(currentNote.contentMarkdown, input.sectionId, input.expectedContentHash, input.replacementMarkdown);
+    preview = await getMarkdownOutline(patchedMarkdown);
+  } catch (error: unknown) {
+    if (error instanceof MarkdownPatchError) throw new ApiError(409, 'NOTE_SECTION_CONFLICT', 'The note section is stale or ambiguous.', { currentVersion: currentNote.version });
+    if (error instanceof MarkdownParseError) throw new ApiError(422, error.code, error.message, error.details);
+    throw error;
+  }
+  return dataBody(context, {
+    noteId,
+    currentVersion: currentNote.version,
+    sectionId: input.sectionId,
+    currentContentHash: input.expectedContentHash,
+    replacementBytes: new TextEncoder().encode(input.replacementMarkdown).byteLength,
+    resultingMarkdownHash: preview!.markdownHash,
+    wouldChange: patchedMarkdown !== currentNote.contentMarkdown,
+  });
+}
+
+async function replayPatchMutation(context: Context, auth: ReturnType<typeof authFromContext>, noteId: string, mutationId: string, hash: string): Promise<Response | null> {
+  const stored = await findMutation(auth.userId, mutationId);
+  if (!stored) return null;
+  if (stored.noteId !== noteId || stored.requestHash !== hash) throw new ApiError(409, 'MUTATION_REUSE_CONFLICT', 'The mutation ID was already used for a different request.');
+  await findAuthorizedNote(auth, noteId, true);
+  const note = stored.response.note;
+  if (!note) throw new ApiError(500, 'INTERNAL_ERROR', 'The mutation receipt is malformed.');
+  return mutationResponse(context, { note: noteFromRpc(note), blocks: [], status: 'idempotent' });
+}
+
+export async function patchNoteSection(context: Context): Promise<Response> {
+  const auth = authFromContext(context);
+  requireScope(auth, 'notes:write');
+  const noteId = context.req.param('noteId');
+  if (!isUUID(noteId)) throw new ApiError(422, 'VALIDATION_ERROR', 'noteId must be a valid UUID.');
+  let input: PatchNoteSectionInput;
+  try {
+    input = validatePatchNoteSectionInput(await context.req.json());
+  } catch (error: unknown) {
+    if (error instanceof QNotesValidationError) throw new ApiError(422, 'VALIDATION_ERROR', error.message);
+    throw error;
+  }
+  const hash = await requestHash({
+    userId: auth.userId,
+    operation: 'patched_section',
+    noteId,
+    expectedVersion: input.expectedVersion,
+    body: {
+      sectionId: input.sectionId,
+      expectedContentHash: input.expectedContentHash,
+      replacementMarkdown: input.replacementMarkdown,
+      deviceId: input.deviceId,
+      mutationId: input.mutationId,
+    },
+  });
+  const replay = await replayPatchMutation(context, auth, noteId, input.mutationId, hash);
+  if (replay) return replay;
+
+  const currentNote = await findAuthorizedNote(auth, noteId, true);
+  if (currentNote.version !== input.expectedVersion) throw new ApiError(409, 'NOTE_VERSION_CONFLICT', 'The note was changed on another device.', { currentVersion: currentNote.version });
+  let patchedMarkdown: string;
+  try {
+    patchedMarkdown = await patchMarkdownSection(currentNote.contentMarkdown, input.sectionId, input.expectedContentHash, input.replacementMarkdown);
+  } catch (error: unknown) {
+    const retry = await replayPatchMutation(context, auth, noteId, input.mutationId, hash);
+    if (retry) return retry;
+    if (error instanceof MarkdownPatchError) throw new ApiError(409, 'NOTE_SECTION_CONFLICT', 'The note section is stale or ambiguous.', { currentVersion: currentNote.version });
+    throw error;
+  }
+  const result = await applyNoteUpdate(auth.userId, noteId, {
+    title: currentNote.title,
+    slug: currentNote.slug,
+    contentMarkdown: patchedMarkdown,
+    tags: currentNote.tags,
+    expectedVersion: input.expectedVersion,
+    deviceId: input.deviceId,
+    mutationId: input.mutationId,
+  }, hash);
+  return mutationResponse(context, result);
+}
+
+export async function getMutationStatus(context: Context): Promise<Response> {
+  const auth = authFromContext(context);
+  mutationStatusScope(auth);
+  const mutationId = context.req.param('mutationId') ?? '';
+  if (!isUUID(mutationId)) throw new ApiError(422, 'VALIDATION_ERROR', 'mutationId must be a valid UUID.');
+  const stored = await findMutation(auth.userId, mutationId);
+  if (!stored) throw new ApiError(404, 'MUTATION_NOT_FOUND', 'The mutation receipt was not found.');
+  await findAuthorizedNote(auth, stored.noteId, true);
+  return dataBody(context, {
+    mutationId: stored.mutationId,
+    operation: stored.operation,
+    noteId: stored.noteId,
+    resultingVersion: stored.resultingVersion,
+    createdAt: stored.createdAt,
+    status: 'committed',
+  });
 }
 
 export async function listNotes(context: Context): Promise<Response> {
@@ -237,12 +466,8 @@ export async function updateNote(context: Context): Promise<Response> {
   const parsed = await parsedContent(input.contentMarkdown, input.title);
   const normalizedBody = { title: input.title, slug: input.slug, contentMarkdown: parsed.parsed.normalizedMarkdown, ...(input.tags === undefined ? {} : { tags: input.tags }), deviceId: input.deviceId, mutationId: input.mutationId };
   const hash = await requestHash({ userId: auth.userId, operation: 'updated', noteId, expectedVersion: input.expectedVersion, body: normalizedBody });
-  const result = assertSupabase(await serviceClient.rpc('qnotes_update_note', {
-    p_owner_id: auth.userId, p_note_id: noteId, p_slug: normalizeSlug(input.slug, input.title), p_title: input.title, p_content_markdown: parsed.parsed.normalizedMarkdown,
-    p_content_plain: parsed.parsed.plainText, p_tags: tags, p_expected_version: input.expectedVersion, p_device_id: input.deviceId,
-    p_mutation_id: input.mutationId, p_request_hash: hash, p_blocks: parsed.blocks, p_documents: parsed.documents,
-  }));
-  return mutationResponse(context, mapMutationResult(result));
+  const result = await applyNoteUpdate(auth.userId, noteId, { ...input, tags }, hash);
+  return mutationResponse(context, result);
 }
 
 export async function appendNote(context: Context): Promise<Response> {

@@ -210,6 +210,79 @@ export interface NoteBlock {
   continuation?: ContentContinuation;
 }
 
+export interface NoteOutlineBlock {
+  blockKey: string;
+  blockType: BlockType;
+  position: number;
+  contentHash: string;
+}
+
+export interface NoteOutlineSection {
+  sectionId: string;
+  level: number;
+  heading: string;
+  headingPath: string[];
+  startLine: number;
+  endLine: number;
+  contentStartLine: number;
+  contentEndLine: number;
+  contentHash: string;
+  childCount: number;
+}
+
+export interface NoteOutline {
+  noteId: UUID;
+  noteVersion: number;
+  markdownHash: string;
+  sections: NoteOutlineSection[];
+  blocks: NoteOutlineBlock[];
+  truncated: boolean;
+}
+
+export interface PatchNoteSectionInput {
+  sectionId: string;
+  expectedVersion: number;
+  expectedContentHash: string;
+  replacementMarkdown: string;
+  deviceId: UUID;
+  mutationId: UUID;
+}
+
+export interface NoteSectionPatchPreview {
+  noteId: UUID;
+  currentVersion: number;
+  sectionId: string;
+  currentContentHash: string;
+  replacementBytes: number;
+  resultingMarkdownHash: string;
+  wouldChange: boolean;
+}
+
+export interface MutationStatus {
+  mutationId: UUID;
+  operation: string;
+  noteId: UUID;
+  resultingVersion: number;
+  createdAt: ISODateTime;
+  status: 'committed';
+}
+
+export type QNotesCapabilityProfile = 'read' | 'share' | 'write';
+
+export interface QNotesCapabilities {
+  schemaVersion: 1;
+  effectiveProfile: QNotesCapabilityProfile;
+  scopes: ApiTokenScope[];
+  supportedOperations: string[];
+  responseLimits: {
+    searchResults: number;
+    contextTokens: number;
+    noteChanges: number;
+    outlineSections: number;
+    patchReplacementBytes: number;
+  };
+}
+
 export interface ParsedBlock {
   blockKey: string;
   blockType: BlockType;

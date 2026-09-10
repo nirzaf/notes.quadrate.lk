@@ -5,7 +5,7 @@ import { applyCors } from '../_shared/cors.ts';
 import { errorBody } from '../_shared/errors.ts';
 import { ApiError } from '../_shared/errors.ts';
 import { requestRoute } from './route-logging.ts';
-import { listNotes, getNote, createNote, updateNote, appendNote, moveNoteToNotebook, deleteNote, restoreNote } from './notes.ts';
+import { listNotes, getNote, createNote, updateNote, appendNote, moveNoteToNotebook, deleteNote, restoreNote, getCapabilities, getNoteOutline, patchNoteSection, previewNoteSection, getMutationStatus } from './notes.ts';
 import { listBlocks, getBlock } from './blocks.ts';
 import { searchNotes } from './search.ts';
 import { getNoteContext, postNoteContext } from './context.ts';
@@ -150,10 +150,14 @@ app.onError((error, context) => {
 
 app.get('/api/health', (context) => context.json({ data: { status: 'ok' } }));
 
+app.get('/api/capabilities', getCapabilities);
 app.get('/api/notes', listNotes);
+app.get('/api/notes/:noteRef/outline', getNoteOutline);
 app.get('/api/notes/:noteRef', getNote);
 app.post('/api/notes', createNote);
 app.patch('/api/notes/:noteId', updateNote);
+app.post('/api/notes/:noteId/section/preview', previewNoteSection);
+app.patch('/api/notes/:noteId/section', patchNoteSection);
 app.post('/api/notes/:noteId/append', appendNote);
 app.patch('/api/notes/:noteId/notebook', moveNoteToNotebook);
 app.delete('/api/notes/:noteId', deleteNote);
@@ -167,6 +171,7 @@ app.post('/api/search', searchNotes);
 app.get('/api/search/documents/:documentId/context', getNoteContext);
 app.post('/api/context', postNoteContext);
 app.get('/api/sync', syncNotes);
+app.get('/api/mutations/:mutationId', getMutationStatus);
 app.get('/api/notes/:noteRef/attachments', listAttachments);
 app.post('/api/attachments/upload-url', requestUpload);
 app.post('/api/attachments/:attachmentId/finalize', finalizeAttachment);

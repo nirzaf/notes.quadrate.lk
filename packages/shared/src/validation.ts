@@ -8,6 +8,7 @@ import type {
   CreateNoteInput,
   ListNotesQuery,
   MoveNoteToNotebookInput,
+  PatchNoteSectionInput,
   ResolvedSearchMode,
   SearchFilters,
   SearchMode,
@@ -34,6 +35,8 @@ export const MAX_SLUG_LENGTH = 80;
 export const MAX_TAG_LENGTH = 64;
 export const MAX_TAG_COUNT = 50;
 export const MAX_BLOCK_KEY_LENGTH = 100;
+export const MAX_OUTLINE_SECTION_ID_LENGTH = 200;
+export const MAX_PATCH_REPLACEMENT_BYTES = 200_000;
 export const MAX_TOKEN_NAME_LENGTH = 80;
 export const MAX_DEDUPE_KEY_LENGTH = 200;
 export const MAX_PUBLIC_SHARE_EXPIRY_MS = 365 * 24 * 60 * 60 * 1000;
@@ -164,6 +167,30 @@ export function validateVersionedMutation(value: unknown): VersionedNoteMutation
   const expectedVersion = value.expectedVersion;
   if (typeof expectedVersion !== 'number' || !Number.isSafeInteger(expectedVersion) || expectedVersion < 1) throw new QNotesValidationError('expectedVersion must be a positive integer.');
   return { expectedVersion, deviceId: requireUUID(value.deviceId, 'deviceId'), mutationId: requireUUID(value.mutationId, 'mutationId') };
+}
+
+export function validatePatchNoteSectionInput(value: unknown): PatchNoteSectionInput {
+  if (!isRecord(value)) throw new QNotesValidationError('Request body must be an object.');
+  if (typeof value.sectionId !== 'string' || !value.sectionId.trim() || value.sectionId.length > MAX_OUTLINE_SECTION_ID_LENGTH) {
+    throw new QNotesValidationError(`sectionId must contain 1 to ${MAX_OUTLINE_SECTION_ID_LENGTH} characters.`);
+  }
+  if (typeof value.expectedContentHash !== 'string' || !/^[a-f0-9]{64}$/i.test(value.expectedContentHash)) {
+    throw new QNotesValidationError('expectedContentHash must be a SHA-256 hex digest.');
+  }
+  const replacementMarkdown = normalizeMarkdown(value.replacementMarkdown);
+  if (new TextEncoder().encode(replacementMarkdown).byteLength > MAX_PATCH_REPLACEMENT_BYTES) {
+    throw new QNotesValidationError(`replacementMarkdown must be at most ${MAX_PATCH_REPLACEMENT_BYTES} UTF-8 bytes.`);
+  }
+  const expectedVersion = value.expectedVersion;
+  if (typeof expectedVersion !== 'number' || !Number.isSafeInteger(expectedVersion) || expectedVersion < 1) throw new QNotesValidationError('expectedVersion must be a positive integer.');
+  return {
+    sectionId: value.sectionId,
+    expectedVersion,
+    expectedContentHash: value.expectedContentHash.toLowerCase(),
+    replacementMarkdown,
+    deviceId: requireUUID(value.deviceId, 'deviceId'),
+    mutationId: requireUUID(value.mutationId, 'mutationId'),
+  };
 }
 
 export function validateSearchQuery(value: unknown): string {

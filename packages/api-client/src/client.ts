@@ -11,9 +11,13 @@ import type {
   CreateNoteInput,
   Note,
   PagedNote,
+  NoteOutline,
+  NoteSectionPatchPreview,
   Notebook,
   NoteBlock,
   NoteSummary,
+  MutationStatus,
+  PatchNoteSectionInput,
   PublicShareMetadata,
   PublicSharedNote,
   SearchContext,
@@ -25,6 +29,7 @@ import type {
   UpdateNoteInput,
   UUID,
   VersionedNoteMutationInput,
+  QNotesCapabilities,
 } from '@qnotes/shared';
 import { QNotesHttpError } from './http-error.ts';
 import { createRequestSignal, redactSensitive, requestSecrets, throwIfAborted, validateApiEndpoint } from './endpoint-policy.ts';
@@ -48,6 +53,8 @@ export interface NoteMutationResult {
   note: Note;
   outcome: NoteMutationOutcome;
 }
+
+export type { MutationStatus, NoteOutline, NoteSectionPatchPreview, PatchNoteSectionInput, QNotesCapabilities } from '@qnotes/shared';
 
 export interface QNotesClientOptions {
   baseUrl: string;
@@ -147,6 +154,7 @@ type Success<T> = { data: T };
 
 const SEARCH_SOURCE_TYPES = new Set(['note_metadata', 'note_chunk', 'copy_block', 'code_block', 'attachment_chunk']);
 const SEARCH_MODES = new Set(['keyword', 'semantic', 'hybrid']);
+const API_SCOPES = new Set(['notes:read', 'notes:write', 'search:read', 'shares:write', 'attachments:read', 'attachments:write']);
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -277,6 +285,45 @@ function isNoteBlock(value: unknown): value is NoteBlock {
     && (value.truncated === undefined || typeof value.truncated === 'boolean')
     && (value.contentComplete === undefined || typeof value.contentComplete === 'boolean')
     && (value.continuation === undefined || isContentContinuation(value.continuation));
+}
+
+function isNoteOutline(value: unknown): value is NoteOutline {
+  if (!isRecord(value) || !isString(value.noteId) || typeof value.noteVersion !== 'number' || !Number.isSafeInteger(value.noteVersion)
+    || !isString(value.markdownHash) || !/^[a-f0-9]{64}$/i.test(value.markdownHash) || !Array.isArray(value.sections)
+    || !Array.isArray(value.blocks) || typeof value.truncated !== 'boolean') return false;
+  const sectionsValid = value.sections.every((section) => isRecord(section)
+    && isString(section.sectionId) && typeof section.level === 'number' && Number.isSafeInteger(section.level) && section.level >= 1 && section.level <= 6
+    && isString(section.heading) && isStringArray(section.headingPath) && typeof section.startLine === 'number' && Number.isSafeInteger(section.startLine)
+    && typeof section.endLine === 'number' && Number.isSafeInteger(section.endLine) && typeof section.contentStartLine === 'number'
+    && Number.isSafeInteger(section.contentStartLine) && typeof section.contentEndLine === 'number' && Number.isSafeInteger(section.contentEndLine)
+    && isString(section.contentHash) && /^[a-f0-9]{64}$/i.test(section.contentHash) && typeof section.childCount === 'number'
+    && Number.isSafeInteger(section.childCount) && section.childCount >= 0);
+  const blocksValid = value.blocks.every((block) => isRecord(block) && isString(block.blockKey) && isString(block.blockType)
+    && typeof block.position === 'number' && Number.isSafeInteger(block.position) && block.position >= 0 && isString(block.contentHash)
+    && /^[a-f0-9]{64}$/i.test(block.contentHash));
+  return sectionsValid && blocksValid;
+}
+
+function isMutationStatus(value: unknown): value is MutationStatus {
+  return isRecord(value) && isString(value.mutationId) && isString(value.operation) && isString(value.noteId)
+    && typeof value.resultingVersion === 'number' && Number.isSafeInteger(value.resultingVersion) && value.resultingVersion > 0
+    && isString(value.createdAt) && value.status === 'committed';
+}
+
+function isNoteSectionPatchPreview(value: unknown): value is NoteSectionPatchPreview {
+  return isRecord(value) && isString(value.noteId) && typeof value.currentVersion === 'number' && Number.isSafeInteger(value.currentVersion)
+    && isString(value.sectionId) && isString(value.currentContentHash) && /^[a-f0-9]{64}$/i.test(value.currentContentHash)
+    && typeof value.replacementBytes === 'number' && Number.isSafeInteger(value.replacementBytes) && value.replacementBytes >= 0
+    && isString(value.resultingMarkdownHash) && /^[a-f0-9]{64}$/i.test(value.resultingMarkdownHash)
+    && typeof value.wouldChange === 'boolean';
+}
+
+function isCapabilities(value: unknown): value is QNotesCapabilities {
+  if (!isRecord(value) || value.schemaVersion !== 1 || !['read', 'share', 'write'].includes(value.effectiveProfile as string)
+    || !Array.isArray(value.scopes) || !value.scopes.every((scope) => typeof scope === 'string' && API_SCOPES.has(scope))
+    || !Array.isArray(value.supportedOperations) || !value.supportedOperations.every(isString) || !isRecord(value.responseLimits)) return false;
+  const limits = value.responseLimits;
+  return ['searchResults', 'contextTokens', 'noteChanges', 'outlineSections', 'patchReplacementBytes'].every((key) => typeof limits[key] === 'number' && Number.isSafeInteger(limits[key]) && limits[key] > 0);
 }
 
 function isSearchContextSource(value: unknown): boolean {
@@ -583,6 +630,14 @@ export class QNotesClient {
     return this.requestValidated(`/notes/${encodeURIComponent(noteRef)}${queryString({ includeDeleted: params.includeDeleted, offset: params.offset, lineStart: params.lineStart, lineEnd: params.lineEnd, maxBytes: params.maxBytes, continuation: params.continuation })}`, isNoteRead, 'note', {}, params);
   }
 
+  getCapabilities(options: RequestOptions = {}): Promise<QNotesCapabilities> {
+    return this.requestValidated('/capabilities', isCapabilities, 'capabilities', {}, options);
+  }
+
+  getNoteOutline(noteRef: string, options: RequestOptions = {}): Promise<NoteOutline> {
+    return this.requestValidated(`/notes/${encodeURIComponent(noteRef)}/outline`, isNoteOutline, 'note outline', {}, options);
+  }
+
   createNote(input: CreateNoteInput, options: RequestOptions = {}): Promise<Note> {
     return this.requestValidated('/notes', isNote, 'note', { method: 'POST', body: JSON.stringify(input) }, options);
   }
@@ -611,6 +666,14 @@ export class QNotesClient {
 
   updateNoteDetailed(noteId: UUID, input: UpdateNoteInput, options: RequestOptions = {}): Promise<NoteMutationResult> {
     return this.noteMutationDetailed(`/notes/${encodeURIComponent(noteId)}`, 'PATCH', input, options);
+  }
+
+  patchNoteSection(noteId: UUID, input: PatchNoteSectionInput, options: RequestOptions = {}): Promise<NoteMutationResult> {
+    return this.noteMutationDetailed(`/notes/${encodeURIComponent(noteId)}/section`, 'PATCH', input, options);
+  }
+
+  previewNoteSection(noteId: UUID, input: PatchNoteSectionInput, options: RequestOptions = {}): Promise<NoteSectionPatchPreview> {
+    return this.requestValidated(`/notes/${encodeURIComponent(noteId)}/section/preview`, isNoteSectionPatchPreview, 'note section patch preview', { method: 'POST', body: JSON.stringify(input) }, options);
   }
 
   appendNote(noteId: UUID, input: AppendNoteInput, options: RequestOptions = {}): Promise<Note> {
@@ -663,6 +726,10 @@ export class QNotesClient {
 
   sync(cursor?: string, limit?: number, options: RequestOptions = {}): Promise<SyncPage> {
     return this.requestValidated(`/sync${queryString({ cursor, limit })}`, isSyncPage, 'sync', {}, options);
+  }
+
+  getMutationStatus(mutationId: UUID, options: RequestOptions = {}): Promise<MutationStatus> {
+    return this.requestValidated(`/mutations/${encodeURIComponent(mutationId)}`, isMutationStatus, 'mutation status', {}, options);
   }
 
   listAttachments(noteRef: string, options: RequestOptions = {}): Promise<Attachment[]> {
