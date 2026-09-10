@@ -31,10 +31,17 @@ const residualRiskText = residualRiskSection.toLocaleLowerCase();
 const missingResidualPhrases = requiredResidualPhrases.filter((phrase) => !residualRiskText.includes(phrase.toLocaleLowerCase()));
 
 const matrixSection = sectionBetween('## Finding-to-evidence matrix', '## Behavioral authorization matrix');
+const matrixRows = matrixSection
+  .split(/\r?\n/)
+  .map((line) => line.split('|').slice(1, -1).map((cell) => cell.trim()))
+  .filter((cells) => /^US-\d{2} \/ /.test(cells[0] ?? ''));
+const incompleteMatrixRows = matrixRows
+  .filter((cells) => cells.length !== 3 || cells.some((cell) => cell.length === 0))
+  .map((cells) => cells[0] || '<missing story>');
 const evidencePaths = [...new Set(
-  [...matrixSection.matchAll(/`([^`]+)`/g)]
+  matrixRows.flatMap((cells) => [...cells[2].matchAll(/`([^`]+)`/g)])
     .flatMap(([, value]) => value.split(';').map((part) => part.split(' — ')[0].trim()))
-    .filter((value) => value.includes('/')),
+    .filter(Boolean),
 )];
 const missingEvidencePaths = [];
 for (const path of evidencePaths) {
@@ -63,9 +70,11 @@ const nonUnavailableStagingRows = stagingRows
   .filter((cells) => cells[3].replaceAll('`', '') !== 'unavailable')
   .map((cells) => `${cells[0]}=${cells[3] || '<empty>'}`);
 
-if (missingStories.length || missingPhrases.length || missingResidualPhrases.length || missingEvidencePaths.length || missingStagingRows.length || nonUnavailableStagingRows.length) {
+if (missingStories.length || incompleteMatrixRows.length || matrixRows.length !== requiredStories.length || missingPhrases.length || missingResidualPhrases.length || missingEvidencePaths.length || missingStagingRows.length || nonUnavailableStagingRows.length) {
   throw new Error([
     `Missing stories: ${missingStories.join(', ') || 'none'}`,
+    `Incomplete matrix rows: ${incompleteMatrixRows.join(', ') || 'none'}`,
+    `Matrix row count: ${matrixRows.length}/${requiredStories.length}`,
     `missing required text: ${missingPhrases.join(', ') || 'none'}`,
     `missing residual-risk text: ${missingResidualPhrases.join(', ') || 'none'}`,
     `missing evidence paths: ${missingEvidencePaths.join(', ') || 'none'}`,

@@ -3,6 +3,46 @@
 -- plans can run in CI without copying an account identifier into this file.
 -- This file intentionally records no unmeasured production claim.
 
+do $$
+declare
+  evaluation_owner uuid;
+  operations_notebook uuid;
+  ready_documents integer;
+begin
+  select id into evaluation_owner from auth.users where email = 'hermes-evaluation@qnotes.local';
+  if evaluation_owner is null then
+    raise exception 'search plan corpus is missing hermes-evaluation@qnotes.local';
+  end if;
+  if not exists (
+    select 1 from notesdb.notes
+    where owner_id = evaluation_owner
+      and lower(title) = 'erpnext production rollback'
+      and lower(slug) = 'erpnext-production-rollback'
+      and deleted_at is null
+  ) then
+    raise exception 'search plan corpus is missing the ERPNext Production Rollback note';
+  end if;
+  select id into operations_notebook
+  from notesdb.notebooks
+  where owner_id = evaluation_owner and lower(name) = 'operations'
+  order by id
+  limit 1;
+  if operations_notebook is null then
+    raise exception 'search plan corpus is missing the Operations notebook';
+  end if;
+  select count(*) into ready_documents
+  from notesdb.search_documents
+  where owner_id = evaluation_owner
+    and embedding_status = 'ready'
+    and embedding_model = 'gte-small'
+    and embedding_model_version = 'v2'
+    and embedding_mode = 'synthetic-test-v1'
+    and embedding is not null;
+  if ready_documents = 0 then
+    raise exception 'search plan corpus has no ready v2 synthetic vectors';
+  end if;
+end $$;
+
 -- Exact title/slug and note ownership path.
 explain (analyze, buffers, settings, format json)
 select d.id, d.note_id
@@ -11,7 +51,7 @@ join notesdb.notes n on n.id = d.note_id
 where d.owner_id = (select id from auth.users where email = 'hermes-evaluation@qnotes.local')
   and n.owner_id = d.owner_id
   and n.deleted_at is null
-  and (lower(n.title) = 'rollback production' or lower(n.slug) = 'rollback-production')
+  and (lower(n.title) = 'erpnext production rollback' or lower(n.slug) = 'erpnext-production-rollback')
 order by d.id
 limit 51;
 
@@ -55,6 +95,7 @@ where d.owner_id = (select id from auth.users where email = 'hermes-evaluation@q
   and d.embedding_status = 'ready'
   and d.embedding_model = 'gte-small'
   and d.embedding_model_version = 'v2'
+  and d.embedding_mode = 'synthetic-test-v1'
   and d.embedding is not null
 order by d.embedding <#> ('[' || repeat('0,', 383) || '0]')::extensions.vector(384), d.id
 limit 51;
@@ -65,10 +106,11 @@ select d.id, d.embedding <#> ('[' || repeat('0,', 383) || '0]')::extensions.vect
 from notesdb.search_documents d
 join notesdb.notes n on n.id = d.note_id and n.owner_id = d.owner_id and n.deleted_at is null
 where d.owner_id = (select id from auth.users where email = 'hermes-evaluation@qnotes.local')
-  and n.notebook_id = (select id from notesdb.notebooks where owner_id = d.owner_id order by id limit 1)
+  and n.notebook_id = (select id from notesdb.notebooks where owner_id = d.owner_id and lower(name) = 'operations' order by id limit 1)
   and d.embedding_status = 'ready'
   and d.embedding_model = 'gte-small'
   and d.embedding_model_version = 'v2'
+  and d.embedding_mode = 'synthetic-test-v1'
   and d.embedding is not null
 order by d.embedding <#> ('[' || repeat('0,', 383) || '0]')::extensions.vector(384), d.id
 limit 51;
@@ -83,6 +125,7 @@ where d.owner_id = (select id from auth.users where email = 'hermes-evaluation@q
   and d.embedding_status = 'ready'
   and d.embedding_model = 'gte-small'
   and d.embedding_model_version = 'v2'
+  and d.embedding_mode = 'synthetic-test-v1'
   and d.embedding is not null
 order by d.embedding <#> ('[' || repeat('0,', 383) || '0]')::extensions.vector(384), d.id
 limit 51;
@@ -104,11 +147,11 @@ explain (analyze, buffers, settings, format json)
 select *
 from public.qnotes_hybrid_search(
   (select id from auth.users where email = 'hermes-evaluation@qnotes.local'),
-  'rollback production',
+  'ERPNext Production Rollback',
   ('[' || repeat('0,', 383) || '0]')::extensions.vector(384),
   50,
   60,
-  '{}'::jsonb,
+  jsonb_build_object('embeddingMode', 'synthetic-test-v1'),
   0,
   2
 );

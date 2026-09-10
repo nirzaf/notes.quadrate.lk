@@ -101,7 +101,7 @@ jobs:
           else
             changed="$(git diff --name-only HEAD^ HEAD)"
           fi
-          if printf '%s\n' "$changed" | grep -Eq '^(packages/markdown/|supabase/functions/qnotes-api/search\.ts$|supabase/functions/embedding-worker/|embedding-worker/|supabase/migrations/.*search|tests/search-evaluation-(fixtures|baseline)\.json$|scripts/(evaluate-search|search-evaluation-metrics|verify-search-regression|seed-search-benchmark|search-benchmark)\.mjs$)'; then
+          if printf '%s\n' "$changed" | grep -Eq '^(packages/markdown/|supabase/functions/qnotes-api/search\.ts$|supabase/functions/embedding-worker/|embedding-worker/|supabase/migrations/.*search|tests/search-evaluation-(fixtures|baseline)\.json$|scripts/(evaluate-search|search-evaluation-metrics|verify-search-regression|seed-search-benchmark|search-benchmark)\.mjs$|scripts/search-query-plans\.sql$)'; then
             echo "required=true" >> "$GITHUB_OUTPUT"
           else
             echo "required=false" >> "$GITHUB_OUTPUT"
