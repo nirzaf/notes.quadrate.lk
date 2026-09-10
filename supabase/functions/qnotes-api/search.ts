@@ -1,7 +1,7 @@
 import type { Context } from 'hono';
 import { DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT, QNotesValidationError, resolveAutoSearchMode, validateSearchRequest, validateLimit, validateSearchMode, validateSearchQuery } from '@qnotes/shared';
 import type { ResolvedSearchMode, SearchFilters, SearchIndexMetadata, SearchRequest, SearchResponseMetadata, SearchResult } from '@qnotes/shared';
-import { EMBEDDING_MODEL, EMBEDDING_MODEL_VERSION, createEmbedding } from '../embedding-worker/embedding.ts';
+import { EMBEDDING_MODEL, EMBEDDING_MODEL_VERSION, createEmbedding, resolveEmbeddingMode } from '../embedding-worker/embedding.ts';
 import { authFromContext, requireScope } from '../_shared/auth.ts';
 import { ApiError } from '../_shared/errors.ts';
 import { appDbClient, decodeSearchCursor, encodeSearchCursor, requestHash, searchResultFromRow, serviceClient } from '../_shared/database.ts';
@@ -269,8 +269,8 @@ export async function searchNotes(context: Context): Promise<Response> {
       rawItems = await keywordSearch(auth.userId, request.query, retrievalLimit, request.filters, offset, request.maxPerNote);
     } else {
       const result = mode === 'semantic'
-        ? await serviceClient.rpc('qnotes_semantic_search', { p_owner_id: auth.userId, p_query: request.query, p_embedding: embedding!, p_limit: retrievalLimit, p_filters: request.filters, p_offset: offset, p_max_per_note: request.maxPerNote })
-        : await serviceClient.rpc('qnotes_hybrid_search', { p_owner_id: auth.userId, p_query: request.query, p_embedding: embedding!, p_limit: retrievalLimit, p_rrf_k: 60, p_filters: request.filters, p_offset: offset, p_max_per_note: request.maxPerNote });
+        ? await serviceClient.rpc('qnotes_semantic_search', { p_owner_id: auth.userId, p_query: request.query, p_embedding: embedding!, p_limit: retrievalLimit, p_filters: { ...request.filters, embeddingMode: resolveEmbeddingMode(Deno.env) }, p_offset: offset, p_max_per_note: request.maxPerNote })
+        : await serviceClient.rpc('qnotes_hybrid_search', { p_owner_id: auth.userId, p_query: request.query, p_embedding: embedding!, p_limit: retrievalLimit, p_rrf_k: 60, p_filters: { ...request.filters, embeddingMode: resolveEmbeddingMode(Deno.env) }, p_offset: offset, p_max_per_note: request.maxPerNote });
       if (result.error) throw new ApiError(503, 'SEMANTIC_SEARCH_UNAVAILABLE', 'Semantic search is temporarily unavailable.');
       rawItems = (Array.isArray(result.data) ? result.data : []).map((row) => searchResultFromRow(row as Record<string, unknown>));
     }
