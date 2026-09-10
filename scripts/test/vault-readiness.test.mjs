@@ -100,6 +100,7 @@ test('uses only the pinned read-only Supabase primitives and verifies them in or
   assert.deepEqual(calls[1], ['exec', 'supabase', 'db', 'query', '--linked', '--project-ref', 'ciyoandzjezgqxjpcrin', '--output-format', 'json', VAULT_READINESS_SQL]);
   assert.match(VAULT_READINESS_SQL, /has_function_privilege/);
   assert.match(VAULT_READINESS_SQL, /qnotes_vault_rotate_secret\(uuid,uuid,text,text,bigint,uuid,text,text,uuid,uuid,text\)/);
+  assert.match(VAULT_READINESS_SQL, /qnotes_vault_rotate_secret\(uuid,uuid,text,text,bigint,uuid,text,uuid,uuid,text\)/);
   assert.match(VAULT_READINESS_SQL, /qnotes_vault_reveal_secrets\(uuid,jsonb,uuid,text,uuid,text\)/);
   assert.doesNotMatch(VAULT_READINESS_SQL, /\b(insert|update|delete|create|drop|alter)\b/i);
 });
