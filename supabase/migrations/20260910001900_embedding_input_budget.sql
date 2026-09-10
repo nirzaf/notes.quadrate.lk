@@ -848,3 +848,7 @@ revoke all on function public.qnotes_requeue_embedding_generation(integer) from 
 grant execute on function public.qnotes_requeue_embedding_generation(integer) to service_role;
 revoke all on function public.qnotes_sync_note_content(uuid, uuid, jsonb, jsonb) from public, anon, authenticated;
 grant execute on function public.qnotes_sync_note_content(uuid, uuid, jsonb, jsonb) to service_role;
+-- The four-argument attachment completion overload remains for older workers;
+-- keep its compatibility path service-only as well.
+revoke all on function public.qnotes_complete_attachment_processing(uuid, uuid, text, jsonb) from public, anon, authenticated;
+grant execute on function public.qnotes_complete_attachment_processing(uuid, uuid, text, jsonb) to service_role;

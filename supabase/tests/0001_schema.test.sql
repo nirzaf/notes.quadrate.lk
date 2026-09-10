@@ -15,7 +15,7 @@ select is(
 );
 select is(
   (select array_agg(column_name order by ordinal_position)::text[] from information_schema.columns where table_schema = 'notesdb' and table_name = 'search_documents'),
-  array['id','owner_id','note_id','source_type','source_id','source_key','source_title','heading_path','content','content_hash','position','search_vector','embedding','embedding_status','embedding_error','embedding_model','created_at','updated_at','embedding_model_version','embedding_input_hash','embedding_queued_at','page_number','embedding_attempts','embedding_mode']::text[],
+  array['id','owner_id','note_id','source_type','source_id','source_key','source_title','heading_path','content','content_hash','position','search_vector','embedding','embedding_status','embedding_error','embedding_model','created_at','updated_at','embedding_model_version','embedding_input_hash','embedding_queued_at','page_number','embedding_attempts','embedding_mode','block_key']::text[],
   'search_documents has the required columns'
 );
 select is(
