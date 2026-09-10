@@ -3,21 +3,21 @@ import { createClient } from '@supabase/supabase-js';
 import { QNotesClient } from '@qnotes/api-client';
 import { createQNotesMcpServer } from '../_shared/generated/mcp-server/server.ts';
 import { isUUID } from '@qnotes/shared';
-import { isPersonalToken } from '../_shared/token.ts';
+import { hashPersonalToken, isPersonalToken } from '../_shared/token.ts';
 import { boundedRequest, RequestBodyTooLarge } from '../_shared/request-body.ts';
 import { consumeRequestBudget, MAX_MCP_REQUEST_BODY_BYTES, MAX_OAUTH_FORM_BODY_BYTES, MAX_OAUTH_REGISTER_BODY_BYTES, requestClientPrincipal } from '../_shared/request-limits.ts';
-import { configuredStaticRedirectUris, isAllowedGoogleRedirect } from './oauth-redirects.ts';
+import { base64Url, decodeBase64Url, isOAuthAccessToken, signOAuthValue, verifyOAuthAccessToken, verifyOAuthValue } from '../_shared/oauth-grant.ts';
+import { configuredStaticRedirectUris, hostedMcpOAuthScopes, HOSTED_MCP_OAUTH_SCOPE, isAllowedGoogleRedirect } from './oauth-redirects.ts';
 
 const MCP_PATHS = new Set(['', '/', '/mcp']);
 const STATIC_OAUTH_CLIENT_ID = Deno.env.get('QNOTES_MCP_OAUTH_CLIENT_ID') ?? 'qnotes-gemini';
-const OAUTH_SCOPE = 'ACCESS_VIEW_MANAGE_MCP_CONTENT';
 const OAUTH_CODE_TTL_SECONDS = 90;
-const OAUTH_ACCESS_TTL_SECONDS = 30 * 24 * 60 * 60;
+const OAUTH_ACCESS_TTL_SECONDS = 15 * 60;
 const OAUTH_CLIENT_TTL_SECONDS = 90 * 24 * 60 * 60;
 const OAUTH_CONSENT_URL = Deno.env.get('QNOTES_MCP_CONSENT_URL')?.trim() || 'https://notes.quadrate.lk/oauth/authorize';
 // Hosted deployments intentionally support only read and the explicit share
-// profile. Every other value, including write, remains read-only. The caller's
-// OAuth-resolved personal token is the only QNotes credential used below.
+// profile. Every other value, including write, remains read-only. OAuth bearer
+// requests carry a persisted grant reference; the personal token stays server-side.
 const HOSTED_MCP_PROFILE = Deno.env.get('QNOTES_MCP_PROFILE') === 'share' ? 'share' : 'read';
 
 interface OAuthCodePayload {
@@ -28,7 +28,7 @@ interface OAuthCodePayload {
   codeChallenge: string;
   scope: string;
   resource: string;
-  encryptedToken: string;
+  grantId: string;
   expiresAt: number;
 }
 
@@ -40,12 +40,14 @@ interface OAuthClientPayload {
   nonce: string;
 }
 
-interface OAuthAccessPayload {
-  type: 'access_token';
-  clientId: string;
-  resource: string;
-  encryptedToken: string;
-  expiresAt: number;
+interface OAuthGrantContext {
+  owner_id: string;
+  scopes: string[];
+  access_mode: 'account' | 'notebooks';
+  allow_unfiled: boolean;
+  policy_revision: number;
+  notebook_ids: string[];
+  expires_at: string;
 }
 
 let oauthServiceClient: ReturnType<typeof createClient> | null = null;
@@ -66,6 +68,60 @@ async function consumeAuthorizationCode(codeId: string, expiresAt: number): Prom
   } as never) as unknown as { data: unknown; error: { message: string } | null };
   if (result.error || typeof result.data !== 'boolean') throw new Error('Unable to consume the OAuth authorization code.');
   return result.data;
+}
+
+async function oauthGrantContext(grantId: string, clientId: string, resource: string): Promise<OAuthGrantContext[] | null> {
+  try {
+    const result = await getOAuthServiceClient().rpc('qnotes_oauth_grant_context', {
+      p_grant_id: grantId,
+      p_client_id: clientId,
+      p_resource: resource,
+    } as never) as unknown as { data: unknown; error: { message: string } | null };
+    if (result.error || !Array.isArray(result.data)) return null;
+    return result.data as OAuthGrantContext[];
+  } catch {
+    return null;
+  }
+}
+
+async function createOAuthGrant(token: string, clientId: string, resource: string, scope: string): Promise<string | 'denied' | 'unavailable'> {
+  const scopes = hostedMcpOAuthScopes(scope, HOSTED_MCP_PROFILE);
+  if (!scopes) return 'denied';
+  try {
+    const result = await getOAuthServiceClient().rpc('qnotes_create_oauth_grant', {
+      p_token_hash: await hashPersonalToken(token),
+      p_client_id: clientId,
+      p_resource: resource,
+      p_scopes: scopes,
+      p_expires_at: new Date((Math.floor(Date.now() / 1000) + OAUTH_ACCESS_TTL_SECONDS) * 1000).toISOString(),
+      p_access_mode: null,
+      p_allow_unfiled: null,
+      p_notebook_ids: null,
+    } as never) as unknown as { data: unknown; error: { message: string } | null };
+    if (result.error) {
+      return /oauth_invalid_token|oauth_scope_not_granted|oauth_access_not_granted/.test(result.error.message) ? 'denied' : 'unavailable';
+    }
+    const data = result.data && typeof result.data === 'object' && !Array.isArray(result.data) ? result.data as Record<string, unknown> : null;
+    const grantId = data?.id;
+    if (typeof grantId !== 'string' || !isUUID(grantId)) return 'unavailable';
+    return grantId;
+  } catch {
+    return 'unavailable';
+  }
+}
+
+async function revokeOAuthGrant(grantId: string, clientId: string, resource: string): Promise<boolean | null> {
+  try {
+    const result = await getOAuthServiceClient().rpc('qnotes_revoke_oauth_grant', {
+      p_grant_id: grantId,
+      p_client_id: clientId,
+      p_resource: resource,
+    } as never) as unknown as { data: unknown; error: { message: string } | null };
+    if (result.error || typeof result.data !== 'boolean') return null;
+    return result.data;
+  } catch {
+    return null;
+  }
 }
 
 function requestPath(request: Request): string {
@@ -119,92 +175,6 @@ function bearerToken(request: Request): string | null {
   return token || null;
 }
 
-function base64Url(bytes: Uint8Array): string {
-  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
-}
-
-function decodeBase64Url(value: string): Uint8Array {
-  const base64 = value.replace(/-/g, '+').replace(/_/g, '/')
-    .padEnd(Math.ceil(value.length / 4) * 4, '=');
-  const binary = atob(base64);
-  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
-}
-
-async function oauthKey(): Promise<CryptoKey> {
-  const pepper = Deno.env.get('QNOTES_TOKEN_PEPPER');
-  if (!pepper) throw new Error('QNOTES_TOKEN_PEPPER is not configured.');
-  return crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(pepper),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign', 'verify'],
-  );
-}
-
-async function oauthEncryptionKey(): Promise<CryptoKey> {
-  const pepper = Deno.env.get('QNOTES_TOKEN_PEPPER');
-  if (!pepper) throw new Error('QNOTES_TOKEN_PEPPER is not configured.');
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pepper));
-  return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
-}
-
-async function encryptSecret(value: string): Promise<string> {
-  const iv = crypto.getRandomValues(new Uint8Array(12)) as Uint8Array<ArrayBuffer>;
-  const ciphertext = new Uint8Array(await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv },
-    await oauthEncryptionKey(),
-    new TextEncoder().encode(value),
-  ));
-  const combined = new Uint8Array(iv.byteLength + ciphertext.byteLength);
-  combined.set(iv, 0);
-  combined.set(ciphertext, iv.byteLength);
-  return base64Url(combined);
-}
-
-async function decryptSecret(value: string): Promise<string | null> {
-  try {
-    const combined = decodeBase64Url(value);
-    if (combined.byteLength <= 12) return null;
-    const iv = new Uint8Array(combined.slice(0, 12)) as Uint8Array<ArrayBuffer>;
-    const ciphertext = new Uint8Array(combined.slice(12)) as Uint8Array<ArrayBuffer>;
-    const plaintext = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv },
-      await oauthEncryptionKey(),
-      ciphertext,
-    );
-    const token = new TextDecoder().decode(plaintext);
-    return isPersonalToken(token) ? token : null;
-  } catch {
-    return null;
-  }
-}
-
-async function signOAuthValue(prefix: string, payload: Record<string, unknown>): Promise<string> {
-  const encodedPayload = base64Url(new TextEncoder().encode(JSON.stringify(payload)));
-  const signature = new Uint8Array(await crypto.subtle.sign('HMAC', await oauthKey(), new TextEncoder().encode(encodedPayload)));
-  return `${prefix}.${encodedPayload}.${base64Url(signature)}`;
-}
-
-async function verifyOAuthValue<T>(value: string, prefix: string): Promise<T | null> {
-  const parts = value.split('.');
-  if (parts.length !== 3 || parts[0] !== prefix) return null;
-  try {
-    const signature = new Uint8Array(decodeBase64Url(parts[2])) as Uint8Array<ArrayBuffer>;
-    const valid = await crypto.subtle.verify(
-      'HMAC',
-      await oauthKey(),
-      signature,
-      new TextEncoder().encode(parts[1]),
-    );
-    if (!valid) return null;
-    const payload = JSON.parse(new TextDecoder().decode(decodeBase64Url(parts[1]))) as T;
-    return payload && typeof payload === 'object' ? payload : null;
-  } catch {
-    return null;
-  }
-}
-
 async function pkceChallenge(verifier: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
   return base64Url(new Uint8Array(digest));
@@ -245,7 +215,8 @@ function oauthMetadata(request: Request): Record<string, unknown> {
     grant_types_supported: ['authorization_code'],
     code_challenge_methods_supported: ['S256'],
     token_endpoint_auth_methods_supported: ['none'],
-    scopes_supported: [OAUTH_SCOPE],
+    scopes_supported: [HOSTED_MCP_OAUTH_SCOPE],
+    revocation_endpoint: `${base}/revoke`,
   };
 }
 
@@ -255,7 +226,7 @@ function oauthResourceMetadata(request: Request): Record<string, unknown> {
     resource: base,
     authorization_servers: [base],
     bearer_methods_supported: ['header'],
-    scopes_supported: [OAUTH_SCOPE],
+    scopes_supported: [HOSTED_MCP_OAUTH_SCOPE],
   };
 }
 
@@ -364,11 +335,11 @@ async function handleAuthorize(request: Request): Promise<Response> {
     const redirectUri = params.get('redirect_uri') ?? '';
     const client = await oauthClient(clientId);
     const resource = mcpBaseUrl(request);
-    const scope = params.get('scope')?.trim() || OAUTH_SCOPE;
+    const scope = params.get('scope')?.trim() || HOSTED_MCP_OAUTH_SCOPE;
     if (!client || params.get('response_type') !== 'code' || !(await clientAllowsRedirect(client, redirectUri))) return oauthError(request, 'invalid_request', 'The OAuth authorization request is invalid.');
     if (!params.get('state') || params.get('state')!.length > 4096) return oauthError(request, 'invalid_request', 'A valid state parameter is required.');
     if (!params.get('code_challenge') || params.get('code_challenge_method') !== 'S256' || params.get('code_challenge')!.length > 256) return oauthError(request, 'invalid_request', 'PKCE S256 is required.');
-    if (scope.length > 512) return oauthError(request, 'invalid_request', 'The OAuth scope is invalid.');
+    if (scope.length > 512 || !hostedMcpOAuthScopes(scope, HOSTED_MCP_PROFILE)) return oauthError(request, 'invalid_scope', 'The requested OAuth scope is not supported.');
     return consentRedirect(request, { clientId, clientName: client.clientName, redirectUri, state: params.get('state')!, codeChallenge: params.get('code_challenge')!, scope, resource });
   }
 
@@ -390,7 +361,11 @@ async function handleAuthorize(request: Request): Promise<Response> {
   const codeChallenge = String(form.get('code_challenge') ?? '');
   if (!state || state.length > 4096 || !codeChallenge || form.get('code_challenge_method') !== 'S256' || codeChallenge.length > 256) return oauthError(request, 'invalid_request', 'PKCE S256 and state are required.');
   const resource = mcpBaseUrl(request);
-  const scope = String(form.get('scope') ?? OAUTH_SCOPE).slice(0, 512);
+  const scope = String(form.get('scope') ?? HOSTED_MCP_OAUTH_SCOPE).slice(0, 512);
+  if (!hostedMcpOAuthScopes(scope, HOSTED_MCP_PROFILE)) return oauthError(request, 'invalid_scope', 'The requested OAuth scope is not supported.');
+  const grant = await createOAuthGrant(qnotesToken, clientId, resource, scope);
+  if (grant === 'denied') return oauthError(request, 'access_denied', 'The personal token cannot provide the requested OAuth access.');
+  if (grant === 'unavailable') return oauthError(request, 'temporarily_unavailable', 'OAuth access could not be verified. Retry later.', 503);
   const code = await signOAuthValue('qoc', {
     type: 'authorization_code',
     codeId: crypto.randomUUID(),
@@ -399,7 +374,7 @@ async function handleAuthorize(request: Request): Promise<Response> {
     codeChallenge,
     scope,
     resource,
-    encryptedToken: await encryptSecret(qnotesToken),
+    grantId: grant,
     expiresAt: Math.floor(Date.now() / 1000) + OAUTH_CODE_TTL_SECONDS,
   });
   return authorizationRedirect(request, redirectUri, { code, state, iss: mcpBaseUrl(request) });
@@ -422,7 +397,7 @@ async function handleToken(request: Request): Promise<Response> {
 
   const codeValue = String(form.get('code') ?? '');
   const code = await verifyOAuthValue<OAuthCodePayload>(codeValue, 'qoc');
-  if (!code || code.type !== 'authorization_code' || !isUUID(code.codeId) || code.clientId !== clientId || code.expiresAt <= Math.floor(Date.now() / 1000)) {
+  if (!code || code.type !== 'authorization_code' || !isUUID(code.codeId) || !isUUID(code.grantId) || code.clientId !== clientId || code.expiresAt <= Math.floor(Date.now() / 1000)) {
     return oauthError(request, 'invalid_grant', 'The authorization code is invalid or expired.');
   }
   const requestedRedirectUri = form.get('redirect_uri');
@@ -430,20 +405,26 @@ async function handleToken(request: Request): Promise<Response> {
   if (code.resource !== mcpBaseUrl(request)) return oauthError(request, 'invalid_target', 'The resource does not match this MCP server.');
   const verifier = String(form.get('code_verifier') ?? '');
   if (!verifier || (await pkceChallenge(verifier)) !== code.codeChallenge) return oauthError(request, 'invalid_grant', 'The PKCE verifier is invalid.');
+  const grantContext = await oauthGrantContext(code.grantId, code.clientId, code.resource);
+  if (!grantContext) return oauthError(request, 'temporarily_unavailable', 'OAuth access could not be verified. Retry later.', 503);
+  if (grantContext.length !== 1) return oauthError(request, 'invalid_grant', 'The authorization grant is invalid or expired.');
+  const grantExpiresAt = Date.parse(grantContext[0].expires_at);
+  const accessExpiresAt = Math.min(Math.floor(Date.now() / 1000) + OAUTH_ACCESS_TTL_SECONDS, Math.floor(grantExpiresAt / 1000));
+  if (!Number.isFinite(grantExpiresAt) || accessExpiresAt <= Math.floor(Date.now() / 1000)) return oauthError(request, 'invalid_grant', 'The authorization grant is invalid or expired.');
   if (!(await consumeAuthorizationCode(code.codeId, code.expiresAt))) return oauthError(request, 'invalid_grant', 'The authorization code is invalid or expired.');
 
   const accessToken = await signOAuthValue('qoa', {
     type: 'access_token',
     clientId,
     resource: code.resource,
-    encryptedToken: code.encryptedToken,
-    expiresAt: Math.floor(Date.now() / 1000) + OAUTH_ACCESS_TTL_SECONDS,
+    grantId: code.grantId,
+    expiresAt: accessExpiresAt,
   });
 
   return json(request, {
     access_token: accessToken,
     token_type: 'Bearer',
-    expires_in: OAUTH_ACCESS_TTL_SECONDS,
+    expires_in: accessExpiresAt - Math.floor(Date.now() / 1000),
     scope: code.scope,
   }, 200, {
     'Cache-Control': 'no-store',
@@ -451,13 +432,34 @@ async function handleToken(request: Request): Promise<Response> {
   });
 }
 
+async function handleRevoke(request: Request): Promise<Response> {
+  const limited = await oauthBudget(request);
+  if (limited) return limited;
+  let form: FormData;
+  try {
+    form = await request.formData();
+  } catch {
+    return oauthError(request, 'invalid_request', 'The revocation request must use form encoding.');
+  }
+  const token = String(form.get('token') ?? '');
+  if (!isOAuthAccessToken(token)) return oauthError(request, 'unsupported_token_type', 'Only QNotes OAuth access tokens can be revoked.');
+  const access = await verifyOAuthAccessToken(token);
+  const resource = mcpBaseUrl(request);
+  if (!access || access.resource !== resource) return oauthError(request, 'invalid_token', 'The OAuth access token is invalid.');
+  const clientId = String(form.get('client_id') ?? access.clientId);
+  if (clientId !== access.clientId || !(await oauthClient(clientId))) return oauthError(request, 'invalid_client', 'The OAuth client credentials are invalid.', 401);
+  const revoked = await revokeOAuthGrant(access.grantId, clientId, resource);
+  if (revoked === null) return oauthError(request, 'temporarily_unavailable', 'OAuth access could not be revoked. Retry later.', 503);
+  return json(request, null, 200, { 'Cache-Control': 'no-store', Pragma: 'no-cache' });
+}
+
 async function resolveBearerToken(request: Request): Promise<string | null> {
   const token = bearerToken(request);
   if (!token) return null;
   if (isPersonalToken(token)) return token;
-  const access = await verifyOAuthValue<OAuthAccessPayload>(token, 'qoa');
+  const access = await verifyOAuthAccessToken(token);
   if (!access || access.type !== 'access_token' || access.expiresAt <= Math.floor(Date.now() / 1000) || access.resource !== mcpBaseUrl(request)) return null;
-  return decryptSecret(access.encryptedToken);
+  return token;
 }
 
 async function handle(request: Request): Promise<Response> {
@@ -465,7 +467,7 @@ async function handle(request: Request): Promise<Response> {
   if (request.method === 'OPTIONS') return withCors(request, new Response(null, { status: 204 }));
   const maxBodyBytes = (path === '/register' || path === '/api/oauth/register') && request.method === 'POST'
     ? MAX_OAUTH_REGISTER_BODY_BYTES
-    : (path === '/authorize' || path === '/token' || path === '/api/oauth/token') && request.method === 'POST'
+    : (path === '/authorize' || path === '/token' || path === '/api/oauth/token' || path === '/revoke') && request.method === 'POST'
       ? MAX_OAUTH_FORM_BODY_BYTES
       : MCP_PATHS.has(path) && request.method === 'POST'
         ? MAX_MCP_REQUEST_BODY_BYTES
@@ -475,7 +477,7 @@ async function handle(request: Request): Promise<Response> {
       request = await boundedRequest(request, maxBodyBytes);
     } catch (error) {
       if (!(error instanceof RequestBodyTooLarge)) throw error;
-      if (path === '/register' || path === '/api/oauth/register' || path === '/authorize' || path === '/token' || path === '/api/oauth/token') return oauthError(request, 'invalid_request', 'The request body is too large.', 413);
+      if (path === '/register' || path === '/api/oauth/register' || path === '/authorize' || path === '/token' || path === '/api/oauth/token' || path === '/revoke') return oauthError(request, 'invalid_request', 'The request body is too large.', 413);
       return json(request, { error: 'Request body is too large.' }, 413, { 'Cache-Control': 'no-store' });
     }
   }
@@ -486,12 +488,13 @@ async function handle(request: Request): Promise<Response> {
   if (path === '/authorize' && request.method === 'GET') return handleAuthorize(request);
   if (path === '/authorize' && request.method === 'POST') return handleAuthorize(request);
   if ((path === '/token' || path === '/api/oauth/token') && request.method === 'POST') return handleToken(request);
+  if (path === '/revoke' && request.method === 'POST') return handleRevoke(request);
   if (!MCP_PATHS.has(path)) return json(request, { error: 'Not found' }, 404);
 
   const token = await resolveBearerToken(request);
   if (!token) {
     return json(request, { error: 'Bearer authentication is required.' }, 401, {
-      'WWW-Authenticate': `Bearer realm="qnotes-mcp", resource_metadata="${mcpBaseUrl(request)}/.well-known/oauth-protected-resource", scope="${OAUTH_SCOPE}"`,
+      'WWW-Authenticate': `Bearer realm="qnotes-mcp", resource_metadata="${mcpBaseUrl(request)}/.well-known/oauth-protected-resource", scope="${HOSTED_MCP_OAUTH_SCOPE}"`,
     });
   }
 
