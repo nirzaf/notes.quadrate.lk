@@ -641,7 +641,7 @@ Agent-facing exact reads are bounded by default. `read_note_context`, `get_block
 
 The native `share` profile uses the same caller-owned personal token as its QNotes client, via `QNOTES_TOKEN` (or the read-token fallback `QNOTES_READ_TOKEN`), and that token must include `notes:read`, `search:read`, and `shares:write`. It never accepts or configures a shared owner JWT. The `write` profile keeps its existing `QNOTES_WRITE_TOKEN` behavior but omits `create_public_share` by default. To expose that tool in a write process, set `QNOTES_MCP_ENABLE_PUBLIC_SHARE=true` and use a caller-owned write token that includes `shares:write`; the flag is an explicit capability declaration, while API scopes still enforce the token boundary. Prefer the separate `share` profile when public sharing is the only write capability required. `mutationId` is optional in each write tool for compatibility, but a caller that may retry after an ambiguous transport result must supply the same mutation ID for the same logical operation. Keep the generated `QNOTES_MCP_DEVICE_ID` unchanged across process restarts; the existing owner-scoped `(owner_id, mutation_id)` receipt key plus the device ID in the request hash makes retry behavior durable across MCP processes. Omitted identity fields remain supported and receive fresh values, so those calls are new operations rather than durable retries. All write tools return a compact acknowledgment containing the note ID, title, resulting version, mutation ID, outcome, and note URI—never the full Markdown body. `capture_note` accepts optional `notebookId` and `dedupeKey`; its outcome distinguishes creation, an idempotent retry, and a deduplicated existing note. `append_note` preserves Markdown boundaries and uses the dedicated logical append endpoint, so a lost response can be retried without duplicating the addition. `update_note` preserves tags when `tags` is omitted and still requires the expected note version for a new update. `delete_note`, `restore_note`, and `move_note_to_notebook` require the expected version; deletion and restoration require `confirm: true`, deletion is soft-only, and there is no permanent purge tool. Public share revocation uses the same `shares:write` caller token through REST.
 
-The Integrations page can add an optional Vault profile to the same Hermes server entry. `none` leaves the existing Notes-only configuration unchanged; `metadata` exposes only `vault_list_projects`, `vault_list_environments`, and `vault_list_secrets`; `reveal` exposes those metadata tools plus `vault_get_secret` and `vault_get_secrets`; and `write` exposes those metadata tools plus `vault_create_secret`, `vault_rotate_secret`, and `vault_delete_secret` without plaintext reveal tools. A combined entry uses `QVAULT_TOKEN: "${QVAULT_TOKEN}"` and `QVAULT_MCP_PROFILE: "metadata"` (or the selected `reveal`/`write` value) as environment placeholders. Create the separate `qvt_...` token in Agent Vault and supply it through Hermes’ secret environment; the generated configuration never displays or embeds its raw value and never generates `QVAULT_URL`.
+The Integrations page can add an optional Vault profile to the same Hermes server entry. `none` leaves the existing Notes-only configuration unchanged; `metadata` exposes `vault_list_projects`, `vault_list_environments`, `vault_list_secrets`, and `vault_get_mutation_status`; `reveal` exposes those metadata tools plus `vault_get_secret` and `vault_get_secrets`; and `write` exposes those metadata tools plus `vault_create_secret`, `vault_rotate_secret`, and `vault_delete_secret` without plaintext reveal tools. A combined entry uses `QVAULT_TOKEN: "${QVAULT_TOKEN}"` and `QVAULT_MCP_PROFILE: "metadata"` (or the selected `reveal`/`write` value) as environment placeholders. Create the separate `qvt_...` token in Agent Vault and supply it through Hermes’ secret environment; the generated configuration never displays or embeds its raw value and never generates `QVAULT_URL`.
 
 Native MCP reveal calls require an exact selector, a bounded non-empty purpose,
 and `confirmPlaintext: true`. That field acknowledges the caller's explicit
@@ -792,6 +792,9 @@ All `/api` routes except health require a bearer credential. The public share re
 - `409 NOTE_DEDUPE_CONFLICT`: another active note already uses the dedupe key of a note being restored.
 - `409 NOTEBOOK_NAME_CONFLICT`: choose a notebook name not used by another notebook for the owner.
 - `409 MUTATION_REUSE_CONFLICT`: do not reuse a mutation ID for a different request.
+- `404 VAULT_MUTATION_NOT_FOUND`: the owner or authorized qvt caller has no retained receipt for that mutation ID.
+- `409 VAULT_MUTATION_REUSE`: the Vault mutation ID was used for a different operation, resource, version, or request.
+- `409 VAULT_MUTATION_EXPIRED`: the 30-day Vault receipt retention period ended; begin a new operation with a new mutation ID.
 - `413 ATTACHMENT_TOO_LARGE` or `EXPORT_TOO_LARGE`: reduce the payload or raise the corresponding server-side limit.
 - `422 ATTACHMENT_SIZE_MISMATCH`: the uploaded Storage object did not match the declared byte count; the object is rejected before processing is queued.
 - `422 ATTACHMENT_TYPE_MISMATCH`: the uploaded bytes do not match the declared supported MIME type.
@@ -814,14 +817,18 @@ live under `/vault/*` and accept a Supabase user JWT or a scoped `qvt_...`
 agent token. `qnt_...` and `qns_...` credentials are rejected by Vault.
 
 The Vault API supports project/environment metadata, encrypted secret create,
-rotate, delete, metadata-only reads, explicit single or bounded batch reveal,
-and JWT-only agent-token/grant/audit administration. Secret mutations require
-an `expectedVersion` and UUID `mutationId`; the server binds the mutation to a
-domain-separated HMAC of the canonical request, so a mutation ID cannot be
-reused for a different request. Native MCP reveal requests require an exact
-selector, bounded `purpose`, and `confirmPlaintext: true`; the API enforces
-the matching grant or verified human approval. Reveal responses write no
-plaintext to metadata or audit and return `Cache-Control: no-store`.
+rotate, delete, metadata-only reads, authorized mutation receipt status,
+explicit single or bounded batch reveal, and JWT-only agent-token/grant/audit
+administration. Secret mutations require an `expectedVersion` and UUID
+`mutationId`; the server binds the mutation to a domain-separated HMAC of the
+canonical request and retains safe receipt metadata for 30 days. Retrying the
+same request with the same mutation ID returns the original result, including
+after a delete, while a changed request or expired receipt is rejected. `GET
+/vault/mutations/:mutationId` returns the bounded receipt and never returns a
+secret value or historical request body. Native MCP reveal requests require an
+exact selector, bounded `purpose`, and `confirmPlaintext: true`; the API
+enforces the matching grant or verified human approval. Reveal responses write
+no plaintext to metadata or audit and return `Cache-Control: no-store`.
 
 Exact resource operations use `POST /vault/environments/resolve` and
 `POST /vault/secrets/resolve`. These service-mediated lookups return only the

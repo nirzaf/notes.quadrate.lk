@@ -14,6 +14,7 @@ function protocolClient(overrides = {}) {
     async listProjects() { return { items: [] }; },
     async listEnvironments() { return { items: [] }; },
     async listSecrets() { return []; },
+    async getMutationStatus() { throw Object.assign(new Error('missing receipt'), { status: 404, code: 'VAULT_MUTATION_NOT_FOUND' }); },
     async listSecretsBySelector() { return []; },
     async resolveEnvironment() { return { projectId: 'project-1', environmentId: 'environment-1', secretId: null }; },
     async resolveSecret() { return { projectId: 'project-1', environmentId: 'environment-1', secretId: 'secret-1' }; },
@@ -126,5 +127,42 @@ test('Vault MCP mutations resolve exact resources without enumerating parent col
   assert.deepEqual(calls[4], { operation: 'resolveSecret', input: { project: 'pearl-blanc', environment: 'production', name: 'KEY' }, action: 'secret:delete' });
   assert.deepEqual(calls[3], { operation: 'rotateSecret', receivedSecretId: secretId, input: { value: 'synthetic-rotated', expectedVersion: 1, mutationId: '990e8400-e29b-41d4-a716-446655440000' } });
   assert.deepEqual(calls[5], { operation: 'deleteSecret', receivedSecretId: secretId, input: { expectedVersion: 2, mutationId: 'aa0e8400-e29b-41d4-a716-446655440000', confirm: true } });
+  await client.close();
+});
+
+test('Vault MCP recovers a deleted mutation through its retained secret identity', async () => {
+  const receipt = {
+    mutationId: 'aa0e8400-e29b-41d4-a716-446655440001',
+    operation: 'deleted',
+    projectId: '550e8400-e29b-41d4-a716-446655440000',
+    environmentId: '660e8400-e29b-41d4-a716-446655440000',
+    secretId: '770e8400-e29b-41d4-a716-446655440000',
+    expectedVersion: 1,
+    resultingVersion: 2,
+    createdAt: '2026-01-01',
+    retentionExpiresAt: '2026-01-31',
+    hashKeyVersion: 'v1',
+    status: 'complete',
+    result: {
+      id: '770e8400-e29b-41d4-a716-446655440000',
+      projectId: '550e8400-e29b-41d4-a716-446655440000',
+      environmentId: '660e8400-e29b-41d4-a716-446655440000',
+      name: 'CLOUDFLARE_API_TOKEN',
+      description: null,
+      version: 2,
+      createdAt: '2026-01-01',
+      updatedAt: '2026-01-01',
+      rotatedAt: null,
+      deletedAt: '2026-01-01',
+    },
+  };
+  const calls = [];
+  const { client } = await connected('write', protocolClient({
+    async getMutationStatus() { return receipt; },
+    async deleteSecret(secretId, input) { calls.push({ secretId, input }); return receipt.result; },
+  }));
+  const result = await client.callTool({ name: 'vault_delete_secret', arguments: { project: 'pearl-blanc', environment: 'production', name: 'CLOUDFLARE_API_TOKEN', expectedVersion: 1, mutationId: receipt.mutationId, confirm: true } });
+  assert.equal(result.isError, undefined);
+  assert.deepEqual(calls, [{ secretId: receipt.secretId, input: { expectedVersion: 1, mutationId: receipt.mutationId, confirm: true } }]);
   await client.close();
 });

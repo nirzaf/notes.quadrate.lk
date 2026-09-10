@@ -81,6 +81,43 @@ test('QVaultClient lists secrets by the exact project and environment selector',
   assert.equal(calls[0].init.headers.get('Authorization'), 'Bearer qvt_test');
 });
 
+test('QVaultClient recovers a bounded Vault mutation receipt without accepting secret fields', async () => {
+  const receipt = {
+    mutationId: 'aa0e8400-e29b-41d4-a716-446655440001',
+    operation: 'deleted',
+    projectId: project.id,
+    environmentId: environment.id,
+    secretId: secret.id,
+    expectedVersion: 1,
+    resultingVersion: 2,
+    createdAt: '2026-01-01',
+    retentionExpiresAt: '2026-01-31',
+    hashKeyVersion: 'v1',
+    status: 'complete',
+    result: { ...secret, deletedAt: '2026-01-01' },
+  };
+  const calls = [];
+  const client = new QVaultClient({
+    baseUrl: 'https://example.test',
+    getAccessToken: () => 'qvt_test',
+    fetchImplementation: async (url, init) => {
+      calls.push({ url, init });
+      return jsonResponse(receipt);
+    },
+  });
+  assert.deepEqual(await client.getMutationStatus(receipt.mutationId), receipt);
+  assert.equal(calls[0].url, `https://example.test/vault/mutations/${receipt.mutationId}`);
+  assert.equal(calls[0].init.headers.get('Authorization'), 'Bearer qvt_test');
+
+  const unsafeClient = new QVaultClient({ baseUrl: 'https://example.test', getAccessToken: () => 'qvt_test', fetchImplementation: async () => jsonResponse({ ...receipt, result: { ...receipt.result, value: 'must-not-leak' } }) });
+  await assert.rejects(() => unsafeClient.getMutationStatus(receipt.mutationId), (error) => {
+    assert.ok(error instanceof QVaultProtocolError);
+    assert.match(error.message, /malformed mutation status/);
+    assert.equal(error.message.includes('must-not-leak'), false);
+    return true;
+  });
+});
+
 test('QVaultClient keeps single-use Vault approvals in headers and validates the response', async () => {
   const calls = [];
   const client = new QVaultClient({

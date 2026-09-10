@@ -66,6 +66,22 @@ export type VaultSecretMetadata = {
   deletedAt: string | null;
 };
 
+export type VaultMutationOperation = 'created' | 'rotated' | 'deleted';
+export type VaultMutationReceipt = {
+  mutationId: string;
+  operation: VaultMutationOperation;
+  projectId: string | null;
+  environmentId: string | null;
+  secretId: string | null;
+  expectedVersion: number | null;
+  resultingVersion: number | null;
+  createdAt: string;
+  retentionExpiresAt: string;
+  hashKeyVersion: string;
+  status: 'complete' | 'expired';
+  result: VaultSecretMetadata | null;
+};
+
 export type VaultAgentTokenMetadata = {
   id: string;
   name: string;

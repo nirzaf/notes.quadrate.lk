@@ -185,6 +185,20 @@ export const mutationAcknowledgmentSchema = z.object({ ...acknowledgment, outcom
 const vaultProject = z.object({ id, slug: z.string(), name: z.string(), description: z.string().nullable(), createdAt: date, updatedAt: date, archivedAt: date.nullable() }).strict();
 const vaultEnvironment = z.object({ id, projectId: id, slug: z.string(), name: z.string(), description: z.string().nullable(), createdAt: date, updatedAt: date, archivedAt: date.nullable() }).strict();
 const vaultSecret = z.object({ id, projectId: id, environmentId: id, name: z.string(), description: z.string().nullable(), version: z.number().int().positive(), createdAt: date, updatedAt: date, rotatedAt: date.nullable(), deletedAt: date.nullable() }).strict();
+export const vaultMutationStatusSchema = z.object({
+  mutationId: z.string().uuid(),
+  operation: z.enum(['created', 'rotated', 'deleted']),
+  projectId: id.nullable(),
+  environmentId: id.nullable(),
+  secretId: id.nullable(),
+  expectedVersion: z.number().int().positive().nullable(),
+  resultingVersion: z.number().int().positive().nullable(),
+  createdAt: date,
+  retentionExpiresAt: date,
+  hashKeyVersion: z.string().min(1).max(32),
+  status: z.enum(['complete', 'expired']),
+  result: vaultSecret.nullable(),
+}).strict();
 export const vaultProjectsSchema = z.object({ items: z.array(vaultProject), truncated: z.boolean().optional() }).strict();
 export const vaultEnvironmentsSchema = z.object({ items: z.array(vaultEnvironment), truncated: z.boolean().optional() }).strict();
 export const vaultSecretsSchema = z.object({ items: z.array(vaultSecret), truncated: z.boolean().optional() }).strict();

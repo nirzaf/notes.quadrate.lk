@@ -31,6 +31,16 @@ export const VAULT_METADATA_TABLES = [
 
 export const VAULT_RPC_CHECKS = [
   {
+    id: 'lock_mutation',
+    name: 'qnotes_vault_lock_mutation',
+    signature: 'uuid,uuid',
+  },
+  {
+    id: 'get_mutation_receipt',
+    name: 'qnotes_vault_get_mutation_receipt',
+    signature: 'uuid,uuid,text,uuid,uuid,uuid,bigint,text[],uuid,text,uuid',
+  },
+  {
     id: 'create_secret',
     name: 'qnotes_vault_create_secret',
     signature: 'uuid,uuid,uuid,text,text,text,uuid,text,uuid,uuid,text',

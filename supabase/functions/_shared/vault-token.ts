@@ -13,10 +13,14 @@ function pepper(): string {
   return value;
 }
 
-async function hmac(domain: string, value: string): Promise<string> {
-  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(pepper()), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+async function hmacWithPepper(domain: string, value: string, pepperValue: string): Promise<string> {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(pepperValue), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
   const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`${domain}\0${value}`));
   return Array.from(new Uint8Array(signature), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function hmac(domain: string, value: string): Promise<string> {
+  return hmacWithPepper(domain, value, pepper());
 }
 
 function stableJson(value: unknown): string {
@@ -45,6 +49,15 @@ export function hashVaultAgentToken(token: string): Promise<string> {
 
 export function hashVaultMutation(request: unknown): Promise<string> {
   return hmac('qnotes-vault-mutation-v1', stableJson(request));
+}
+
+export async function hashVaultMutationCandidates(request: unknown): Promise<string[]> {
+  const value = stableJson(request);
+  const current = pepper();
+  const previous = Deno.env.get('QNOTES_VAULT_MUTATION_PEPPER_PREVIOUS')?.trim();
+  const hashes = [await hmacWithPepper('qnotes-vault-mutation-v1', value, current)];
+  if (previous && previous !== current) hashes.push(await hmacWithPepper('qnotes-vault-mutation-v1', value, previous));
+  return hashes;
 }
 
 export function hashVaultApprovalToken(token: string): Promise<string> {

@@ -28,7 +28,7 @@ export function edgeTestArguments(files) {
     'test',
     '--no-lock',
     '--node-modules-dir=none',
-    '--allow-env=QNOTES_TOKEN_PEPPER,QNOTES_VAULT_TOKEN_PEPPER,QNOTES_CLIENT_IP_HEADER,SUPABASE_URL,SUPABASE_SERVICE_ROLE_KEY',
+    '--allow-env=QNOTES_TOKEN_PEPPER,QNOTES_VAULT_TOKEN_PEPPER,QNOTES_VAULT_MUTATION_PEPPER_PREVIOUS,QNOTES_CLIENT_IP_HEADER,SUPABASE_URL,SUPABASE_SERVICE_ROLE_KEY',
     `--import-map=${importMap}`,
     ...files,
   ];
