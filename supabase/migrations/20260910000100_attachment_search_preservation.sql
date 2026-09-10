@@ -291,7 +291,7 @@ begin
     else
       insert into notesdb.attachment_search_repairs (operation_id, attachment_id, owner_id, note_id)
       values (p_operation_id, candidate.attachment_id, candidate.owner_id, candidate.note_id)
-      on conflict (operation_id, attachment_id) do nothing;
+      on conflict on constraint attachment_search_repairs_pkey do nothing;
       inserted := found;
       if inserted then
         perform pgmq.send('attachment-processing', jsonb_build_object(
