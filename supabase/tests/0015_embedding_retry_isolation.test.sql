@@ -1,5 +1,5 @@
 begin;
-select plan(15);
+select plan(16);
 
 select has_column('notesdb', 'search_documents', 'embedding_attempts', 'search documents track provider attempts separately from queue reads');
 select has_column('notesdb', 'search_documents', 'embedding_mode', 'search documents identify synthetic test vectors separately');
