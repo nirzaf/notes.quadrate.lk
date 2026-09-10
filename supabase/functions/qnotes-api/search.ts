@@ -126,10 +126,11 @@ function normalizeResult(item: SearchResult, note: SearchNoteRow | undefined, qu
   };
 }
 
-function requestFingerprint(request: SearchRequest, resolvedMode: ResolvedSearchMode): Promise<string> {
+function requestFingerprint(request: SearchRequest, resolvedMode: ResolvedSearchMode, embeddingMode: string): Promise<string> {
   return requestHash({
     query: request.query,
     mode: resolvedMode,
+    embeddingMode,
     filters: request.filters,
     maxPerNote: request.maxPerNote,
     minimumRelativeScore: request.minimumRelativeScore,
@@ -234,14 +235,14 @@ export async function searchNotes(context: Context): Promise<Response> {
     await enforceRequestBudget('embedding', `user:${auth.userId}`, Math.max(1, Math.ceil(request.limit / 100)));
     context.set('limitDecision', 'embedding-allowed');
   }
-  const fingerprint = await requestFingerprint(request, mode);
+  const embeddingMode = resolveEmbeddingMode(Deno.env);
+  const fingerprint = await requestFingerprint(request, mode, embeddingMode);
   const offset = cursorOffset(request, fingerprint);
   const retrievalLimit = request.limit + 1;
   const queryId = crypto.randomUUID();
   const embeddingStarted = performance.now();
   let embeddingMs = 0;
   let embedding: number[] | undefined;
-  const embeddingMode = resolveEmbeddingMode(Deno.env);
   const searchFilters = { ...request.filters, embeddingMode };
   if (mode !== 'keyword') {
     try {

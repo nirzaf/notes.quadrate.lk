@@ -1,5 +1,105 @@
--- Keep the trigger as the enqueue owner for changed documents. The sync function
--- only calls the queue helper for new rows and retryable failed rows.
+-- Keep the trigger as the enqueue owner for changed documents. The sync functions
+-- only call the queue helper for new rows and retryable failed rows.
+
+create or replace function public.qnotes_sync_note_metadata(p_note_id uuid, p_owner_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  note_row notesdb.notes%rowtype;
+  notebook_name text;
+  metadata_content text;
+  metadata_hash text;
+  existing notesdb.search_documents%rowtype;
+  found_document boolean;
+  should_enqueue boolean;
+  document_id uuid;
+begin
+  select * into note_row
+  from notesdb.notes
+  where id = p_note_id and owner_id = p_owner_id;
+
+  if not found then return; end if;
+
+  select nb.name into notebook_name
+  from notesdb.notebooks nb
+  where nb.id = note_row.notebook_id and nb.owner_id = p_owner_id;
+
+  metadata_content := format(
+    E'Title: %s\nSlug: %s\nTags: %s\nNotebook: %s',
+    note_row.title,
+    note_row.slug,
+    coalesce(array_to_string(note_row.tags, ', '), ''),
+    coalesce(notebook_name, '')
+  );
+  metadata_hash := encode(digest(metadata_content, 'sha256'), 'hex');
+
+  existing := null;
+  select * into existing
+  from notesdb.search_documents d
+  where d.note_id = p_note_id
+    and d.source_type = 'note_metadata'
+    and d.source_key = 'metadata'
+  for update;
+  found_document := found;
+  should_enqueue := not found_document
+    or (existing.embedding_status = 'failed'
+      and existing.content_hash = metadata_hash
+      and coalesce(existing.embedding_attempts, 0) > 0
+      and coalesce(existing.embedding_attempts, 0) < 5);
+
+  insert into notesdb.search_documents (
+    owner_id, note_id, source_type, source_id, source_key, source_title,
+    heading_path, content, content_hash, position, embedding_status
+  ) values (
+    p_owner_id, p_note_id, 'note_metadata', null, 'metadata', note_row.title,
+    null, metadata_content, metadata_hash, 0, 'pending'
+  )
+  on conflict (note_id, source_type, source_key) do update set
+    owner_id = excluded.owner_id,
+    source_title = excluded.source_title,
+    content = excluded.content,
+    content_hash = excluded.content_hash,
+    position = excluded.position,
+    embedding = case
+      when notesdb.search_documents.content_hash = excluded.content_hash
+        and notesdb.search_documents.embedding_status = 'ready'
+      then notesdb.search_documents.embedding
+      else null
+    end,
+    embedding_status = case
+      when notesdb.search_documents.content_hash = excluded.content_hash
+        and notesdb.search_documents.embedding_status = 'ready'
+      then 'ready'
+      else 'pending'
+    end,
+    embedding_error = case
+      when notesdb.search_documents.content_hash = excluded.content_hash
+        and notesdb.search_documents.embedding_status = 'ready'
+      then notesdb.search_documents.embedding_error
+      else null
+    end,
+    embedding_model = case
+      when notesdb.search_documents.content_hash = excluded.content_hash
+        and notesdb.search_documents.embedding_status = 'ready'
+      then notesdb.search_documents.embedding_model
+      else null
+    end,
+    embedding_model_version = case
+      when notesdb.search_documents.content_hash = excluded.content_hash
+        and notesdb.search_documents.embedding_status = 'ready'
+      then notesdb.search_documents.embedding_model_version
+      else null
+    end
+  returning id into document_id;
+
+  if should_enqueue then
+    perform public.qnotes_enqueue_embedding(document_id, p_owner_id, metadata_hash);
+  end if;
+end;
+$$;
 
 create or replace function public.qnotes_sync_note_content(
   p_note_id uuid,
