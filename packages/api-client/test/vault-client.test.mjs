@@ -33,6 +33,35 @@ test('QVaultClient sends qvt authorization only to isolated Vault routes', async
   assert.equal(calls[0].url.includes('/api/'), false);
 });
 
+test('QVaultClient keeps single-use Vault approvals in headers and validates the response', async () => {
+  const calls = [];
+  const client = new QVaultClient({
+    baseUrl: 'https://example.test',
+    getAccessToken: () => 'jwt-test',
+    fetchImplementation: async (url, init) => {
+      calls.push({ url, init });
+      return jsonResponse({ approvalToken: `qva_${'A'.repeat(43)}`, expiresAt: '2026-01-01T00:01:00.000Z' });
+    },
+  });
+  const approval = await client.issueApproval({ action: 'secret:reveal', projectId: project.id, environmentId: secret.environmentId, secretId: secret.id, expectedVersion: null, requestHash: 'a'.repeat(64) });
+  assert.equal(approval.approvalToken, `qva_${'A'.repeat(43)}`);
+  assert.equal(calls[0].url, 'https://example.test/vault/approvals');
+  assert.equal(calls[0].init.headers.get('Authorization'), 'Bearer jwt-test');
+  assert.equal(calls[0].init.headers.get('X-Vault-Approval'), null);
+
+  const revealClient = new QVaultClient({
+    baseUrl: 'https://example.test',
+    getAccessToken: () => 'jwt-test',
+    fetchImplementation: async (url, init) => {
+      assert.equal(url, 'https://example.test/vault/secrets/reveal');
+      assert.equal(init.headers.get('X-Vault-Approval'), approval.approvalToken);
+      assert.equal(init.headers.get('X-Vault-Request-Hash'), 'a'.repeat(64));
+      return jsonResponse({ secretId: secret.id, project: project.slug, environment: environment.slug, name: secret.name, value: 'synthetic-approved-secret', version: secret.version, updatedAt: secret.updatedAt });
+    },
+  });
+  await revealClient.revealSecret({ project: project.slug, environment: environment.slug, name: secret.name, purpose: 'approval header test' }, { vaultApproval: { approvalToken: approval.approvalToken, requestHash: 'a'.repeat(64) } });
+});
+
 test('QVaultClient requires HTTPS or explicitly enabled exact loopback HTTP endpoints', async () => {
   assert.throws(() => new QVaultClient({ baseUrl: 'http://example.test', getAccessToken: () => null }), /API endpoint/);
   assert.doesNotThrow(() => new QVaultClient({ baseUrl: 'http://localhost:54321', allowInsecureLoopback: true, getAccessToken: () => null }));

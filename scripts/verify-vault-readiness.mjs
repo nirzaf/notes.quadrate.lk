@@ -23,6 +23,8 @@ export const VAULT_METADATA_TABLES = [
   'vault_agent_grants',
   'vault_audit_events',
   'vault_mutations',
+  'vault_security_policy',
+  'vault_operation_approvals',
 ];
 
 export const VAULT_RPC_CHECKS = [
@@ -65,6 +67,16 @@ export const VAULT_RPC_CHECKS = [
     id: 'reveal_secrets_batch',
     name: 'qnotes_vault_reveal_secrets',
     signature: 'uuid,jsonb,uuid,text,uuid,text',
+  },
+  {
+    id: 'issue_operation_approval',
+    name: 'qnotes_issue_vault_operation_approval',
+    signature: 'uuid,uuid,text,uuid,uuid,uuid,bigint,text,text',
+  },
+  {
+    id: 'consume_operation_approval',
+    name: 'qnotes_consume_vault_operation_approval',
+    signature: 'uuid,uuid,text,uuid,uuid,uuid,bigint,text,text',
   },
 ];
 

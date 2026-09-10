@@ -24,7 +24,7 @@ export function normalizeApiRoute(path: string): string {
   for (const [pattern, template] of ROUTES) {
     if (pattern.test(pathname)) return template;
   }
-  if (pathname === '/api/health' || pathname === '/api/notes' || pathname === '/api/notebooks' || pathname === '/api/search' || pathname === '/api/context' || pathname === '/api/sync' || pathname === '/api/tokens' || pathname === '/public/share/resolve' || pathname === '/api/export/workspace' || pathname === '/api/import/workspace' || pathname === '/vault/projects' || pathname === '/vault/secrets/reveal' || pathname === '/vault/audit' || pathname === '/vault/agent-tokens') return pathname;
+  if (pathname === '/api/health' || pathname === '/api/notes' || pathname === '/api/notebooks' || pathname === '/api/search' || pathname === '/api/context' || pathname === '/api/sync' || pathname === '/api/tokens' || pathname === '/public/share/resolve' || pathname === '/api/export/workspace' || pathname === '/api/import/workspace' || pathname === '/vault/projects' || pathname === '/vault/secrets/reveal' || pathname === '/vault/approvals' || pathname === '/vault/audit' || pathname === '/vault/agent-tokens') return pathname;
   if (pathname.startsWith('/api/')) return '/api/*';
   if (pathname.startsWith('/vault/')) return '/vault/*';
   return '/unmatched';

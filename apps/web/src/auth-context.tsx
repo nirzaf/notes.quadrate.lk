@@ -11,6 +11,7 @@ interface AuthContextValue {
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
+  stepUp: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -72,6 +73,21 @@ export function AuthProvider({ children }: PropsWithChildren): JSX.Element {
     signOut: async () => {
       const result = await getSupabase().auth.signOut();
       if (result.error) throw result.error;
+    },
+    stepUp: async () => {
+      const supabase = getSupabase();
+      const assurance = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+      if (assurance.error) throw assurance.error;
+      const factors = await supabase.auth.mfa.listFactors();
+      if (factors.error) throw factors.error;
+      const factor = [...(factors.data.totp ?? []), ...(factors.data.phone ?? [])].find((item) => item.status === 'verified');
+      if (!factor) throw new Error('Configure a verified MFA factor before performing this Vault operation.');
+      const challenge = await supabase.auth.mfa.challenge({ factorId: factor.id });
+      if (challenge.error) throw challenge.error;
+      const code = window.prompt('Enter the verification code for this Vault operation.')?.trim();
+      if (!code) throw new Error('Vault step-up was cancelled.');
+      const verification = await supabase.auth.mfa.verify({ factorId: factor.id, challengeId: challenge.data.id, code });
+      if (verification.error) throw verification.error;
     },
   }), [authError, loading, session]);
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

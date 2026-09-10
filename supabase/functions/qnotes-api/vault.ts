@@ -1,12 +1,12 @@
 import type { Context } from 'hono';
-import { isUUID, validateCreateVaultAgentTokenInput, validateCreateVaultEnvironmentInput, validateCreateVaultProjectInput, validateCreateVaultSecretInput, validateDeleteVaultSecretInput, validateRevealVaultSecretInput, validateRevealVaultSecretsInput, validateReplaceVaultAgentGrantsInput, validateRotateVaultSecretInput, type VaultAction, type VaultAgentGrant } from '@qnotes/shared';
+import { hashVaultApprovalRequest, isUUID, isVaultOperationApprovalToken, validateCreateVaultAgentTokenInput, validateCreateVaultEnvironmentInput, validateCreateVaultProjectInput, validateCreateVaultSecretInput, validateDeleteVaultSecretInput, validateRevealVaultSecretInput, validateRevealVaultSecretsInput, validateReplaceVaultAgentGrantsInput, validateRotateVaultSecretInput, validateVaultOperationApprovalInput, type VaultAction, type VaultAgentGrant, type VaultSensitiveAction } from '@qnotes/shared';
 import { assertSupabase, appDbClient, serviceClient } from '../_shared/database.ts';
 import { ApiError } from '../_shared/errors.ts';
-import { vaultAuthFromContext, requireVaultUserJwt } from '../_shared/vault-auth.ts';
+import { requireVaultStepUp, vaultAuthFromContext, requireVaultUserJwt } from '../_shared/vault-auth.ts';
 import { grantAllows, requireVaultAccess, vaultGrants } from '../_shared/vault-authorization.ts';
 import { recordVaultAuditFailure } from '../_shared/vault-audit.ts';
 import { hashVaultMutation } from '../_shared/vault-token.ts';
-import { generateVaultAgentToken, hashVaultAgentToken } from '../_shared/vault-token.ts';
+import { generateVaultAgentToken, generateVaultApprovalToken, hashVaultAgentToken, hashVaultApprovalToken } from '../_shared/vault-token.ts';
 import { fetchAllRangePages } from './vault-agent-pagination.ts';
 
 function record(value: unknown): Record<string, unknown> {
@@ -31,6 +31,58 @@ function actorKind(auth: ReturnType<typeof vaultAuthFromContext>): 'user_jwt' | 
 
 function actorTokenId(auth: ReturnType<typeof vaultAuthFromContext>): string | null {
   return auth.tokenId ?? null;
+}
+
+type VaultApprovalSpec = {
+  action: VaultSensitiveAction;
+  projectId: string | null;
+  environmentId: string | null;
+  secretId: string | null;
+  expectedVersion: number | null;
+  requestHash: string;
+};
+
+async function requireVaultOperationApproval(context: Context, auth: ReturnType<typeof vaultAuthFromContext>, spec: VaultApprovalSpec): Promise<void> {
+  if (auth.authKind === 'vault-agent') return;
+  requireVaultStepUp(auth);
+  if (!auth.sessionId) throw new ApiError(403, 'VAULT_STEP_UP_REQUIRED', 'The authenticated session cannot be bound to a Vault approval.');
+  const approvalToken = context.req.header('x-vault-approval') ?? '';
+  const requestHash = context.req.header('x-vault-request-hash') ?? '';
+  if (!isVaultOperationApprovalToken(approvalToken) || requestHash !== spec.requestHash) throw new ApiError(403, 'VAULT_APPROVAL_REQUIRED', 'A single-use Vault operation approval is required.');
+  const approvalHash = await hashVaultApprovalToken(approvalToken);
+  const result = record(assertSupabase(await serviceClient.rpc('qnotes_consume_vault_operation_approval', {
+    p_owner_id: auth.userId,
+    p_session_id: auth.sessionId,
+    p_action: spec.action,
+    p_project_id: spec.projectId,
+    p_environment_id: spec.environmentId,
+    p_secret_id: spec.secretId,
+    p_expected_version: spec.expectedVersion,
+    p_request_hash: spec.requestHash,
+    p_approval_hash: approvalHash,
+  })));
+  if (result.status !== 'ok') throw new ApiError(403, 'VAULT_APPROVAL_INVALID', 'The Vault operation approval is invalid, expired, or already used.');
+}
+
+export async function issueVaultOperationApproval(context: Context): Promise<Response> {
+  const auth = vaultAuthFromContext(context);
+  requireVaultStepUp(auth);
+  if (!auth.sessionId) throw new ApiError(403, 'VAULT_STEP_UP_REQUIRED', 'The authenticated session cannot be bound to a Vault approval.');
+  const input = validateVaultOperationApprovalInput(await context.req.json());
+  const approvalToken = generateVaultApprovalToken();
+  const result = record(assertSupabase(await serviceClient.rpc('qnotes_issue_vault_operation_approval', {
+    p_owner_id: auth.userId,
+    p_session_id: auth.sessionId,
+    p_action: input.action,
+    p_project_id: input.projectId,
+    p_environment_id: input.environmentId,
+    p_secret_id: input.secretId,
+    p_expected_version: input.expectedVersion,
+    p_request_hash: input.requestHash,
+    p_approval_hash: await hashVaultApprovalToken(approvalToken),
+  })));
+  if (result.status !== 'ok' || typeof result.expiresAt !== 'string') throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to issue a Vault operation approval.');
+  return noStore(dataBody(context, { approvalToken, expiresAt: result.expiresAt }));
 }
 
 function projectMetadata(row: Record<string, unknown>) {
@@ -270,6 +322,8 @@ export async function listVaultSecretsBySelector(context: Context): Promise<Resp
 async function createVaultSecretForEnvironment(context: Context, project: Record<string, unknown>, environment: Record<string, unknown>): Promise<Response> {
   const auth = vaultAuthFromContext(context);
   const input = validateCreateVaultSecretInput({ ...(await context.req.json()), projectId: project.id, environmentId: environment.id });
+  const approvalRequest = { operation: 'created', projectId: project.id, environmentId: environment.id, name: input.name, description: input.description ?? null, value: input.value, mutationId: input.mutationId };
+  await requireVaultOperationApproval(context, auth, { action: 'secret:write', projectId: String(project.id), environmentId: String(environment.id), secretId: null, expectedVersion: null, requestHash: await hashVaultApprovalRequest(approvalRequest) });
   await requireVaultAccess(auth, 'secret:write', { ownerId: auth.userId, projectId: String(project.id), environmentId: String(environment.id), secretId: null }, { requestId: context.get('requestId') });
   const requestHash = await hashVaultMutation({ operation: 'created', projectId: project.id, environmentId: environment.id, name: input.name, description: input.description ?? null, value: input.value });
   const result = assertSupabase(await serviceClient.rpc('qnotes_vault_create_secret', { p_owner_id: auth.userId, p_project_id: project.id, p_environment_id: environment.id, p_name: input.name, p_description: input.description ?? null, p_value: input.value, p_mutation_id: input.mutationId, p_request_hash: requestHash, p_actor_token_id: actorTokenId(auth), p_request_id: context.get('requestId'), p_actor_kind: actorKind(auth) }));
@@ -303,6 +357,8 @@ export async function rotateVaultSecret(context: Context): Promise<Response> {
   if (!isUUID(secretId)) throw new ApiError(422, 'VALIDATION_ERROR', 'secretId must be a valid UUID.');
   const secret = await findSecret(auth.userId, secretId);
   const input = validateRotateVaultSecretInput(await context.req.json());
+  const approvalRequest = { operation: 'rotated', secretId, value: input.value, description: input.description ?? null, expectedVersion: input.expectedVersion, mutationId: input.mutationId };
+  await requireVaultOperationApproval(context, auth, { action: 'secret:write', projectId: String(secret.project_id), environmentId: String(secret.environment_id), secretId, expectedVersion: input.expectedVersion, requestHash: await hashVaultApprovalRequest(approvalRequest) });
   await requireVaultAccess(auth, 'secret:write', { ownerId: auth.userId, projectId: String(secret.project_id), environmentId: String(secret.environment_id), secretId }, { requestId: context.get('requestId') });
   const legacyRequestHash = await hashVaultMutation({ operation: 'rotated', secretId, value: input.value, description: input.description ?? null });
   const requestHash = await hashVaultMutation({ operation: 'rotated', secretId, value: input.value, description: input.description ?? null, expectedVersion: input.expectedVersion });
@@ -316,6 +372,8 @@ export async function deleteVaultSecret(context: Context): Promise<Response> {
   if (!isUUID(secretId)) throw new ApiError(422, 'VALIDATION_ERROR', 'secretId must be a valid UUID.');
   const secret = await findSecret(auth.userId, secretId);
   const input = validateDeleteVaultSecretInput(await context.req.json());
+  const approvalRequest = { operation: 'deleted', secretId, expectedVersion: input.expectedVersion, mutationId: input.mutationId };
+  await requireVaultOperationApproval(context, auth, { action: 'secret:delete', projectId: String(secret.project_id), environmentId: String(secret.environment_id), secretId, expectedVersion: input.expectedVersion, requestHash: await hashVaultApprovalRequest(approvalRequest) });
   await requireVaultAccess(auth, 'secret:delete', { ownerId: auth.userId, projectId: String(secret.project_id), environmentId: String(secret.environment_id), secretId }, { requestId: context.get('requestId') });
   const requestHash = await hashVaultMutation({ operation: 'deleted', secretId, expectedVersion: input.expectedVersion });
   const result = assertSupabase(await serviceClient.rpc('qnotes_vault_delete_secret', { p_owner_id: auth.userId, p_secret_id: secretId, p_expected_version: input.expectedVersion, p_mutation_id: input.mutationId, p_request_hash: requestHash, p_actor_token_id: actorTokenId(auth), p_request_id: context.get('requestId'), p_actor_kind: actorKind(auth) }));
@@ -330,6 +388,8 @@ export async function revealVaultSecret(context: Context): Promise<Response> {
   const { data, error } = await appDbClient.from('vault_secrets').select('*').eq('owner_id', auth.userId).eq('project_id', project.id).eq('environment_id', environment.id).eq('name', input.name).is('deleted_at', null).maybeSingle();
   if (error || !data) throw new ApiError(404, 'VAULT_SECRET_NOT_FOUND', 'The Vault secret was not found.');
   const secret = record(data);
+  const approvalRequest = { operation: 'revealed', project: input.project, environment: input.environment, name: input.name, purpose: input.purpose };
+  await requireVaultOperationApproval(context, auth, { action: 'secret:reveal', projectId: String(project.id), environmentId: String(environment.id), secretId: String(secret.id), expectedVersion: null, requestHash: await hashVaultApprovalRequest(approvalRequest) });
   await requireVaultAccess(auth, 'secret:reveal', { ownerId: auth.userId, projectId: String(project.id), environmentId: String(environment.id), secretId: String(secret.id) }, { requestId: context.get('requestId'), purpose: input.purpose });
   return noStore(dataBody(context, await revealById(context, auth, secret, input.purpose)));
 }
@@ -337,6 +397,7 @@ export async function revealVaultSecret(context: Context): Promise<Response> {
 export async function revealVaultSecrets(context: Context): Promise<Response> {
   const auth = vaultAuthFromContext(context);
   const input = validateRevealVaultSecretsInput(await context.req.json());
+  await requireVaultOperationApproval(context, auth, { action: 'secret:reveal', projectId: null, environmentId: null, secretId: null, expectedVersion: null, requestHash: await hashVaultApprovalRequest({ operation: 'revealed-batch', selectors: input.secrets, purpose: input.purpose }) });
   const resolved: Array<{ secret: Record<string, unknown> }> = [];
   for (const selector of input.secrets) {
     const project = await findProject(auth.userId, selector.project);
@@ -402,6 +463,8 @@ export async function createVaultAgentToken(context: Context): Promise<Response>
   const auth = vaultAuthFromContext(context);
   requireVaultUserJwt(auth);
   const input = validateCreateVaultAgentTokenInput(await context.req.json());
+  const approvalRequest = { operation: 'token-issued', name: input.name, expiresAt: input.expiresAt, grants: input.grants };
+  await requireVaultOperationApproval(context, auth, { action: 'token:issue', projectId: null, environmentId: null, secretId: null, expectedVersion: null, requestHash: await hashVaultApprovalRequest(approvalRequest) });
   const token = generateVaultAgentToken();
   const tokenHash = await hashVaultAgentToken(token);
   const result = assertSupabase(await serviceClient.rpc('qnotes_create_vault_agent_token', { p_owner_id: auth.userId, p_name: input.name, p_token_prefix: token.slice(0, 12), p_token_hash: tokenHash, p_expires_at: input.expiresAt, p_grants: input.grants }));
@@ -414,6 +477,7 @@ export async function revokeVaultAgentToken(context: Context): Promise<Response>
   const auth = vaultAuthFromContext(context);
   requireVaultUserJwt(auth);
   const tokenId = context.req.param('tokenId') ?? '';
+  await requireVaultOperationApproval(context, auth, { action: 'token:revoke', projectId: null, environmentId: null, secretId: null, expectedVersion: null, requestHash: await hashVaultApprovalRequest({ operation: 'token-revoked', tokenId }) });
   const result = record(assertSupabase(await serviceClient.rpc('qnotes_revoke_vault_agent_token', { p_owner_id: auth.userId, p_token_id: tokenId })));
   if (result.status === 'not_found') throw new ApiError(404, 'VAULT_AGENT_TOKEN_NOT_FOUND', 'The Vault agent token was not found.');
   if (result.status !== 'ok') throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to revoke Vault agent token.');
@@ -469,6 +533,7 @@ export async function replaceVaultAgentGrants(context: Context): Promise<Respons
   requireVaultUserJwt(auth);
   const tokenId = context.req.param('tokenId') ?? '';
   const validation = validateReplaceVaultAgentGrantsInput(await context.req.json());
+  await requireVaultOperationApproval(context, auth, { action: 'grant:replace', projectId: null, environmentId: null, secretId: null, expectedVersion: null, requestHash: await hashVaultApprovalRequest({ operation: 'grants-replaced', tokenId, grants: validation.grants }) });
   const result = assertSupabase(await serviceClient.rpc('qnotes_replace_vault_agent_grants', { p_owner_id: auth.userId, p_token_id: tokenId, p_grants: validation.grants }));
   if (record(result).status === 'not_found') throw new ApiError(404, 'VAULT_AGENT_TOKEN_NOT_FOUND', 'The Vault agent token was not found.');
   if (record(result).status !== 'ok') throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to update Vault grants.');

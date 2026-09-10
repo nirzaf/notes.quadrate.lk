@@ -49,7 +49,8 @@ test('Vault batch reveal requires an explicit bounded selector list and purpose'
 
 test('Vault token creation requires a grant while replacement can clear every grant', () => {
   const grant = { projectId, environmentId: null, secretId: null, action: 'metadata:read' };
-  assert.throws(() => validateCreateVaultAgentTokenInput({ name: 'empty', expiresAt: null, grants: [] }), /1 to/);
+  assert.throws(() => validateCreateVaultAgentTokenInput({ name: 'empty', expiresAt: null, grants: [] }), /future ISO date/);
+  assert.throws(() => validateCreateVaultAgentTokenInput({ name: 'empty', expiresAt: new Date(Date.now() + 60_000).toISOString(), grants: [] }), /1 to/);
   assert.deepEqual(validateReplaceVaultAgentGrantsInput({ grants: [grant] }), { grants: [grant] });
   assert.deepEqual(validateReplaceVaultAgentGrantsInput({ grants: [] }), { grants: [] });
 });

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from '@tanstack/react-router';
-import type { VaultAgentGrant, VaultSecretMetadata } from '@qnotes/shared';
-import { MAX_VAULT_DESCRIPTION_LENGTH, MAX_VAULT_ENVIRONMENT_NAME_LENGTH, MAX_VAULT_PROJECT_NAME_LENGTH, MAX_VAULT_SECRET_BYTES, MAX_VAULT_SECRET_NAME_LENGTH } from '@qnotes/shared';
+import type { VaultAgentGrant, VaultSecretMetadata, VaultSensitiveAction } from '@qnotes/shared';
+import { hashVaultApprovalRequest, MAX_VAULT_DESCRIPTION_LENGTH, MAX_VAULT_ENVIRONMENT_NAME_LENGTH, MAX_VAULT_PROJECT_NAME_LENGTH, MAX_VAULT_SECRET_BYTES, MAX_VAULT_SECRET_NAME_LENGTH } from '@qnotes/shared';
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import { vaultApi, api } from '../api';
 import { AppShell } from '../components/app-shell';
@@ -12,7 +12,7 @@ import { useToast } from '../components/ui/toast';
 
 type VaultSection = 'vault' | 'agents' | 'audit';
 type GrantScope = 'project' | 'environment' | 'secret';
-type TokenExpiry = 'never' | '7d' | '30d' | '90d' | '365d';
+type TokenExpiry = '7d' | '30d' | '90d';
 type VaultProject = Awaited<ReturnType<typeof vaultApi.listProjects>>[number];
 type VaultEnvironment = Awaited<ReturnType<typeof vaultApi.listEnvironments>>[number];
 type VaultToken = Awaited<ReturnType<typeof vaultApi.listAgentTokens>>[number];
@@ -26,16 +26,14 @@ type VaultAuditQuery = VaultListQuery<VaultAuditEvent>;
 type RevealedSecret = { environmentId: string; id: string; value: string };
 
 const tokenExpiryOptions: Array<{ value: TokenExpiry; label: string; days?: number }> = [
-  { value: 'never', label: 'Never' },
   { value: '7d', label: '7 days', days: 7 },
   { value: '30d', label: '30 days', days: 30 },
   { value: '90d', label: '90 days', days: 90 },
-  { value: '365d', label: '365 days', days: 365 },
 ];
 
-function tokenExpiresAt(choice: TokenExpiry): string | null {
+function tokenExpiresAt(choice: TokenExpiry): string {
   const days = tokenExpiryOptions.find((option) => option.value === choice)?.days;
-  return days ? new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString() : null;
+  return new Date(Date.now() + (days ?? 90) * 24 * 60 * 60 * 1000).toISOString();
 }
 
 function sectionForPath(pathname: string): VaultSection {
@@ -104,7 +102,7 @@ function grantTargetLabel(grant: VaultAgentGrant, projects: VaultProject[], envi
 }
 
 export function VaultPage(): JSX.Element {
-  const { session } = useAuth();
+  const { session, stepUp } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
@@ -137,7 +135,7 @@ export function VaultPage(): JSX.Element {
   const [tokenScope, setTokenScope] = useState<GrantScope>('project');
   const [tokenSecretId, setTokenSecretId] = useState<string | null>(null);
   const [tokenAction, setTokenAction] = useState<VaultAgentGrant['action']>('metadata:read');
-  const [tokenExpiry, setTokenExpiry] = useState<TokenExpiry>('never');
+  const [tokenExpiry, setTokenExpiry] = useState<TokenExpiry>('90d');
   const [draftGrants, setDraftGrants] = useState<VaultAgentGrant[]>([]);
   const [editingTokenId, setEditingTokenId] = useState<string | null>(null);
   const [editingGrants, setEditingGrants] = useState<VaultAgentGrant[]>([]);
@@ -196,6 +194,13 @@ export function VaultPage(): JSX.Element {
   const refreshProjects = async () => { await projectsQuery.refetch(); };
   const refreshSecrets = async () => { await secretsQuery.refetch(); };
 
+  const approve = async (action: VaultSensitiveAction, request: unknown, resource: { projectId: string | null; environmentId: string | null; secretId: string | null; expectedVersion: number | null }) => {
+    await stepUp();
+    const requestHash = await hashVaultApprovalRequest(request);
+    const approval = await vaultApi.issueApproval({ action, ...resource, requestHash });
+    return { vaultApproval: { approvalToken: approval.approvalToken, requestHash } };
+  };
+
   const createProject = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setBusy(true);
@@ -226,10 +231,14 @@ export function VaultPage(): JSX.Element {
       if (changeSecretId) {
         const current = secretsQuery.data?.find((secret) => secret.id === changeSecretId);
         if (!current) throw new Error('Select an active Vault secret before rotating it.');
-        await vaultApi.rotateSecret(current.id, { value: secretValue, expectedVersion: current.version, mutationId: crypto.randomUUID(), ...(secretDescription ? { description: secretDescription } : {}) });
+        const input = { value: secretValue, expectedVersion: current.version, mutationId: crypto.randomUUID(), ...(secretDescription ? { description: secretDescription } : {}) };
+        const approval = await approve('secret:write', { operation: 'rotated', secretId: current.id, value: input.value, description: input.description ?? null, expectedVersion: input.expectedVersion, mutationId: input.mutationId }, { projectId: current.projectId, environmentId: current.environmentId, secretId: current.id, expectedVersion: current.version });
+        await vaultApi.rotateSecret(current.id, input, approval);
         toast('Vault secret rotated.', 'success');
       } else {
-        await vaultApi.createSecret({ projectId: selectedProject.id, environmentId: selectedEnvironment.id, name: secretName, value: secretValue, mutationId: crypto.randomUUID(), ...(secretDescription ? { description: secretDescription } : {}) });
+        const input = { projectId: selectedProject.id, environmentId: selectedEnvironment.id, name: secretName, value: secretValue, mutationId: crypto.randomUUID(), ...(secretDescription ? { description: secretDescription } : {}) };
+        const approval = await approve('secret:write', { operation: 'created', projectId: input.projectId, environmentId: input.environmentId, name: input.name, description: input.description ?? null, value: input.value, mutationId: input.mutationId }, { projectId: input.projectId, environmentId: input.environmentId, secretId: null, expectedVersion: null });
+        await vaultApi.createSecret(input, approval);
         toast('Vault secret created.', 'success');
       }
       setSecretName(''); setSecretValue(''); setSecretDescription(''); setChangeSecretId(null); await refreshSecrets();
@@ -243,7 +252,9 @@ export function VaultPage(): JSX.Element {
     revealAttempt.current = attempt;
     setRevealedSecret(null);
     try {
-      const result = await vaultApi.revealSecret({ project: selectedProject.slug, environment: selectedEnvironment.slug, name: secret.name, purpose: 'Manual reveal in the QNotes Vault administration UI' });
+      const input = { project: selectedProject.slug, environment: selectedEnvironment.slug, name: secret.name, purpose: 'Manual reveal in the QNotes Vault administration UI' };
+      const approval = await approve('secret:reveal', { operation: 'revealed', ...input }, { projectId: selectedProject.id, environmentId: selectedEnvironment.id, secretId: secret.id, expectedVersion: null });
+      const result = await vaultApi.revealSecret(input, approval);
       if (attempt !== revealAttempt.current) return;
       setRevealedSecret({ environmentId: selectedEnvironment.id, id: secret.id, value: result.value });
     } catch (error: unknown) {
@@ -256,7 +267,11 @@ export function VaultPage(): JSX.Element {
   const removeSecret = async (secret: VaultSecretMetadata) => {
     if (!window.confirm(`Delete ${secret.name}? This removes the encrypted Vault value.`)) return;
     setBusy(true);
-    try { await vaultApi.deleteSecret(secret.id, { expectedVersion: secret.version, mutationId: crypto.randomUUID(), confirm: true }); await refreshSecrets(); toast('Vault secret deleted.', 'success'); }
+    try {
+      const input = { expectedVersion: secret.version, mutationId: crypto.randomUUID(), confirm: true as const };
+      const approval = await approve('secret:delete', { operation: 'deleted', secretId: secret.id, expectedVersion: input.expectedVersion, mutationId: input.mutationId }, { projectId: secret.projectId, environmentId: secret.environmentId, secretId: secret.id, expectedVersion: input.expectedVersion });
+      await vaultApi.deleteSecret(secret.id, input, approval); await refreshSecrets(); toast('Vault secret deleted.', 'success');
+    }
     catch (error: unknown) { toast(safeErrorMessage(error, 'Unable to delete Vault secret.'), 'error'); }
     finally { setBusy(false); }
   };
@@ -266,7 +281,9 @@ export function VaultPage(): JSX.Element {
     if (!draftGrants.length) { toast('Add at least one grant before creating a Vault agent token.', 'error'); return; }
     setBusy(true);
     try {
-      const result = await vaultApi.createAgentToken({ name: tokenName, expiresAt: tokenExpiresAt(tokenExpiry), grants: draftGrants });
+      const input = { name: tokenName, expiresAt: tokenExpiresAt(tokenExpiry), grants: draftGrants };
+      const approval = await approve('token:issue', { operation: 'token-issued', ...input }, { projectId: null, environmentId: null, secretId: null, expectedVersion: null });
+      const result = await vaultApi.createAgentToken(input, approval);
       setTokenName(''); setDraftGrants([]); setIssuedToken(result.token); await tokensQuery.refetch(); toast('Vault agent token created. Copy it now; it is shown only once.', 'success');
     } catch (error: unknown) { toast(safeErrorMessage(error, 'Unable to create Vault agent token.'), 'error'); }
     finally { setBusy(false); }
@@ -301,7 +318,8 @@ export function VaultPage(): JSX.Element {
     if (!editingTokenId) return;
     setBusy(true);
     try {
-      await vaultApi.replaceAgentGrants(editingTokenId, editingGrants);
+      const approval = await approve('grant:replace', { operation: 'grants-replaced', tokenId: editingTokenId, grants: editingGrants }, { projectId: null, environmentId: null, secretId: null, expectedVersion: null });
+      await vaultApi.replaceAgentGrants(editingTokenId, editingGrants, approval);
       await tokensQuery.refetch();
       setEditingTokenId(null);
       setEditingGrants([]);
@@ -310,10 +328,19 @@ export function VaultPage(): JSX.Element {
     finally { setBusy(false); }
   };
 
+  const revokeAgentToken = async (tokenId: string) => {
+    setBusy(true);
+    try {
+      const approval = await approve('token:revoke', { operation: 'token-revoked', tokenId }, { projectId: null, environmentId: null, secretId: null, expectedVersion: null });
+      await vaultApi.revokeAgentToken(tokenId, approval); await tokensQuery.refetch(); toast('Vault agent token revoked.', 'success');
+    } catch (error: unknown) { toast(safeErrorMessage(error, 'Unable to revoke Vault agent token.'), 'error'); }
+    finally { setBusy(false); }
+  };
+
   const copyIssuedToken = async () => { if (issuedToken) { await navigator.clipboard?.writeText(issuedToken); toast('Token copied. It will not be read back by QNotes.', 'success'); } };
   const copyRevealedSecret = async () => { if (revealedSecret) { await navigator.clipboard?.writeText(revealedSecret.value); toast('Secret copied. QNotes does not read the clipboard.', 'success'); } };
 
-  const content = section === 'agents' ? <AgentsPanel projectsQuery={projectsQuery} selectedProject={selectedProject} onProjectSelect={selectProject} environmentsQuery={environmentsQuery} selectedEnvironment={selectedEnvironment} onEnvironmentSelect={selectEnvironment} secretsQuery={secretsQuery} tokenSecretId={tokenSecretId} setTokenSecretId={setTokenSecretId} tokenName={tokenName} setTokenName={setTokenName} tokenScope={tokenScope} setTokenScope={setTokenScope} tokenAction={tokenAction} setTokenAction={setTokenAction} tokenExpiry={tokenExpiry} setTokenExpiry={setTokenExpiry} draftGrants={draftGrants} editingTokenId={editingTokenId} editingGrants={editingGrants} onAddGrant={addGrant} onRemoveDraftGrant={(index) => setDraftGrants((items) => items.filter((_, itemIndex) => itemIndex !== index))} onRemoveEditingGrant={(index) => setEditingGrants((items) => items.filter((_, itemIndex) => itemIndex !== index))} onSubmit={createAgentToken} onBeginEdit={beginEditingToken} onCancelEdit={() => { setEditingTokenId(null); setEditingGrants([]); }} onReplace={replaceAgentGrants} busy={busy} tokensQuery={tokensQuery} issuedToken={issuedToken} closeIssuedToken={() => setIssuedToken(null)} copyIssuedToken={() => void copyIssuedToken()} onRevoke={async (id) => { await vaultApi.revokeAgentToken(id); await tokensQuery.refetch(); toast('Vault agent token revoked.', 'success'); }} />
+  const content = section === 'agents' ? <AgentsPanel projectsQuery={projectsQuery} selectedProject={selectedProject} onProjectSelect={selectProject} environmentsQuery={environmentsQuery} selectedEnvironment={selectedEnvironment} onEnvironmentSelect={selectEnvironment} secretsQuery={secretsQuery} tokenSecretId={tokenSecretId} setTokenSecretId={setTokenSecretId} tokenName={tokenName} setTokenName={setTokenName} tokenScope={tokenScope} setTokenScope={setTokenScope} tokenAction={tokenAction} setTokenAction={setTokenAction} tokenExpiry={tokenExpiry} setTokenExpiry={setTokenExpiry} draftGrants={draftGrants} editingTokenId={editingTokenId} editingGrants={editingGrants} onAddGrant={addGrant} onRemoveDraftGrant={(index) => setDraftGrants((items) => items.filter((_, itemIndex) => itemIndex !== index))} onRemoveEditingGrant={(index) => setEditingGrants((items) => items.filter((_, itemIndex) => itemIndex !== index))} onSubmit={createAgentToken} onBeginEdit={beginEditingToken} onCancelEdit={() => { setEditingTokenId(null); setEditingGrants([]); }} onReplace={replaceAgentGrants} busy={busy} tokensQuery={tokensQuery} issuedToken={issuedToken} closeIssuedToken={() => setIssuedToken(null)} copyIssuedToken={() => void copyIssuedToken()} onRevoke={(id) => revokeAgentToken(id)} />
     : section === 'audit' ? <AuditPanel query={auditQuery} />
       : <VaultWorkspace projectsQuery={projectsQuery} selectedProject={selectedProject} onProjectSelect={selectProject} projectName={projectName} setProjectName={setProjectName} projectSlug={projectSlug} setProjectSlug={setProjectSlug} projectDescription={projectDescription} setProjectDescription={setProjectDescription} onCreateProject={createProject} environmentsQuery={environmentsQuery} selectedEnvironment={selectedEnvironment} onEnvironmentSelect={selectEnvironment} environmentName={environmentName} setEnvironmentName={setEnvironmentName} environmentSlug={environmentSlug} setEnvironmentSlug={setEnvironmentSlug} onCreateEnvironment={createEnvironment} secretsQuery={secretsQuery} secretName={secretName} setSecretName={setSecretName} secretValue={secretValue} setSecretValue={setSecretValue} secretDescription={secretDescription} setSecretDescription={setSecretDescription} changeSecretId={changeSecretId} setChangeSecretId={setChangeSecretId} onSaveSecret={saveSecret} onReveal={reveal} revealedSecret={revealedSecret} onHide={() => setRevealedSecret(null)} onCopy={copyRevealedSecret} onDelete={removeSecret} busy={busy} />;
 

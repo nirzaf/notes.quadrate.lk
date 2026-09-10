@@ -37,6 +37,9 @@ export type QNotesErrorCode =
   | 'VAULT_ENVIRONMENT_CONFLICT'
   | 'VAULT_SECRET_CONFLICT'
   | 'VAULT_AGENT_TOKEN_NOT_FOUND'
+  | 'VAULT_STEP_UP_REQUIRED'
+  | 'VAULT_APPROVAL_REQUIRED'
+  | 'VAULT_APPROVAL_INVALID'
   | 'INTERNAL_ERROR';
 
 export class QNotesValidationError extends Error {

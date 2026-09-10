@@ -2,6 +2,7 @@ import { QNotesValidationError } from './errors.ts';
 
 export type VaultAction = 'metadata:read' | 'secret:reveal' | 'secret:write' | 'secret:delete';
 export type VaultActorKind = 'user_jwt' | 'vault_agent';
+export type VaultSensitiveAction = 'secret:reveal' | 'secret:write' | 'secret:delete' | 'token:issue' | 'token:revoke' | 'grant:replace';
 
 export const MAX_VAULT_PROJECT_NAME_LENGTH = 80;
 export const MAX_VAULT_ENVIRONMENT_NAME_LENGTH = 80;
@@ -12,10 +13,14 @@ export const MAX_VAULT_SECRET_BYTES = 65_536;
 export const MAX_VAULT_BATCH_REVEAL = 20;
 export const MAX_VAULT_BATCH_BYTES = 262_144;
 export const MAX_VAULT_AGENT_GRANTS = 100;
+export const MAX_VAULT_AGENT_TOKEN_LIFETIME_SECONDS = 90 * 24 * 60 * 60;
+export const VAULT_OPERATION_APPROVAL_SECONDS = 60;
 
 const VAULT_SLUG_PATTERN = /^[a-z0-9][a-z0-9_-]{0,79}$/;
 const VAULT_SECRET_NAME_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/;
 const VAULT_AGENT_TOKEN_PATTERN = /^qvt_[A-Za-z0-9_-]{43}$/;
+const VAULT_OPERATION_APPROVAL_PATTERN = /^qva_[A-Za-z0-9_-]{43}$/;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const ISO_DATE_TIME_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
 const VAULT_ACTIONS: VaultAction[] = ['metadata:read', 'secret:reveal', 'secret:write', 'secret:delete'];
 
@@ -106,9 +111,22 @@ export type RevealVaultSecretsResult = { items: RevealVaultSecretResult[] };
 export type CreateVaultAgentTokenInput = { name: string; expiresAt: string | null; grants: VaultAgentGrant[] };
 export type CreateVaultAgentTokenResult = { token: string; metadata: VaultAgentTokenMetadata; grants: VaultAgentGrant[] };
 export type ReplaceVaultAgentGrantsInput = { grants: VaultAgentGrant[] };
+export type VaultOperationApprovalInput = {
+  action: VaultSensitiveAction;
+  projectId: string | null;
+  environmentId: string | null;
+  secretId: string | null;
+  expectedVersion: number | null;
+  requestHash: string;
+};
+export type VaultOperationApprovalResult = { approvalToken: string; expiresAt: string };
 
 export function isVaultAgentToken(value: unknown): value is string {
   return typeof value === 'string' && VAULT_AGENT_TOKEN_PATTERN.test(value);
+}
+
+export function isVaultOperationApprovalToken(value: unknown): value is string {
+  return typeof value === 'string' && VAULT_OPERATION_APPROVAL_PATTERN.test(value);
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -237,10 +255,39 @@ function validateGrant(value: unknown): VaultAgentGrant {
 export function validateCreateVaultAgentTokenInput(value: unknown): CreateVaultAgentTokenInput {
   if (!record(value)) throw new QNotesValidationError('Request body must be an object.');
   const name = boundedText(value.name, 'token name', 80, true) as string;
-  const expiresAt = value.expiresAt === null || value.expiresAt === undefined ? null : value.expiresAt;
-  if (expiresAt !== null && (typeof expiresAt !== 'string' || !ISO_DATE_TIME_PATTERN.test(expiresAt) || Number.isNaN(Date.parse(expiresAt)) || Date.parse(expiresAt) <= Date.now())) throw new QNotesValidationError('expiresAt must be a future ISO date or null.');
+  const expiresAt = value.expiresAt;
+  const expiry = typeof expiresAt === 'string' && ISO_DATE_TIME_PATTERN.test(expiresAt) ? Date.parse(expiresAt) : Number.NaN;
+  if (typeof expiresAt !== 'string' || Number.isNaN(expiry) || expiry <= Date.now() || expiry > Date.now() + MAX_VAULT_AGENT_TOKEN_LIFETIME_SECONDS * 1000) throw new QNotesValidationError(`expiresAt must be a future ISO date within ${MAX_VAULT_AGENT_TOKEN_LIFETIME_SECONDS / 86400} days.`);
   if (!Array.isArray(value.grants) || value.grants.length < 1 || value.grants.length > MAX_VAULT_AGENT_GRANTS) throw new QNotesValidationError(`grants must contain 1 to ${MAX_VAULT_AGENT_GRANTS} entries.`);
-  return { name, expiresAt: expiresAt as string | null, grants: value.grants.map(validateGrant) };
+  return { name, expiresAt, grants: value.grants.map(validateGrant) };
+}
+
+const VAULT_SENSITIVE_ACTIONS: VaultSensitiveAction[] = ['secret:reveal', 'secret:write', 'secret:delete', 'token:issue', 'token:revoke', 'grant:replace'];
+
+export function validateVaultOperationApprovalInput(value: unknown): VaultOperationApprovalInput {
+  if (!record(value)) throw new QNotesValidationError('Request body must be an object.');
+  if (typeof value.action !== 'string' || !VAULT_SENSITIVE_ACTIONS.includes(value.action as VaultSensitiveAction)) throw new QNotesValidationError('Vault approval action is invalid.');
+  const projectId = value.projectId === null || value.projectId === undefined ? null : uuid(value.projectId, 'projectId');
+  const environmentId = value.environmentId === null || value.environmentId === undefined ? null : uuid(value.environmentId, 'environmentId');
+  const secretId = value.secretId === null || value.secretId === undefined ? null : uuid(value.secretId, 'secretId');
+  const expectedVersion = value.expectedVersion === null || value.expectedVersion === undefined ? null : expectedVersionValue(value.expectedVersion);
+  if (typeof value.requestHash !== 'string' || !SHA256_PATTERN.test(value.requestHash)) throw new QNotesValidationError('requestHash must be a lowercase SHA-256 digest.');
+  return { action: value.action as VaultSensitiveAction, projectId, environmentId, secretId, expectedVersion, requestHash: value.requestHash };
+}
+
+function expectedVersionValue(value: unknown): number {
+  return expectedVersion(value);
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+  if (value && typeof value === 'object') return `{${Object.entries(value as Record<string, unknown>).sort(([left], [right]) => left.localeCompare(right)).map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`).join(',')}}`;
+  return JSON.stringify(value) ?? 'null';
+}
+
+export async function hashVaultApprovalRequest(value: unknown): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(stableJson(value)));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 export function validateReplaceVaultAgentGrantsInput(value: unknown): ReplaceVaultAgentGrantsInput {
