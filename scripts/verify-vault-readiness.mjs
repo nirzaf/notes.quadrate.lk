@@ -250,10 +250,17 @@ export async function verifyVaultReadiness({ projectId, runCommand = executeSupa
   return { pepperPresent: true, checks, isolation: VAULT_ISOLATION };
 }
 
+export function formatReadinessResult(result) {
+  return JSON.stringify({
+    pepperPresent: result.pepperPresent,
+    checks: result.checks,
+    isolation: result.isolation,
+  });
+}
+
 async function main() {
   const result = await verifyVaultReadiness({ projectId: process.env.SUPABASE_PROJECT_ID });
-  console.log(`Vault production readiness passed: ${VAULT_TOKEN_PEPPER_NAME} is present by name; ${Object.keys(result.checks).length} boolean database checks passed.`);
-  console.log(`Vault runtime isolation status: ${result.isolation.status}. ${result.isolation.reason}`);
+  console.log(formatReadinessResult(result));
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
