@@ -102,6 +102,10 @@ begin
     from notesdb.vault_projects
     where id = secret_row.project_id and owner_id = p_owner_id and archived_at is null
     for update;
+    if not found then
+      perform public.qnotes_vault_record_denial(p_owner_id, p_actor_token_id, p_action, p_project_id, p_environment_id, p_secret_id, p_request_id, 'not_found');
+      return jsonb_build_object('status', 'not_found');
+    end if;
     select * into environment_row
     from notesdb.vault_environments
     where id = secret_row.environment_id and project_id = secret_row.project_id and owner_id = p_owner_id and archived_at is null

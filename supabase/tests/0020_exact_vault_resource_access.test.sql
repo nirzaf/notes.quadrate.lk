@@ -1,5 +1,5 @@
 begin;
-select plan(28);
+select plan(29);
 
 select ok(to_regprocedure('public.qnotes_vault_resolve_resource(uuid,uuid,text,text,uuid,text,uuid,text,uuid,text,uuid)') is not null, 'the exact Vault resource resolver exists');
 select ok((select p.prosecdef from pg_proc p where p.oid = 'public.qnotes_vault_resolve_resource(uuid,uuid,text,text,uuid,text,uuid,text,uuid,text,uuid)'::regprocedure), 'the exact Vault resource resolver is SECURITY DEFINER');
@@ -171,6 +171,15 @@ select is((public.qnotes_vault_resolve_resource(
   null, 'exact-project', 'f1600000-0000-4000-8000-000000000002', 'stable', null, null,
   'f1600000-0000-4000-8000-000000000020'
 )->>'status'), 'invalid_reference', 'a selector cannot provide both an environment ID and slug');
+
+update notesdb.vault_projects
+set archived_at = clock_timestamp()
+where id = 'f1600000-0000-4000-8000-000000000001';
+select is((public.qnotes_vault_authorize_actor(
+  (select id from auth.users where email = 'owner@qnotes.local'), 'f1600000-0000-4000-8000-000000000011', 'vault_agent', 'secret:delete',
+  'f1600000-0000-4000-8000-000000000001', 'f1600000-0000-4000-8000-000000000002', 'f1600000-0000-4000-8000-000000001001',
+  'f1600000-0000-4000-8000-000000000026'
+)->>'status'), 'not_found', 'secret authorization fails closed when its project is archived');
 
 select * from finish();
 rollback;
