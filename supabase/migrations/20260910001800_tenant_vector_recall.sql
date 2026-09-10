@@ -322,7 +322,7 @@ as $$
         when cardinality(requested.notebook_ids) > 0 then requested.notebook_ids
         else coalesce((select array_agg(n.id) from notesdb.notebooks n where n.owner_id = p_owner_id), '{}'::uuid[])
       end as notebook_ids,
-      requested.unfiled as allow_unfiled
+      requested.unfiled or cardinality(requested.notebook_ids) = 0 as allow_unfiled
     from requested
   )
   select scoped.*
