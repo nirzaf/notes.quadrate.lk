@@ -30,7 +30,7 @@ select is((public.qnotes_create_note_share(
 select is((select count(*)::integer from notesdb.note_shares where note_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' and revoked_at is null and snapshot_content_markdown is not null), 1, 'the note has one active snapshot share');
 select ok(not exists (select 1 from information_schema.columns where table_schema = 'notesdb' and table_name = 'note_shares' and column_name in ('token', 'raw_token')), 'the share table has no raw token column');
 select is((select token_prefix from notesdb.note_shares where token_hash = repeat('a', 64)), 'qns_Abcd1234', 'only the short token prefix is stored');
-select is((select source_version from notesdb.note_shares where token_hash = repeat('a', 64)), 1, 'the snapshot binds the source version');
+select is((select source_version from notesdb.note_shares where token_hash = repeat('a', 64)), 1::bigint, 'the snapshot binds the source version');
 select is((select snapshot_title from notesdb.note_shares where token_hash = repeat('a', 64)), 'Public Share Note', 'the reviewed title is stored');
 select is((select snapshot_content_markdown from notesdb.note_shares where token_hash = repeat('a', 64)), '# Private heading\n\nPrivate body', 'the reviewed Markdown is stored');
 select ok((select source_updated_at is not null from notesdb.note_shares where token_hash = repeat('a', 64)), 'the snapshot stores the source update time');
