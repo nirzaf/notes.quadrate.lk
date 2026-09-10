@@ -18,6 +18,9 @@ alter table notesdb.search_documents
 
 create index if not exists search_documents_embedding_retry_key
   on notesdb.search_documents (embedding_status, embedding_attempts, embedding_queued_at, id);
+create index if not exists search_documents_ready_embedding_mode_key
+  on notesdb.search_documents (embedding_mode, id)
+  where embedding_status = 'ready' and embedding is not null;
 
 create or replace function public.qnotes_reset_embedding_retry_state()
 returns trigger
@@ -153,6 +156,51 @@ begin
 end;
 $$;
 
+create or replace function public.qnotes_requeue_embedding_mode_mismatches(
+  p_embedding_mode text,
+  p_limit integer default 100
+) returns integer
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  document_record record;
+  queued_count integer := 0;
+begin
+  if p_embedding_mode is null or p_embedding_mode not in ('provider', 'synthetic-test-v1') then
+    raise exception using errcode = '22023', message = 'unsupported embedding mode';
+  end if;
+  if p_limit is null or p_limit < 1 or p_limit > 1000 then
+    raise exception using errcode = '22023', message = 'embedding mode requeue limit must be between 1 and 1000';
+  end if;
+
+  for document_record in
+    select d.id, d.owner_id, d.content_hash
+    from notesdb.search_documents d
+    join notesdb.notes n on n.id = d.note_id and n.owner_id = d.owner_id and n.deleted_at is null
+    where d.embedding_status = 'ready'
+      and d.embedding is not null
+      and d.embedding_mode is distinct from p_embedding_mode
+    order by d.id
+    limit p_limit
+    for update of d skip locked
+  loop
+    update notesdb.search_documents
+    set embedding = null,
+        embedding_status = 'pending',
+        embedding_attempts = 0,
+        embedding_mode = p_embedding_mode,
+        embedding_error = null,
+        embedding_queued_at = timezone('utc', now())
+    where id = document_record.id;
+    perform public.qnotes_enqueue_embedding(document_record.id, document_record.owner_id, document_record.content_hash);
+    queued_count := queued_count + 1;
+  end loop;
+  return queued_count;
+end;
+$$;
+
 -- Keep the scheduled stale recovery bounded and unable to revive terminal
 -- failures. Operators use qnotes_requeue_embedding_failures for explicit work.
 create or replace function public.qnotes_requeue_stale_embeddings(
@@ -193,6 +241,8 @@ $$;
 
 revoke all on function public.qnotes_requeue_embedding_failures(integer) from public, anon, authenticated;
 grant execute on function public.qnotes_requeue_embedding_failures(integer) to service_role;
+revoke all on function public.qnotes_requeue_embedding_mode_mismatches(text, integer) from public, anon, authenticated;
+grant execute on function public.qnotes_requeue_embedding_mode_mismatches(text, integer) to service_role;
 revoke all on function public.qnotes_requeue_stale_embeddings(interval) from public, anon, authenticated;
 grant execute on function public.qnotes_requeue_stale_embeddings(interval) to service_role;
 
@@ -235,6 +285,7 @@ begin
       and not input_changed
       and not model_changed
       and coalesce(old.embedding_attempts, 0) >= 5
+      and coalesce(new.embedding_attempts, 0) >= 5
     then
       new.embedding_status := 'failed';
       new.embedding_error := old.embedding_error;

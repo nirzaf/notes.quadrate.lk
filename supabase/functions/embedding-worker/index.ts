@@ -1,5 +1,5 @@
 import { archiveQueueMessage, deleteQueueMessage, readQueue } from '../_shared/queue.ts';
-import { appDbClient } from '../_shared/database.ts';
+import { appDbClient, serviceClient } from '../_shared/database.ts';
 import { embeddingDocumentFromRow } from './adapter.ts';
 import { EMBEDDING_MODEL, EMBEDDING_MODEL_VERSION, createEmbedding, embeddingInput, embeddingInputHash, resolveEmbeddingMode } from './embedding.ts';
 import {
@@ -30,7 +30,7 @@ function validMessage(value: unknown): value is EmbeddingJob {
     && typeof (value as { contentHash?: unknown }).contentHash === 'string';
 }
 
-async function processMessage(message: { message_id: number; read_count: number; message: unknown }, budget: WorkerBudget): Promise<WorkerOutcome> {
+async function processMessage(message: { message_id: number; read_count: number; message: unknown }, budget: WorkerBudget, embeddingMode: string): Promise<WorkerOutcome> {
   if (!validMessage(message.message)) {
     await archiveQueueMessage(queueName, message.message_id);
     return 'failed';
@@ -38,7 +38,6 @@ async function processMessage(message: { message_id: number; read_count: number;
   const job = message.message;
   let failureInputHash: string | null = null;
   let providerAttempt: number | null = null;
-  let embeddingMode: string = 'provider';
   try {
     const { data: document, error } = await appDbClient
       .from('search_documents')
@@ -62,7 +61,6 @@ async function processMessage(message: { message_id: number; read_count: number;
       await deleteQueueMessage(queueName, message.message_id);
       return 'skipped';
     }
-    embeddingMode = resolveEmbeddingMode(Deno.env);
     if (
       document.embedding_status === 'ready'
       && document.embedding_model === EMBEDDING_MODEL
@@ -217,6 +215,7 @@ async function processMessage(message: { message_id: number; read_count: number;
 async function processBounded(
   messages: Array<{ message_id: number; read_count: number; message: unknown }>,
   budget: WorkerBudget,
+  embeddingMode: string,
 ): Promise<WorkerOutcome[]> {
   const results: WorkerOutcome[] = [];
   let nextIndex = 0;
@@ -226,7 +225,7 @@ async function processBounded(
       const index = nextIndex;
       nextIndex += 1;
       const message = messages[index];
-      if (message) results[index] = await processMessage(message, budget);
+      if (message) results[index] = await processMessage(message, budget, embeddingMode);
     }
   }
   const workerCount = Math.min(WORKER_CONCURRENCY, messages.length);
@@ -237,13 +236,18 @@ async function processBounded(
 async function processRequest(request: Request): Promise<Response> {
   if (request.headers.get('x-qnotes-worker-secret') !== Deno.env.get('QNOTES_INTERNAL_WORKER_SECRET')) return Response.json({ error: 'unauthorized' }, { status: 401 });
   // Reject a misconfigured synthetic mode before leasing any queue work.
-  resolveEmbeddingMode(Deno.env);
+  const embeddingMode = resolveEmbeddingMode(Deno.env);
+  const { error: modeRequeueError } = await serviceClient.rpc('qnotes_requeue_embedding_mode_mismatches', {
+    p_embedding_mode: embeddingMode,
+    p_limit: 100,
+  });
+  if (modeRequeueError) throw modeRequeueError;
   const budget = createWorkerBudget(Date.now());
   const outcomes: WorkerOutcome[] = [];
   for (let batch = 0; shouldStartBatch(batch, budget, Date.now()); batch += 1) {
     const messages = await readQueue(queueName, WORKER_VISIBILITY_LEASE_SECONDS, WORKER_BATCH_SIZE);
     if (!messages.length) break;
-    outcomes.push(...await processBounded(messages, budget));
+    outcomes.push(...await processBounded(messages, budget, embeddingMode));
   }
   return Response.json({
     data: {

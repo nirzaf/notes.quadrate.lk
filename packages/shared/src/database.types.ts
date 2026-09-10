@@ -609,6 +609,10 @@ export type Database = {
         Args: { p_limit?: number }
         Returns: number
       }
+      qnotes_requeue_embedding_mode_mismatches: {
+        Args: { p_embedding_mode: string; p_limit?: number }
+        Returns: number
+      }
       qnotes_requeue_stale_embeddings: {
         Args: { p_stale_after?: string }
         Returns: number
