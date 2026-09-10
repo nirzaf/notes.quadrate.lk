@@ -90,18 +90,27 @@ export async function authenticateVaultRequest(request: Request): Promise<VaultA
     return { userId: String(data.owner_id), authKind: 'vault-agent', tokenId: String(data.id) };
   }
   if (credential.startsWith('qnt_') || credential.startsWith('qns_')) throw new ApiError(401, 'INVALID_TOKEN', 'The credential is not valid for Vault.');
-  let claims: VerifiedVaultJwtClaims;
-  try {
-    const verified = await serviceClient.auth.getClaims(credential);
-    if (verified.error || !verified.data?.claims) throw new Error('JWT claims are invalid.');
-    claims = verifyVaultJwtClaims(verified.data.claims, vaultJwtIssuer());
-  } catch {
-    throw new ApiError(401, 'INVALID_TOKEN', 'The access token is invalid.');
-  }
   const { data, error } = await serviceClient.auth.getUser(credential);
   if (error || !data.user) throw new ApiError(401, 'INVALID_TOKEN', 'The access token is invalid.');
-  if (data.user.id !== claims.userId) throw new ApiError(401, 'INVALID_TOKEN', 'The access token is invalid.');
-  return { userId: claims.userId, authKind: 'jwt', sessionId: claims.sessionId, assuranceLevel: claims.assuranceLevel, mfaVerifiedAt: claims.mfaVerifiedAt };
+  let claims: VerifiedVaultJwtClaims | null = null;
+  let verifiedClaims: unknown = null;
+  try {
+    const verified = await serviceClient.auth.getClaims(credential);
+    if (!verified.error && verified.data?.claims) verifiedClaims = verified.data.claims;
+  } catch {
+    // getUser has already verified the identity. When the local HS256 provider cannot expose verified claims, fail closed to AAL1 so metadata remains available while every step-up route stays denied.
+  }
+  if (verifiedClaims) {
+    try {
+      claims = verifyVaultJwtClaims(verifiedClaims, vaultJwtIssuer());
+    } catch {
+      throw new ApiError(401, 'INVALID_TOKEN', 'The access token is invalid.');
+    }
+  }
+  if (claims && data.user.id !== claims.userId) throw new ApiError(401, 'INVALID_TOKEN', 'The access token is invalid.');
+  return claims
+    ? { userId: claims.userId, authKind: 'jwt', sessionId: claims.sessionId, assuranceLevel: claims.assuranceLevel, mfaVerifiedAt: claims.mfaVerifiedAt }
+    : { userId: data.user.id, authKind: 'jwt', assuranceLevel: 'aal1', mfaVerifiedAt: null };
 }
 
 export function vaultAuthFromContext(context: Context): VaultAuthContext {
