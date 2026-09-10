@@ -304,6 +304,41 @@ test('MCP protocol advertises the exact read and write tool profiles', async () 
   await write.client.close();
 });
 
+test('MCP transport publishes object output contracts and rejects unknown nested input before client calls', async () => {
+  let calls = 0;
+  const { client } = await connectedProtocol('read', protocolClient({
+    async searchPost(input) {
+      calls += 1;
+      return { items: [], queryId: 'query-1', modeUsed: input.mode, degraded: false, timing: { embeddingMs: 0, retrievalMs: 1, totalMs: 1 } };
+    },
+  }));
+  const tools = await client.listTools();
+  for (const name of READ_TOOL_NAMES) {
+    const tool = tools.tools.find((entry) => entry.name === name);
+    assert.equal(tool.outputSchema.type, 'object');
+  }
+  const invalid = await client.callTool({ name: 'search_notes', arguments: { query: 'safe', filters: { tags: ['ops'], unexpected: true } } });
+  assert.equal(invalid.isError, true);
+  assert.equal(calls, 0);
+  await client.close();
+});
+
+test('MCP execution errors are stable, request-correlated, and redact provider details', async () => {
+  const { client } = await connectedProtocol('read', protocolClient({
+    async searchPost() {
+      throw new Error('provider leaked synthetic-secret and note body');
+    },
+  }));
+  const result = await client.callTool({ name: 'search_notes', arguments: { query: 'safe' } });
+  assert.equal(result.isError, true);
+  assert.deepEqual(JSON.parse(result.content[0].text), result.structuredContent);
+  assert.equal(result.structuredContent.error.code, 'INTERNAL_ERROR');
+  assert.equal(result.structuredContent.error.retryable, false);
+  assert.match(result.structuredContent.error.requestId, /^[0-9a-f-]{36}$/i);
+  assert.doesNotMatch(result.content[0].text, /synthetic-secret|note body/);
+  await client.close();
+});
+
 test('hosted qnotes-mcp passes no Vault options and exposes only Notes tools', async () => {
   const hostedSource = await readFile(new URL('../../../supabase/functions/qnotes-mcp/index.ts', import.meta.url), 'utf8');
   assert.match(hostedSource, /const server = createQNotesMcpServer\(client, HOSTED_MCP_PROFILE\);/);

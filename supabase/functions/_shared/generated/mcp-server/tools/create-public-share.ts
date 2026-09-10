@@ -2,6 +2,7 @@ import type { CreatePublicShareResult } from '@qnotes/api-client';
 import type { Note, UUID } from '@qnotes/shared';
 import { isUUID } from '@qnotes/shared';
 import { toolResult } from './common.ts';
+import { publicShareSchema } from '../contracts.ts';
 
 const PUBLIC_SHARE_URL = 'https://notes.quadrate.lk/share#';
 const PUBLIC_SHARE_EXPIRY_MS = 24 * 60 * 60 * 1000;
@@ -61,5 +62,5 @@ export async function createPublicShareTool(
 
   const result = await client.createPublicShare(noteId, { expiresAt });
   if (!PUBLIC_SHARE_TOKEN_PATTERN.test(result.token)) throw new Error('QNotes API returned an invalid public share token.');
-  return toolResult({ url: `${PUBLIC_SHARE_URL}${result.token}`, noteId, expiresAt });
+  return toolResult({ url: `${PUBLIC_SHARE_URL}${result.token}`, noteId, expiresAt }, publicShareSchema);
 }

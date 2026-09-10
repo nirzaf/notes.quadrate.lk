@@ -1,5 +1,6 @@
 import type { SearchFilters, SearchMode } from '@qnotes/shared';
 import { toolResult, type ReadQNotesClient } from './common.ts';
+import { searchResponseSchema } from '../contracts.ts';
 
 export async function searchNotesTool(client: ReadQNotesClient, args: { query: string; mode?: SearchMode; limit?: number; cursor?: string; filters?: SearchFilters }) {
   const response = await client.searchPost({
@@ -10,5 +11,5 @@ export async function searchNotesTool(client: ReadQNotesClient, args: { query: s
     filters: args.filters ?? {},
     ...(args.cursor !== undefined ? { cursor: args.cursor } : {}),
   });
-  return toolResult(response);
+  return toolResult(response, searchResponseSchema);
 }
