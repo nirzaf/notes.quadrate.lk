@@ -22,7 +22,8 @@ test('OAuth access tokens contain only a signed grant reference', async () => {
       resource: 'http://127.0.0.1:54321/functions/v1/qnotes-mcp',
       expiresAt,
     });
-    const tampered = `${token.slice(0, -1)}${token.endsWith('a') ? 'b' : 'a'}`;
+    const [prefix, payload, signature] = token.split('.');
+    const tampered = `${prefix}.${payload}.${signature[0] === 'a' ? 'b' : 'a'}${signature.slice(1)}`;
     assert.equal(await verifyOAuthAccessToken(tampered), null);
   } finally {
     if (previous === undefined) Deno.env.delete('QNOTES_TOKEN_PEPPER');
