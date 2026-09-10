@@ -246,7 +246,7 @@ Note summaries contain `id`, `slug`, `title`, a plain-text `excerpt`, `tags`, `n
 
 ### Search
 
-The default API mode is `auto`. It uses keyword retrieval for UUIDs, slugs, quoted phrases, and short code-like identifiers, and hybrid retrieval for natural-language questions. Explicit `keyword`, `semantic`, and `hybrid` modes remain available. Keyword search covers note metadata, note chunks, copyable blocks, and extracted attachment text. Search results are returned as document items with at most two documents per note; snippets are centered on the matching passage when possible. Semantic or hybrid search uses asynchronous 384-dimensional embeddings and may not include newly written content until the worker processes its queue.
+The default API mode is `auto`. It uses keyword retrieval for UUIDs, slugs, quoted phrases, and short code-like identifiers, and hybrid retrieval for natural-language questions. Explicit `keyword`, `semantic`, and `hybrid` modes remain available. Keyword search covers note metadata, note chunks, copyable blocks, and extracted attachment text. Exact normalized source identifiers use owner-scoped btree indexes, while full-text and fuzzy channels use their matching GIN indexes; wildcard characters in fuzzy queries are treated literally. Search results are returned as document items with at most two documents per note; snippets are centered on the matching passage when possible. Semantic or hybrid search uses asynchronous 384-dimensional embeddings and may not include newly written content until the worker processes its queue.
 
 The existing GET endpoint remains available:
 
