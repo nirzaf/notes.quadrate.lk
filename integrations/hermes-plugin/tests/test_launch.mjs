@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,7 +27,12 @@ async function fixture() {
       'QNOTES_URL', 'QNOTES_MCP_PROFILE', 'QNOTES_TOKEN',
       'QNOTES_READ_TOKEN', 'QNOTES_WRITE_TOKEN', 'QNOTES_MCP_DEVICE_ID',
       'QNOTES_MCP_ENABLE_PUBLIC_SHARE', 'QVAULT_TOKEN', 'QVAULT_MCP_PROFILE',
-      'QNOTES_ALLOW_INSECURE_LOOPBACK', 'QVAULT_URL', 'QNOTES_PLUGIN_TOKEN', 'QNOTES_PLUGIN_VAULT_TOKEN'
+      'QNOTES_ALLOW_INSECURE_LOOPBACK', 'QVAULT_URL', 'QNOTES_PLUGIN_TOKEN', 'QNOTES_PLUGIN_VAULT_TOKEN',
+      'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'GITHUB_TOKEN', 'GOOGLE_APPLICATION_CREDENTIALS',
+      'NODE_OPTIONS', 'NODE_PATH', 'NODE_EXTRA_CA_CERTS', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY',
+      'SSL_CERT_FILE', 'SSL_CERT_DIR', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'LC_CTYPE', 'PATH',
+      'APPDATA', 'LOCALAPPDATA', 'USERPROFILE', 'SYSTEMROOT', 'WINDIR',
+      'COMSPEC', 'HOMEDRIVE', 'HOMEPATH', 'PATHEXT', 'SYSTEMDRIVE'
     ];
     process.stdout.write(JSON.stringify(Object.fromEntries(names.map((name) => [name, process.env[name] ?? null]))));
   `);
@@ -72,7 +77,12 @@ test('launcher isolates read/none from conflicting inherited credentials', async
 
   assert.equal(result.code, 0, result.stderr);
   const observed = JSON.parse(result.stdout);
-  assert.deepEqual(observed, {
+  assert.deepEqual(Object.fromEntries([
+    'QNOTES_URL', 'QNOTES_MCP_PROFILE', 'QNOTES_TOKEN', 'QNOTES_READ_TOKEN',
+    'QNOTES_WRITE_TOKEN', 'QNOTES_MCP_DEVICE_ID', 'QNOTES_MCP_ENABLE_PUBLIC_SHARE',
+    'QNOTES_ALLOW_INSECURE_LOOPBACK', 'QVAULT_TOKEN', 'QVAULT_MCP_PROFILE',
+    'QVAULT_URL', 'QNOTES_PLUGIN_TOKEN', 'QNOTES_PLUGIN_VAULT_TOKEN',
+  ].map((name) => [name, observed[name]])), {
     QNOTES_URL: 'https://notes.example.test/functions/v1/qnotes-api',
     QNOTES_MCP_PROFILE: 'read',
     QNOTES_TOKEN: null,
@@ -87,6 +97,98 @@ test('launcher isolates read/none from conflicting inherited credentials', async
     QNOTES_PLUGIN_TOKEN: null,
     QNOTES_PLUGIN_VAULT_TOKEN: null,
   });
+});
+
+test('launcher passes platform runtime values but drops unrelated credentials and overrides', async (t) => {
+  const { root, serverPath } = await fixture();
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  const result = await runLauncher(serverPath, {}, {
+    QNOTES_URL: 'https://notes.example.test/functions/v1/qnotes-api',
+    QNOTES_PLUGIN_TOKEN: 'qnt_selected_read',
+    AWS_ACCESS_KEY_ID: 'cloud-access-key',
+    AWS_SECRET_ACCESS_KEY: 'cloud-secret-key',
+    GITHUB_TOKEN: 'github-token',
+    GOOGLE_APPLICATION_CREDENTIALS: '/tmp/cloud-credentials.json',
+    NODE_OPTIONS: '--no-warnings',
+    NODE_PATH: '/tmp/untrusted-node-modules',
+    NODE_EXTRA_CA_CERTS: '/tmp/untrusted-ca.pem',
+    HTTP_PROXY: 'http://proxy.example.test:8080',
+    HTTPS_PROXY: 'http://proxy.example.test:8080',
+    ALL_PROXY: 'http://proxy.example.test:8080',
+    NO_PROXY: 'notes.example.test',
+    SSL_CERT_FILE: '/tmp/untrusted-ca.pem',
+    SSL_CERT_DIR: '/tmp/untrusted-ca-directory',
+    HOME: '/tmp/hermes-home',
+    TMPDIR: '/tmp/hermes-tmp',
+    TMP: '/tmp/hermes-tmp',
+    TEMP: '/tmp/hermes-temp',
+    LANG: 'C.UTF-8',
+    LC_ALL: 'C.UTF-8',
+    LC_CTYPE: 'C.UTF-8',
+    PATH: '/usr/bin',
+    APPDATA: 'C:\\Users\\hermes\\AppData\\Roaming',
+    COMSPEC: 'C:\\Windows\\System32\\cmd.exe',
+    HOMEDRIVE: 'C:',
+    HOMEPATH: '\\Users\\hermes',
+    LOCALAPPDATA: 'C:\\Users\\hermes\\AppData\\Local',
+    PATHEXT: '.COM;.EXE;.BAT;.CMD',
+    SYSTEMDRIVE: 'C:',
+    USERPROFILE: 'C:\\Users\\hermes',
+    SYSTEMROOT: 'C:\\Windows',
+    WINDIR: 'C:\\Windows',
+  });
+
+  assert.equal(result.code, 0, result.stderr);
+  const observed = JSON.parse(result.stdout);
+  for (const name of [
+    'AWS_ACCESS_KEY_ID',
+    'AWS_SECRET_ACCESS_KEY',
+    'GITHUB_TOKEN',
+    'GOOGLE_APPLICATION_CREDENTIALS',
+    'NODE_OPTIONS',
+    'NODE_PATH',
+    'NODE_EXTRA_CA_CERTS',
+    'HTTP_PROXY',
+    'HTTPS_PROXY',
+    'ALL_PROXY',
+    'NO_PROXY',
+    'SSL_CERT_FILE',
+    'SSL_CERT_DIR',
+  ]) {
+    assert.equal(observed[name], null, `${name} must not cross the launcher boundary`);
+  }
+  assert.equal(observed.PATH, '/usr/bin');
+  if (process.platform !== 'win32') assert.equal(observed.TMPDIR, '/tmp/hermes-tmp');
+  assert.equal(observed.TMP, '/tmp/hermes-tmp');
+  assert.equal(observed.TEMP, '/tmp/hermes-temp');
+  assert.equal(observed.LANG, 'C.UTF-8');
+  assert.equal(observed.LC_ALL, 'C.UTF-8');
+  assert.equal(observed.LC_CTYPE, 'C.UTF-8');
+  if (process.platform === 'win32') {
+    assert.equal(observed.APPDATA, 'C:\\Users\\hermes\\AppData\\Roaming');
+    assert.equal(observed.COMSPEC, 'C:\\Windows\\System32\\cmd.exe');
+    assert.equal(observed.HOMEDRIVE, 'C:');
+    assert.equal(observed.HOMEPATH, '\\Users\\hermes');
+    assert.equal(observed.LOCALAPPDATA, 'C:\\Users\\hermes\\AppData\\Local');
+    assert.equal(observed.PATHEXT, '.COM;.EXE;.BAT;.CMD');
+    assert.equal(observed.SYSTEMDRIVE, 'C:');
+    assert.equal(observed.USERPROFILE, 'C:\\Users\\hermes');
+    assert.equal(observed.SYSTEMROOT, 'C:\\Windows');
+    assert.equal(observed.WINDIR, 'C:\\Windows');
+  } else {
+    assert.equal(observed.HOME, '/tmp/hermes-home');
+    assert.equal(observed.APPDATA, null);
+    assert.equal(observed.LOCALAPPDATA, null);
+    assert.equal(observed.USERPROFILE, null);
+    assert.equal(observed.SYSTEMROOT, null);
+    assert.equal(observed.WINDIR, null);
+    assert.equal(observed.COMSPEC, null);
+    assert.equal(observed.HOMEDRIVE, null);
+    assert.equal(observed.HOMEPATH, null);
+    assert.equal(observed.PATHEXT, null);
+    assert.equal(observed.SYSTEMDRIVE, null);
+  }
 });
 
 test('launcher selects write/public-share and Vault reveal credentials explicitly', async (t) => {
@@ -179,4 +281,41 @@ test('launcher accepts only exact loopback HTTP for local tests', async (t) => {
     QNOTES_PLUGIN_TOKEN: 'qnt_local',
   });
   assert.notEqual(lookalike.code, 0);
+});
+
+test('launcher rejects a non-JavaScript runtime target', async (t) => {
+  const { root, serverPath } = await fixture();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const unapprovedPath = join(root, 'runtime.txt');
+  await writeFile(unapprovedPath, 'not a runtime');
+
+  const result = await runLauncher(unapprovedPath, {}, {
+    QNOTES_URL: 'https://notes.example.test/functions/v1/qnotes-api',
+    QNOTES_PLUGIN_TOKEN: 'qnt_selected_read',
+  });
+
+  assert.notEqual(result.code, 0);
+  assert.doesNotMatch(result.stdout + result.stderr, /runtime\.txt/);
+});
+
+test('launcher validates the resolved target of a runtime symlink', async (t) => {
+  const { root } = await fixture();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const target = join(root, 'runtime.txt');
+  const link = join(root, 'runtime.mjs');
+  await writeFile(target, 'not a runtime');
+  try {
+    await symlink(target, link);
+  } catch (error) {
+    if (process.platform === 'win32' && ['EACCES', 'ENOTSUP', 'EPERM'].includes(error.code)) return;
+    throw error;
+  }
+
+  const result = await runLauncher(link, {}, {
+    QNOTES_URL: 'https://notes.example.test/functions/v1/qnotes-api',
+    QNOTES_PLUGIN_TOKEN: 'qnt_selected_read',
+  });
+
+  assert.notEqual(result.code, 0);
+  assert.doesNotMatch(result.stdout + result.stderr, /runtime\.(?:txt|mjs)/);
 });

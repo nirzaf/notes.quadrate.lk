@@ -1,27 +1,40 @@
 #!/usr/bin/env node
 
 import { spawn } from 'node:child_process';
-import { statSync } from 'node:fs';
+import { realpathSync, statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { validateApiEndpoint } from './endpoint-policy.mjs';
 
 const NOTES_PROFILES = new Set(['read', 'share', 'write']);
 const VAULT_PROFILES = new Set(['none', 'metadata', 'reveal', 'write']);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const ENV_KEYS_TO_ISOLATE = [
-  'QNOTES_URL',
-  'QNOTES_MCP_PROFILE',
-  'QNOTES_TOKEN',
-  'QNOTES_READ_TOKEN',
-  'QNOTES_WRITE_TOKEN',
-  'QNOTES_MCP_DEVICE_ID',
-  'QNOTES_MCP_ENABLE_PUBLIC_SHARE',
-  'QNOTES_ALLOW_INSECURE_LOOPBACK',
-  'QVAULT_TOKEN',
-  'QVAULT_MCP_PROFILE',
-  'QVAULT_URL',
-  'QNOTES_PLUGIN_TOKEN',
-  'QNOTES_PLUGIN_VAULT_TOKEN',
+const POSIX_RUNTIME_ENV_KEYS = [
+  'HOME',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'PATH',
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+];
+const WINDOWS_RUNTIME_ENV_KEYS = [
+  'APPDATA',
+  'COMSPEC',
+  'HOMEDRIVE',
+  'HOMEPATH',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'LOCALAPPDATA',
+  'PATH',
+  'PATHEXT',
+  'SYSTEMDRIVE',
+  'SYSTEMROOT',
+  'TEMP',
+  'TMP',
+  'USERPROFILE',
+  'WINDIR',
 ];
 
 class LauncherConfigurationError extends Error {}
@@ -68,13 +81,14 @@ function parseArgs(argv) {
 function validateServerPath(value) {
   if (!isAbsolute(value)) throw configurationError();
   try {
-    if (!statSync(value).isFile()) throw configurationError();
+    const resolved = realpathSync(value);
+    if (!statSync(resolved).isFile()) throw configurationError();
+    if (!/\.(?:c|m)?js$/i.test(resolved)) throw configurationError();
+    return resolved;
   } catch (error) {
     if (error instanceof LauncherConfigurationError) throw error;
     throw configurationError();
   }
-  if (!/\.(?:c|m)?js$/i.test(value)) throw configurationError();
-  return value;
 }
 
 function validateUrl(value, allowInsecureLoopback) {
@@ -99,13 +113,20 @@ function selectedDeviceId(environment) {
   return value;
 }
 
+function copyRuntimeEnvironment(parentEnvironment) {
+  const keys = process.platform === 'win32' ? WINDOWS_RUNTIME_ENV_KEYS : POSIX_RUNTIME_ENV_KEYS;
+  return Object.fromEntries(keys.flatMap((key) => {
+    const value = parentEnvironment[key];
+    return typeof value === 'string' ? [[key, value]] : [];
+  }));
+}
+
 function buildChildEnvironment(options, parentEnvironment) {
   if (typeof parentEnvironment.QVAULT_URL === 'string' && parentEnvironment.QVAULT_URL.trim()) {
     throw configurationError();
   }
   const notesAlias = 'QNOTES_PLUGIN_TOKEN';
-  const childEnvironment = { ...parentEnvironment };
-  for (const key of ENV_KEYS_TO_ISOLATE) delete childEnvironment[key];
+  const childEnvironment = copyRuntimeEnvironment(parentEnvironment);
   const allowInsecureLoopback = parentEnvironment.QNOTES_ALLOW_INSECURE_LOOPBACK === 'true';
   childEnvironment.QNOTES_URL = validateUrl(parentEnvironment.QNOTES_URL, allowInsecureLoopback);
   if (allowInsecureLoopback) childEnvironment.QNOTES_ALLOW_INSECURE_LOOPBACK = 'true';
