@@ -1,5 +1,16 @@
 export const EMBEDDING_MODEL = 'gte-small';
 export const EMBEDDING_MODEL_VERSION = 'v2';
+export const SYNTHETIC_EMBEDDING_MODE = 'synthetic-test-v1';
+
+export type EmbeddingMode = 'provider' | typeof SYNTHETIC_EMBEDDING_MODE;
+
+export function resolveEmbeddingMode(environment: { get(name: string): string | undefined }): EmbeddingMode {
+  if (environment.get('QNOTES_FAKE_EMBEDDINGS') !== '1') return 'provider';
+  if (environment.get('QNOTES_ENVIRONMENT') !== 'test' || environment.get('QNOTES_EMBEDDING_MODE') !== SYNTHETIC_EMBEDDING_MODE) {
+    throw new Error('Synthetic embeddings require the explicit test environment and synthetic-test-v1 mode.');
+  }
+  return SYNTHETIC_EMBEDDING_MODE;
+}
 
 interface EmbeddingSession {
   run(input: string): Promise<unknown>;
@@ -64,7 +75,7 @@ function getSession(): EmbeddingSession {
 }
 
 export async function createEmbedding(value: string): Promise<number[]> {
-  if (Deno.env.get('QNOTES_FAKE_EMBEDDINGS') === '1') return fakeEmbedding(value);
+  if (resolveEmbeddingMode(Deno.env) === SYNTHETIC_EMBEDDING_MODE) return fakeEmbedding(value);
   const result = await getSession().run(value);
   return normalizeEmbedding(result);
 }
