@@ -210,6 +210,11 @@ begin
   where scope = any(token_row.scopes);
   if cardinality(effective_scopes) = 0 then return; end if;
 
+  update notesdb.api_tokens
+  set last_used_at = timezone('utc', now())
+  where id = token_row.id
+    and (last_used_at is null or last_used_at < timezone('utc', now()) - interval '5 minutes');
+
   if grant_row.access_mode = 'account' then
     if token_row.access_mode <> 'account' then return; end if;
     return query select grant_row.owner_id, effective_scopes, 'account', true,

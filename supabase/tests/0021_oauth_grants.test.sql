@@ -1,5 +1,5 @@
 begin;
-select plan(37);
+select plan(39);
 
 select has_table('notesdb', 'oauth_grants', 'OAuth grant bindings exist');
 select has_column('notesdb', 'oauth_grants', 'owner_id', 'grants bind an owner');
@@ -42,6 +42,7 @@ select is((select response->'scopes' from us20_broad_grant), '["notes:read", "se
 select is((select count(*)::integer from public.qnotes_oauth_grant_context((select (response->>'id')::uuid from us20_broad_grant), 'client-us20', 'https://qnotes.test/mcp')), 1, 'active OAuth grant resolves');
 select is((select owner_id from public.qnotes_oauth_grant_context((select (response->>'id')::uuid from us20_broad_grant), 'client-us20', 'https://qnotes.test/mcp')), (select id from auth.users where email = 'owner@qnotes.local'), 'grant resolution returns only its owner');
 select is((select scopes from public.qnotes_oauth_grant_context((select (response->>'id')::uuid from us20_broad_grant), 'client-us20', 'https://qnotes.test/mcp')), ARRAY['notes:read', 'search:read']::text[], 'grant resolution returns only consented actions');
+select ok((select last_used_at is not null from notesdb.api_tokens where token_hash = repeat('a', 64)), 'successful OAuth resolution updates source token activity');
 
 create temporary table us20_notebook_grant on commit drop as
 select public.qnotes_create_oauth_grant(
@@ -55,6 +56,11 @@ select is((select allow_unfiled from public.qnotes_oauth_grant_context((select (
 
 select throws_ok($$select public.qnotes_create_oauth_grant(repeat('b', 64), 'client-us20', 'https://qnotes.test/mcp', ARRAY['notes:read']::text[], timezone('utc', now()) + interval '15 minutes', 'account', true, '{}'::uuid[])$$, 'P0001', 'oauth_access_not_granted', 'a notebook-scoped source cannot be widened to account access');
 select throws_ok($$select public.qnotes_create_oauth_grant(repeat('b', 64), 'client-us20', 'https://qnotes.test/mcp', ARRAY['notes:write']::text[], timezone('utc', now()) + interval '15 minutes', null, null, null)$$, 'P0001', 'oauth_scope_not_granted', 'a grant cannot add an action absent from the source token');
+select public.qnotes_create_api_token(
+  (select id from auth.users where email = 'owner@qnotes.local'), 'US20 notes-only source', 'qnt_us20_notes_only', repeat('c', 64),
+  ARRAY['notes:read']::text[], null, 'account', true, '{}'::uuid[]
+);
+select throws_ok($$select public.qnotes_create_oauth_grant(repeat('c', 64), 'client-us20', 'https://qnotes.test/mcp', ARRAY['notes:read', 'search:read']::text[], timezone('utc', now()) + interval '15 minutes', null, null, null)$$, 'P0001', 'oauth_scope_not_granted', 'the hosted read profile fails closed when the source token lacks search access');
 
 create temporary table us20_narrow_grant on commit drop as
 select public.qnotes_create_oauth_grant(

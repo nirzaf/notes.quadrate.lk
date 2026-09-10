@@ -841,7 +841,8 @@ By default, the endpoint exposes `get_capabilities`, `search_notes`,
 `get_note_outline`, `get_mutation_status`, and the read-only
 `qnotes://...` resources. It accepts a personal `qnt_...` token in the
 `Authorization: Bearer ...` header; the least-privilege read token profile is
-`notes:read, search:read`. A deployment explicitly configured with
+`notes:read, search:read`; approval fails closed when the pasted personal token
+does not include both scopes. A deployment explicitly configured with
 `QNOTES_MCP_PROFILE=share` selects the share profile, and the authenticated
 caller’s own OAuth-resolved personal token must additionally have
 `shares:write` to use `create_public_share`; there is no shared owner or share
