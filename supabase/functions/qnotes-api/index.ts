@@ -79,6 +79,13 @@ app.use('/api/tokens', async (context, next) => {
   context.header('Referrer-Policy', 'no-referrer');
   return next();
 });
+app.use('/api/tokens/*', async (context, next) => {
+  context.header('Cache-Control', 'no-store');
+  context.header('Pragma', 'no-cache');
+  context.header('X-Content-Type-Options', 'nosniff');
+  context.header('Referrer-Policy', 'no-referrer');
+  return next();
+});
 
 app.use('/public/share/resolve', async (context, next) => {
   context.header('Cache-Control', 'no-store');

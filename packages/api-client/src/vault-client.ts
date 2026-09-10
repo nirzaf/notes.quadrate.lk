@@ -156,7 +156,7 @@ export class QVaultClient {
       if (!response.ok) {
         const body: unknown = (response.headers.get('content-type') ?? '').includes('application/json') ? await response.json().catch(() => null) : null;
         const envelope = isRecord(body) && isRecord(body.error) ? body.error : {};
-        throw new QNotesHttpError(response.status, (isString(envelope.code) ? envelope.code : 'INTERNAL_ERROR') as QNotesHttpError['code'], isString(envelope.message) ? redactSensitive(envelope.message, secrets) as string : `Vault request failed with HTTP ${response.status}.`, isString(envelope.requestId) ? redactSensitive(envelope.requestId, secrets) as string : response.headers.get('x-request-id') ?? '', redactSensitive(envelope.details, secrets));
+        throw new QNotesHttpError(response.status, (isString(envelope.code) ? envelope.code : 'INTERNAL_ERROR') as QNotesHttpError['code'], isString(envelope.message) ? redactSensitive(envelope.message, secrets) as string : `Vault request failed with HTTP ${response.status}.`, isString(envelope.requestId) ? redactSensitive(envelope.requestId, secrets) as string : redactSensitive(response.headers.get('x-request-id') ?? '', secrets) as string, redactSensitive(envelope.details, secrets));
       }
       const body: unknown = await response.json();
       throwIfAborted(requestSignal.signal);

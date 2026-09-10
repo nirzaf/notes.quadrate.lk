@@ -3,7 +3,7 @@
 import { spawn } from 'node:child_process';
 import { statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
-import { validateApiEndpoint } from '../../packages/api-client/dist/endpoint-policy.js';
+import { validateApiEndpoint } from './endpoint-policy.mjs';
 
 const NOTES_PROFILES = new Set(['read', 'share', 'write']);
 const VAULT_PROFILES = new Set(['none', 'metadata', 'reveal', 'write']);

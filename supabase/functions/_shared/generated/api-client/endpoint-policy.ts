@@ -49,7 +49,15 @@ export function createRequestSignal(callerSignal: AbortSignal | null | undefined
   const controller = new AbortController();
   const boundedMs = boundedTimeout(timeoutMs);
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    if (timer !== undefined) clearTimeout(timer);
+    callerSignal?.removeEventListener('abort', abortFromCaller);
+  };
   const abortFromCaller = () => controller.abort(callerSignal?.reason);
+  controller.signal.addEventListener('abort', cleanup, { once: true });
 
   if (callerSignal) {
     if (callerSignal.aborted) controller.abort(callerSignal.reason);
@@ -59,15 +67,12 @@ export function createRequestSignal(callerSignal: AbortSignal | null | undefined
 
   return {
     signal: controller.signal,
-    cleanup: () => {
-      if (timer !== undefined) clearTimeout(timer);
-      callerSignal?.removeEventListener('abort', abortFromCaller);
-    },
+    cleanup,
   };
 }
 
 export function redactSensitive(value: unknown, secrets: readonly (string | null | undefined)[]): unknown {
-  const candidates = secrets.filter((secret): secret is string => typeof secret === 'string' && secret.length > 0);
+  const candidates = secrets.filter((secret): secret is string => typeof secret === 'string' && secret.length > 0).sort((left, right) => right.length - left.length);
   const redact = (input: unknown, seen: WeakSet<object>): unknown => {
     if (typeof input === 'string') return candidates.reduce((result, secret) => result.split(secret).join('[REDACTED]'), input);
     if (input === null || typeof input !== 'object') return input;

@@ -66,6 +66,24 @@ test('sanitizes access-token and transport failures', async () => {
   await assert.rejects(() => fetchFailure.listNotes(), (error) => error.message === 'QNotes request failed.' && !error.message.includes(secret));
 });
 
+test('redacts overlapping request secrets and request-id fallbacks', async () => {
+  const secret = 'abcdef';
+  const client = new QNotesClient({
+    baseUrl: 'https://example.test',
+    getAccessToken: () => 'abc',
+    fetchImplementation: async () => jsonResponse({ error: { code: 'INTERNAL_ERROR', message: secret, details: { value: secret } } }, 500, {
+      'content-type': 'application/json',
+      'x-request-id': secret,
+    }),
+  });
+  await assert.rejects(() => client.createNote({ title: 'x', contentMarkdown: '', value: secret, deviceId: 'd', mutationId: 'm' }), (error) => {
+    assert.equal(error.message, '[REDACTED]');
+    assert.equal(error.requestId, '[REDACTED]');
+    assert.deepEqual(error.details, { value: '[REDACTED]' });
+    return true;
+  });
+});
+
 test('rejects credential-bearing redirects before the destination receives the body', async (t) => {
   let sinkRequests = 0;
   const server = createServer((request, response) => {
@@ -89,6 +107,24 @@ test('rejects credential-bearing redirects before the destination receives the b
   });
   await assert.rejects(() => client.createNote({ title: 'redirect', contentMarkdown: 'secret', deviceId: 'device-1', mutationId: 'mutation-1' }), /QNotes request failed/);
   assert.equal(sinkRequests, 0);
+});
+
+test('keeps export cancellation active until the response body is consumed', async (t) => {
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'application/octet-stream' });
+    response.write('partial');
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  const client = new QNotesClient({
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    allowInsecureLoopback: true,
+    getAccessToken: () => null,
+  });
+  const response = await client.exportWorkspace({ timeoutMs: 10 });
+  await assert.rejects(() => response.arrayBuffer(), (error) => error?.name === 'TimeoutError' || error?.name === 'AbortError');
 });
 
 test('serializes notebook, unfiled, deleted-only, and include-deleted list filters', async () => {

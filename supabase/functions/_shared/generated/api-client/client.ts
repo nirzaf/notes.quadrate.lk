@@ -304,6 +304,40 @@ function queryString(values: Record<string, string | number | boolean | undefine
   return encoded ? `?${encoded}` : '';
 }
 
+function keepRequestAliveUntilBodyConsumed(response: Response, cleanup: () => void): Response {
+  if (!response.body) {
+    cleanup();
+    return response;
+  }
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      reader = response.body!.getReader();
+      const pump = async (): Promise<void> => {
+        try {
+          const result = await reader!.read();
+          if (result.done) {
+            cleanup();
+            controller.close();
+            return;
+          }
+          controller.enqueue(result.value);
+          await pump();
+        } catch (error) {
+          cleanup();
+          controller.error(error);
+        }
+      };
+      void pump();
+    },
+    cancel(reason) {
+      cleanup();
+      return reader?.cancel(reason);
+    },
+  });
+  return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+}
+
 export class QNotesClient {
   private readonly baseUrl: string;
   private readonly getAccessToken: QNotesClientOptions['getAccessToken'];
@@ -341,7 +375,7 @@ export class QNotesClient {
         const envelope = typeof body === 'object' && body !== null && 'error' in body ? (body as { error?: unknown }).error : null;
         const error = typeof envelope === 'object' && envelope !== null ? envelope as { code?: unknown; message?: unknown; requestId?: unknown; details?: unknown } : {};
         const code = typeof error.code === 'string' ? error.code : 'INTERNAL_ERROR';
-        throw new QNotesHttpError(response.status, code as QNotesHttpError['code'], typeof error.message === 'string' ? redactSensitive(error.message, secrets) as string : `Request failed with HTTP ${response.status}.`, typeof error.requestId === 'string' ? redactSensitive(error.requestId, secrets) as string : response.headers.get('x-request-id') ?? '', redactSensitive(error.details, secrets));
+        throw new QNotesHttpError(response.status, code as QNotesHttpError['code'], typeof error.message === 'string' ? redactSensitive(error.message, secrets) as string : `Request failed with HTTP ${response.status}.`, typeof error.requestId === 'string' ? redactSensitive(error.requestId, secrets) as string : redactSensitive(response.headers.get('x-request-id') ?? '', secrets) as string, redactSensitive(error.details, secrets));
       }
       const body: unknown = await response.json();
       throwIfAborted(requestSignal.signal);
@@ -387,7 +421,7 @@ export class QNotesClient {
         const envelope = typeof body === 'object' && body !== null && 'error' in body ? (body as { error?: unknown }).error : null;
         const error = typeof envelope === 'object' && envelope !== null ? envelope as { code?: unknown; message?: unknown; requestId?: unknown; details?: unknown } : {};
         const code = typeof error.code === 'string' ? error.code : 'INTERNAL_ERROR';
-        throw new QNotesHttpError(response.status, code as QNotesHttpError['code'], typeof error.message === 'string' ? redactSensitive(error.message, secrets) as string : `Request failed with HTTP ${response.status}.`, typeof error.requestId === 'string' ? redactSensitive(error.requestId, secrets) as string : response.headers.get('x-request-id') ?? '', redactSensitive(error.details, secrets));
+        throw new QNotesHttpError(response.status, code as QNotesHttpError['code'], typeof error.message === 'string' ? redactSensitive(error.message, secrets) as string : `Request failed with HTTP ${response.status}.`, typeof error.requestId === 'string' ? redactSensitive(error.requestId, secrets) as string : redactSensitive(response.headers.get('x-request-id') ?? '', secrets) as string, redactSensitive(error.details, secrets));
       }
       const body: unknown = await response.json();
       throwIfAborted(requestSignal.signal);
@@ -408,6 +442,7 @@ export class QNotesClient {
 
   private async binary(path: string, options: RequestOptions = {}): Promise<Response> {
     const requestSignal = createRequestSignal(options.signal, options.timeoutMs);
+    let bodyOwnedByCaller = false;
     try {
       throwIfAborted(requestSignal.signal);
       const headers = new Headers({ Accept: '*/*' });
@@ -428,15 +463,17 @@ export class QNotesClient {
         throwIfAborted(requestSignal.signal);
         const envelope = typeof body === 'object' && body !== null && 'error' in body ? (body as { error?: unknown }).error : null;
         const error = typeof envelope === 'object' && envelope !== null ? envelope as { code?: unknown; message?: unknown; requestId?: unknown; details?: unknown } : {};
-        throw new QNotesHttpError(response.status, (typeof error.code === 'string' ? error.code : 'INTERNAL_ERROR') as QNotesHttpError['code'], typeof error.message === 'string' ? redactSensitive(error.message, secrets) as string : `Request failed with HTTP ${response.status}.`, typeof error.requestId === 'string' ? redactSensitive(error.requestId, secrets) as string : response.headers.get('x-request-id') ?? '', redactSensitive(error.details, secrets));
+        throw new QNotesHttpError(response.status, (typeof error.code === 'string' ? error.code : 'INTERNAL_ERROR') as QNotesHttpError['code'], typeof error.message === 'string' ? redactSensitive(error.message, secrets) as string : `Request failed with HTTP ${response.status}.`, typeof error.requestId === 'string' ? redactSensitive(error.requestId, secrets) as string : redactSensitive(response.headers.get('x-request-id') ?? '', secrets) as string, redactSensitive(error.details, secrets));
       }
-      return response;
+      const result = keepRequestAliveUntilBodyConsumed(response, requestSignal.cleanup);
+      bodyOwnedByCaller = true;
+      return result;
     } catch (error) {
       throwIfAborted(requestSignal.signal);
       if (error instanceof QNotesHttpError) throw error;
       throw new Error('QNotes request failed.');
     } finally {
-      requestSignal.cleanup();
+      if (!bodyOwnedByCaller) requestSignal.cleanup();
     }
   }
 
