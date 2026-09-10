@@ -46,7 +46,7 @@ as $$
       and d.source_type in ('copy_block', 'code_block') and b.block_key = d.source_key
     cross join filter_values f
     where d.owner_id = p_owner_id
-      and d.embedding_mode = coalesce(nullif(p_filters->>'embeddingMode', ''), 'provider')
+      and (d.embedding is null or d.embedding_mode = coalesce(nullif(p_filters->>'embeddingMode', ''), 'provider'))
       and (cardinality(f.notebook_ids) = 0 or n.notebook_id = any(f.notebook_ids))
       and (cardinality(f.tags) = 0 or n.tags @> f.tags)
       and (cardinality(f.source_types) = 0 or d.source_type = any(f.source_types))
