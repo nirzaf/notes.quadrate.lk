@@ -33,14 +33,20 @@ begin
       )
     );
 
-  perform set_config('enable_seqscan', case when p_exact then 'on' else 'off' end, true);
-  perform set_config('enable_indexscan', case when p_exact then 'off' else 'on' end, true);
-  perform set_config('enable_indexonlyscan', case when p_exact then 'off' else 'on' end, true);
-  perform set_config('enable_bitmapscan', 'off', true);
-
   if p_exact then
+    -- Exact scans must retain ordinary B-tree and bitmap paths; the exact
+    -- oracle avoids HNSW ordering in its bounded query below.
+    perform set_config('enable_seqscan', 'on', true);
+    perform set_config('enable_indexscan', 'on', true);
+    perform set_config('enable_indexonlyscan', 'on', true);
+    perform set_config('enable_bitmapscan', 'on', true);
     return 'exact';
   end if;
+
+  perform set_config('enable_seqscan', 'off', true);
+  perform set_config('enable_indexscan', 'on', true);
+  perform set_config('enable_indexonlyscan', 'on', true);
+  perform set_config('enable_bitmapscan', 'off', true);
 
   -- ponytail: one measured HNSW budget; raise it only with new local recall data.
   if supports_iterative and current_setting('hnsw.iterative_scan', true) is not null then
@@ -318,7 +324,6 @@ as $$
   scope as (
     select
       case
-        when requested.unfiled then '{}'::uuid[]
         when cardinality(requested.notebook_ids) > 0 then requested.notebook_ids
         else coalesce((select array_agg(n.id) from notesdb.notebooks n where n.owner_id = p_owner_id), '{}'::uuid[])
       end as notebook_ids,
@@ -500,7 +505,7 @@ begin
        and (cardinality(f.source_types) = 0 or d.source_type = any(f.source_types))
        and (cardinality(f.languages) = 0 or lower(coalesce(b.language, '')) = any(f.languages))
        and (f.updated_after is null or n.updated_at > f.updated_after)
-     order by d.embedding <#> p_embedding, d.id
+     order by d.embedding <#> p_embedding
      limit p_k
   )
   select coalesce(array_agg(id order by distance, id), '{}'::uuid[])

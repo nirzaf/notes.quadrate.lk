@@ -41,7 +41,7 @@ function requireUuid(value, name) {
 
 function embeddingInputHash(document) {
   const input = [document.source_title, document.heading_path, document.content]
-    .map((value) => typeof value === 'string' ? value.trim() : '')
+    .map((value) => typeof value === 'string' ? value.replace(/^ +| +$/g, '') : '')
     .filter(Boolean)
     .join('\n\n');
   return createHash('sha256').update(input).digest('hex');

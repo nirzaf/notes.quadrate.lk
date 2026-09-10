@@ -1,5 +1,5 @@
 begin;
-select plan(12);
+select plan(13);
 
 select ok(
   has_function_privilege(
@@ -122,6 +122,22 @@ select is(
   ),
   2,
   'account-wide semantic search uses the recall-scoped implementation'
+);
+select is(
+  (
+    select count(*)::integer
+    from public.qnotes_semantic_search(
+      (select id from auth.users where email = 'owner@qnotes.local'),
+      'us23-small',
+      ('[1,0,' || repeat('0,', 381) || '0]')::extensions.vector,
+      10,
+      '{"tags":["us23-small"],"notebookIds":["85000000-0000-4000-8000-000000000001"],"unfiled":true}'::jsonb,
+      0,
+      2
+    )
+  ),
+  1,
+  'combined notebook and unfiled filters retain the requested notebook scope'
 );
 select ok(
   (
