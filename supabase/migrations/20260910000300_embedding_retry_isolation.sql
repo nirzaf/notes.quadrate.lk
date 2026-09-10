@@ -31,7 +31,7 @@ as $$
 begin
   if tg_op = 'INSERT' then
     new.embedding_attempts := 0;
-    new.embedding_mode := 'provider';
+    new.embedding_mode := coalesce(new.embedding_mode, 'provider');
   elsif old.content_hash is distinct from new.content_hash
     or old.embedding_input_hash is distinct from new.embedding_input_hash
     or old.embedding_model is distinct from new.embedding_model

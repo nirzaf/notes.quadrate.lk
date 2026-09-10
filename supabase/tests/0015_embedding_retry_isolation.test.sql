@@ -27,13 +27,13 @@ insert into notesdb.notes (
 );
 insert into notesdb.search_documents (
   id, owner_id, note_id, source_type, source_key, source_title, content,
-  content_hash, position, embedding_status, embedding_error, embedding_attempts
+  content_hash, position, embedding_status, embedding_error
 ) values (
   '88888888-8888-4888-8888-888888888804',
   (select id from auth.users where email = 'owner@qnotes.local'),
   '88888888-8888-4888-8888-888888888801', 'note_chunk', 'us26-retryable-failure',
   'US26 Retryable Failure', 'retryable embedding failure', 'us26-retryable-hash',
-  2, 'failed', 'EMBEDDING_FAILED', 1
+  2, 'failed', 'EMBEDDING_FAILED'
 );
 update notesdb.search_documents set embedding_attempts = 1
 where id = '88888888-8888-4888-8888-888888888804';
@@ -42,7 +42,7 @@ select is((select embedding_attempts from notesdb.search_documents where id = '8
 insert into notesdb.search_documents (
   id, owner_id, note_id, source_type, source_key, source_title, content,
   content_hash, position, embedding, embedding_status, embedding_model,
-  embedding_model_version, embedding_input_hash
+  embedding_model_version, embedding_input_hash, embedding_mode
 ) values (
   '88888888-8888-4888-8888-888888888802',
   (select id from auth.users where email = 'owner@qnotes.local'),
@@ -50,7 +50,8 @@ insert into notesdb.search_documents (
   'US26 Synthetic Isolation', 'synthetic-vector-marker', 'us26-synthetic-hash',
   0, ('[' || repeat('0,', 383) || '0]')::extensions.vector, 'ready',
   'gte-small', 'v2',
-  public.qnotes_embedding_input_hash('US26 Synthetic Isolation', null, 'synthetic-vector-marker')
+  public.qnotes_embedding_input_hash('US26 Synthetic Isolation', null, 'synthetic-vector-marker'),
+  'synthetic-test-v1'
 );
 insert into notesdb.search_documents (
   id, owner_id, note_id, source_type, source_key, source_title, content,
@@ -65,9 +66,6 @@ insert into notesdb.search_documents (
   'gte-small', 'v2',
   public.qnotes_embedding_input_hash('US26 Provider Isolation', null, 'synthetic-vector-marker')
 );
-update notesdb.search_documents
-set embedding_mode = 'synthetic-test-v1'
-where id = '88888888-8888-4888-8888-888888888802';
 select is((select count(*)::integer from public.qnotes_semantic_search(
   (select id from auth.users where email = 'owner@qnotes.local'),
   'synthetic-vector-marker', ('[' || repeat('0,', 383) || '0]')::extensions.vector,
