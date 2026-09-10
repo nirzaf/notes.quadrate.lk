@@ -322,10 +322,10 @@ security definer
 set search_path = public, notesdb, extensions
 set lock_timeout = '5s'
 as $$
-declare authorization jsonb;
+declare authz jsonb;
 begin
-  authorization := public.qnotes_vault_authorize_actor(p_owner_id, p_actor_token_id, p_actor_kind, 'secret:write', p_project_id, p_environment_id, null, p_request_id);
-  if authorization->>'status' <> 'ok' then return authorization; end if;
+  authz := public.qnotes_vault_authorize_actor(p_owner_id, p_actor_token_id, p_actor_kind, 'secret:write', p_project_id, p_environment_id, null, p_request_id);
+  if authz->>'status' <> 'ok' then return authz; end if;
   return public.qnotes_vault_create_secret_legacy(p_owner_id, p_project_id, p_environment_id, p_name, p_description, p_value, p_mutation_id, p_request_hash, p_actor_token_id, p_request_id, p_actor_kind);
 end;
 $$;
@@ -340,10 +340,10 @@ security definer
 set search_path = public, notesdb, extensions
 set lock_timeout = '5s'
 as $$
-declare authorization jsonb;
+declare authz jsonb;
 begin
-  authorization := public.qnotes_vault_authorize_actor(p_owner_id, p_actor_token_id, p_actor_kind, 'secret:write', null, null, p_secret_id, p_request_id);
-  if authorization->>'status' <> 'ok' then return authorization; end if;
+  authz := public.qnotes_vault_authorize_actor(p_owner_id, p_actor_token_id, p_actor_kind, 'secret:write', null, null, p_secret_id, p_request_id);
+  if authz->>'status' <> 'ok' then return authz; end if;
   return public.qnotes_vault_rotate_secret_legacy(p_owner_id, p_secret_id, p_value, p_description, p_expected_version, p_mutation_id, p_request_hash, p_actor_token_id, p_request_id, p_actor_kind);
 end;
 $$;
@@ -359,10 +359,10 @@ security definer
 set search_path = public, notesdb, extensions
 set lock_timeout = '5s'
 as $$
-declare authorization jsonb;
+declare authz jsonb;
 begin
-  authorization := public.qnotes_vault_authorize_actor(p_owner_id, p_actor_token_id, p_actor_kind, 'secret:write', null, null, p_secret_id, p_request_id);
-  if authorization->>'status' <> 'ok' then return authorization; end if;
+  authz := public.qnotes_vault_authorize_actor(p_owner_id, p_actor_token_id, p_actor_kind, 'secret:write', null, null, p_secret_id, p_request_id);
+  if authz->>'status' <> 'ok' then return authz; end if;
   return public.qnotes_vault_rotate_secret_replay_legacy(p_owner_id, p_secret_id, p_value, p_description, p_expected_version, p_mutation_id, p_request_hash, p_legacy_request_hash, p_actor_token_id, p_request_id, p_actor_kind);
 end;
 $$;
@@ -377,10 +377,10 @@ security definer
 set search_path = public, notesdb, extensions
 set lock_timeout = '5s'
 as $$
-declare authorization jsonb;
+declare authz jsonb;
 begin
-  authorization := public.qnotes_vault_authorize_actor(p_owner_id, p_actor_token_id, p_actor_kind, 'secret:delete', null, null, p_secret_id, p_request_id);
-  if authorization->>'status' <> 'ok' then return authorization; end if;
+  authz := public.qnotes_vault_authorize_actor(p_owner_id, p_actor_token_id, p_actor_kind, 'secret:delete', null, null, p_secret_id, p_request_id);
+  if authz->>'status' <> 'ok' then return authz; end if;
   return public.qnotes_vault_delete_secret_legacy(p_owner_id, p_secret_id, p_expected_version, p_mutation_id, p_request_hash, p_actor_token_id, p_request_id, p_actor_kind);
 end;
 $$;
@@ -394,10 +394,10 @@ security definer
 set search_path = public, notesdb, extensions
 set lock_timeout = '5s'
 as $$
-declare authorization jsonb;
+declare authz jsonb;
 begin
-  authorization := public.qnotes_vault_authorize_actor(p_owner_id, p_actor_token_id, p_actor_kind, 'secret:reveal', null, null, p_secret_id, p_request_id);
-  if authorization->>'status' <> 'ok' then return authorization; end if;
+  authz := public.qnotes_vault_authorize_actor(p_owner_id, p_actor_token_id, p_actor_kind, 'secret:reveal', null, null, p_secret_id, p_request_id);
+  if authz->>'status' <> 'ok' then return authz; end if;
   return public.qnotes_vault_reveal_secret_legacy(p_owner_id, p_secret_id, p_actor_token_id, p_purpose, p_request_id, p_actor_kind);
 end;
 $$;
@@ -411,11 +411,11 @@ security definer
 set search_path = public, notesdb, extensions
 set lock_timeout = '5s'
 as $$
-declare authorization jsonb;
+declare authz jsonb;
 begin
-  authorization := public.qnotes_vault_authorize_batch(p_owner_id, p_selectors, p_actor_token_id, p_actor_kind, p_request_id);
-  if authorization->>'status' <> 'ok' then return authorization - 'selectors'; end if;
-  return public.qnotes_vault_reveal_secrets_legacy(p_owner_id, authorization->'selectors', p_actor_token_id, p_purpose, p_request_id, p_actor_kind);
+  authz := public.qnotes_vault_authorize_batch(p_owner_id, p_selectors, p_actor_token_id, p_actor_kind, p_request_id);
+  if authz->>'status' <> 'ok' then return authz - 'selectors'; end if;
+  return public.qnotes_vault_reveal_secrets_legacy(p_owner_id, authz->'selectors', p_actor_token_id, p_purpose, p_request_id, p_actor_kind);
 end;
 $$;
 
