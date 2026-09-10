@@ -459,6 +459,8 @@ async function resolveBearerToken(request: Request): Promise<string | null> {
   if (isPersonalToken(token)) return token;
   const access = await verifyOAuthAccessToken(token);
   if (!access || access.type !== 'access_token' || access.expiresAt <= Math.floor(Date.now() / 1000) || access.resource !== mcpBaseUrl(request)) return null;
+  const grantContext = await oauthGrantContext(access.grantId, access.clientId, access.resource);
+  if (!grantContext || grantContext.length !== 1) return null;
   return token;
 }
 

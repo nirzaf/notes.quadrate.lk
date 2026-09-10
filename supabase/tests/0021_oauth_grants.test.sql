@@ -1,5 +1,5 @@
 begin;
-select plan(32);
+select plan(37);
 
 select has_table('notesdb', 'oauth_grants', 'OAuth grant bindings exist');
 select has_column('notesdb', 'oauth_grants', 'owner_id', 'grants bind an owner');
@@ -14,6 +14,9 @@ select ok(not has_function_privilege('anon', 'public.qnotes_create_oauth_grant(t
 select ok(has_function_privilege('service_role', 'public.qnotes_oauth_grant_context(uuid,text,text)', 'EXECUTE'), 'service role can resolve OAuth grants');
 select ok(not has_function_privilege('anon', 'public.qnotes_oauth_grant_context(uuid,text,text)', 'EXECUTE'), 'anon cannot resolve OAuth grants');
 select ok(has_function_privilege('service_role', 'public.qnotes_revoke_oauth_grant(uuid,text,text)', 'EXECUTE'), 'service role can revoke OAuth grants');
+select ok(has_function_privilege('service_role', 'public.qnotes_purge_expired_oauth_grants(integer)', 'EXECUTE'), 'service role can purge OAuth grants');
+select ok(not has_function_privilege('anon', 'public.qnotes_purge_expired_oauth_grants(integer)', 'EXECUTE'), 'anon cannot purge OAuth grants');
+select ok(exists(select 1 from cron.job where jobname = 'qnotes-purge-oauth-grants'), 'OAuth grant cleanup is scheduled');
 
 insert into notesdb.notebooks (id, owner_id, name) values
   ('a2000000-0000-4000-8000-000000000001', (select id from auth.users where email = 'owner@qnotes.local'), 'US20 A'),
@@ -70,6 +73,25 @@ select is(public.qnotes_revoke_oauth_grant((select (response->>'id')::uuid from 
 select throws_ok($$select public.qnotes_create_oauth_grant(repeat('a', 64), 'client-us20', 'https://qnotes.test/mcp', ARRAY['notes:read']::text[], timezone('utc', now()) - interval '1 second', null, null, null)$$, 'P0001', 'oauth_expiry_invalid', 'expired grants are not issued');
 update notesdb.api_tokens set revoked_at = timezone('utc', now()) where token_hash = repeat('a', 64);
 select is((select count(*)::integer from public.qnotes_oauth_grant_context((select (response->>'id')::uuid from us20_broad_grant), 'client-us20', 'https://qnotes.test/mcp')), 0, 'revoking the source personal token invalidates issued OAuth access');
+
+insert into notesdb.oauth_grants (
+  owner_id, source_token_id, client_id, resource, scopes, access_mode,
+  allow_unfiled, expires_at, revoked_at
+) values
+  (
+    (select id from auth.users where email = 'owner@qnotes.local'),
+    (select id from notesdb.api_tokens where token_hash = repeat('a', 64)),
+    'cleanup-expired', 'https://qnotes.test/mcp', ARRAY['notes:read'], 'account', true,
+    timezone('utc', now()) - interval '1 hour', null
+  ),
+  (
+    (select id from auth.users where email = 'owner@qnotes.local'),
+    (select id from notesdb.api_tokens where token_hash = repeat('a', 64)),
+    'cleanup-revoked', 'https://qnotes.test/mcp', ARRAY['notes:read'], 'account', true,
+    timezone('utc', now()) + interval '1 hour', timezone('utc', now()) - interval '2 days'
+  );
+select is(public.qnotes_purge_expired_oauth_grants(10), 2, 'bounded cleanup removes expired and retained revoked grants');
+select is((select count(*)::integer from notesdb.oauth_grants where client_id in ('cleanup-expired', 'cleanup-revoked')), 0, 'cleaned OAuth grants are deleted');
 
 select * from finish();
 rollback;

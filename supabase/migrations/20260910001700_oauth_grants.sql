@@ -267,6 +267,50 @@ as $$
   select exists(select 1 from revoked);
 $$;
 
+create or replace function public.qnotes_purge_expired_oauth_grants(
+  p_limit integer default 500
+) returns integer
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  deleted_count integer;
+begin
+  if p_limit is null or p_limit < 1 or p_limit > 1000 then
+    raise exception 'oauth purge limit must be between 1 and 1000' using errcode = '22023';
+  end if;
+
+  with candidates as (
+    select id
+    from notesdb.oauth_grants
+    where expires_at <= timezone('utc', now())
+      or revoked_at <= timezone('utc', now()) - interval '1 day'
+    order by coalesce(revoked_at, expires_at), id
+    limit p_limit
+    for update skip locked
+  )
+  delete from notesdb.oauth_grants g
+  using candidates
+  where g.id = candidates.id;
+
+  get diagnostics deleted_count = row_count;
+  return deleted_count;
+end;
+$$;
+
+do $oauth_cleanup$
+begin
+  if not exists (select 1 from cron.job where jobname = 'qnotes-purge-oauth-grants') then
+    perform cron.schedule(
+      'qnotes-purge-oauth-grants',
+      '17 * * * *',
+      $$select public.qnotes_purge_expired_oauth_grants(500);$$
+    );
+  end if;
+end;
+$oauth_cleanup$;
+
 do $$
 declare
   signature text;
@@ -274,7 +318,8 @@ begin
   foreach signature in array array[
     'qnotes_create_oauth_grant(text,text,text,text[],timestamptz,text,boolean,uuid[])',
     'qnotes_oauth_grant_context(uuid,text,text)',
-    'qnotes_revoke_oauth_grant(uuid,text,text)'
+    'qnotes_revoke_oauth_grant(uuid,text,text)',
+    'qnotes_purge_expired_oauth_grants(integer)'
   ] loop
     execute format('revoke all on function public.%s from public, anon, authenticated', signature);
     execute format('grant execute on function public.%s to service_role', signature);
