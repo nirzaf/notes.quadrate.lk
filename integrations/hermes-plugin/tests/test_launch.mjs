@@ -304,7 +304,12 @@ test('launcher validates the resolved target of a runtime symlink', async (t) =>
   const target = join(root, 'runtime.txt');
   const link = join(root, 'runtime.mjs');
   await writeFile(target, 'not a runtime');
-  await symlink(target, link);
+  try {
+    await symlink(target, link);
+  } catch (error) {
+    if (process.platform === 'win32' && ['EACCES', 'ENOTSUP', 'EPERM'].includes(error.code)) return;
+    throw error;
+  }
 
   const result = await runLauncher(link, {}, {
     QNOTES_URL: 'https://notes.example.test/functions/v1/qnotes-api',
