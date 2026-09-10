@@ -1,5 +1,5 @@
 begin;
-select plan(22);
+select plan(27);
 
 select ok(to_regprocedure('public.qnotes_vault_resolve_resource(uuid,uuid,text,text,uuid,text,uuid,text,uuid,text,uuid)') is not null, 'the exact Vault resource resolver exists');
 select ok((select p.prosecdef from pg_proc p where p.oid = 'public.qnotes_vault_resolve_resource(uuid,uuid,text,text,uuid,text,uuid,text,uuid,text,uuid)'::regprocedure), 'the exact Vault resource resolver is SECURITY DEFINER');
@@ -128,7 +128,34 @@ select is((public.qnotes_vault_resolve_resource(
   (select id from auth.users where email = 'owner@qnotes.local'), null, 'user_jwt', 'secret:write',
   null, 'exact-project', null, 'stable', null, null,
   'f1600000-0000-4000-8000-000000000018'
+)->>'status'), 'ok', 'environment resolution for creation succeeds');
+select is((public.qnotes_vault_resolve_resource(
+  (select id from auth.users where email = 'owner@qnotes.local'), null, 'user_jwt', 'secret:write',
+  null, 'exact-project', null, 'stable', null, null,
+  'f1600000-0000-4000-8000-000000000018'
 )->'resource'->>'secretId'), null, 'environment resolution for creation returns no secret ID');
+select is((public.qnotes_vault_resolve_resource(
+  (select id from auth.users where email = 'owner@qnotes.local'), null, 'user_jwt', 'metadata:read',
+  null, 'exact-project', 'f1600000-0000-4000-8000-000000000099', null, null, null,
+  'f1600000-0000-4000-8000-000000000021'
+)->>'status'), 'environment_not_found', 'missing environment IDs preserve the environment-specific status');
+select is((public.qnotes_vault_resolve_resource(
+  (select id from auth.users where email = 'owner@qnotes.local'), 'f1600000-0000-4000-8000-000000000011', 'vault_agent', 'metadata:read',
+  null, 'exact-project', null, 'missing-environment', null, null,
+  'f1600000-0000-4000-8000-000000000022'
+)->>'status'), 'access_denied', 'qvt selectors use one denial for missing environments');
+select is((public.qnotes_vault_authorize_actor(
+  (select id from auth.users where email = 'owner@qnotes.local'), 'f1600000-0000-4000-8000-000000000011', 'vault_agent', 'metadata:read',
+  'f1600000-0000-4000-8000-000000000001', 'f1600000-0000-4000-8000-000000000002', 'f1600000-0000-4000-8000-000000001001',
+  'f1600000-0000-4000-8000-000000000023'
+)->>'status'), 'ok', 'the active target remains authorized before the delete race check');
+update notesdb.vault_secrets set deleted_at = clock_timestamp()
+where id = 'f1600000-0000-4000-8000-000000001001';
+select is((public.qnotes_vault_authorize_actor(
+  (select id from auth.users where email = 'owner@qnotes.local'), 'f1600000-0000-4000-8000-000000000011', 'vault_agent', 'metadata:read',
+  'f1600000-0000-4000-8000-000000000001', 'f1600000-0000-4000-8000-000000000002', 'f1600000-0000-4000-8000-000000001001',
+  'f1600000-0000-4000-8000-000000000024'
+)->>'status'), 'access_denied', 'locked authorization rejects a secret deleted after resolution');
 select is((public.qnotes_vault_resolve_resource(
   (select id from auth.users where email = 'owner@qnotes.local'), null, 'user_jwt', 'secret:reveal',
   null, 'exact-project', null, 'stable', null, null,

@@ -23,6 +23,7 @@ declare
   project_row notesdb.vault_projects%rowtype;
   environment_row notesdb.vault_environments%rowtype;
   secret_row notesdb.vault_secrets%rowtype;
+  token_row notesdb.vault_agent_tokens%rowtype;
   authz jsonb;
 begin
   if p_action is null or p_action not in ('metadata:read', 'secret:reveal', 'secret:write', 'secret:delete') then
@@ -52,11 +53,32 @@ begin
     return jsonb_build_object('status', 'invalid_reference');
   end if;
 
+  -- Validate agent tokens before resource lookups so missing and unauthorized
+  -- selectors cannot be distinguished by a qvt caller.
+  if p_actor_token_id is not null then
+    if p_actor_kind <> 'vault_agent' then
+      return jsonb_build_object('status', 'access_denied');
+    end if;
+    select * into token_row
+    from notesdb.vault_agent_tokens
+    where id = p_actor_token_id and owner_id = p_owner_id
+    for update;
+    if not found
+      or token_row.revoked_at is not null
+      or (token_row.expires_at is not null and token_row.expires_at <= clock_timestamp()) then
+      perform public.qnotes_vault_record_denial(p_owner_id, p_actor_token_id, p_action, p_project_id, p_environment_id, p_secret_id, p_request_id, 'token_invalid');
+      return jsonb_build_object('status', 'access_denied');
+    end if;
+  end if;
+
   if p_secret_id is not null then
     select * into secret_row
     from notesdb.vault_secrets
     where id = p_secret_id and owner_id = p_owner_id and deleted_at is null;
-    if not found then return jsonb_build_object('status', 'not_found'); end if;
+    if not found then
+      if p_actor_token_id is not null then return jsonb_build_object('status', 'access_denied'); end if;
+      return jsonb_build_object('status', 'not_found');
+    end if;
   end if;
 
   if p_project_id is not null then
@@ -75,15 +97,20 @@ begin
     select * into environment_row
     from notesdb.vault_environments
     where id = p_environment_id and owner_id = p_owner_id and archived_at is null;
-    if found then
-      select * into project_row
-      from notesdb.vault_projects
-      where id = environment_row.project_id and owner_id = p_owner_id and archived_at is null;
+    if not found then
+      if p_actor_token_id is not null then return jsonb_build_object('status', 'access_denied'); end if;
+      return jsonb_build_object('status', 'environment_not_found');
     end if;
+    select * into project_row
+    from notesdb.vault_projects
+    where id = environment_row.project_id and owner_id = p_owner_id and archived_at is null;
   else
     return jsonb_build_object('status', 'invalid_reference');
   end if;
-  if not found or project_row.id is null then return jsonb_build_object('status', 'project_not_found'); end if;
+  if project_row.id is null then
+    if p_actor_token_id is not null then return jsonb_build_object('status', 'access_denied'); end if;
+    return jsonb_build_object('status', 'project_not_found');
+  end if;
 
   if p_environment_id is not null then
     select * into environment_row
@@ -100,7 +127,10 @@ begin
   else
     return jsonb_build_object('status', 'invalid_reference');
   end if;
-  if not found or environment_row.id is null then return jsonb_build_object('status', 'environment_not_found'); end if;
+  if not found or environment_row.id is null then
+    if p_actor_token_id is not null then return jsonb_build_object('status', 'access_denied'); end if;
+    return jsonb_build_object('status', 'environment_not_found');
+  end if;
 
   if p_secret_name is not null then
     select * into secret_row
@@ -110,11 +140,15 @@ begin
       and environment_id = environment_row.id
       and lower(name) = lower(btrim(p_secret_name))
       and deleted_at is null;
-    if not found then return jsonb_build_object('status', 'not_found'); end if;
+    if not found then
+      if p_actor_token_id is not null then return jsonb_build_object('status', 'access_denied'); end if;
+      return jsonb_build_object('status', 'not_found');
+    end if;
   elsif p_secret_id is not null and (
     secret_row.project_id is distinct from project_row.id
     or secret_row.environment_id is distinct from environment_row.id
   ) then
+    if p_actor_token_id is not null then return jsonb_build_object('status', 'access_denied'); end if;
     return jsonb_build_object('status', 'not_found');
   end if;
 
