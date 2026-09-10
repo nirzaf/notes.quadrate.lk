@@ -272,6 +272,7 @@ begin
       and a.extraction_status = 'ready'
       and a.checksum_sha256 is not null
       and a.extraction_error is null
+      and a.size_bytes > 0
       and not exists (
         select 1
         from notesdb.search_documents d

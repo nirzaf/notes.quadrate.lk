@@ -222,7 +222,8 @@ insert into notesdb.attachments (id, owner_id, note_id, object_path, original_fi
 values
   ('77777777-7777-4777-8777-777777777746', (select id from auth.users where email = 'owner@qnotes.local'), '77777777-7777-4777-8777-777777777740', 'us11/missing/file.txt', 'missing.txt', 'text/plain', 4, 'us11-missing-checksum', 'ready'),
   ('77777777-7777-4777-8777-777777777747', (select id from auth.users where email = 'owner@qnotes.local'), '77777777-7777-4777-8777-777777777740', 'us11/unsupported/file.bin', 'unsupported.bin', 'application/octet-stream', 4, null, 'unsupported'),
-  ('77777777-7777-4777-8777-777777777748', (select id from auth.users where email = 'owner@qnotes.local'), '77777777-7777-4777-8777-777777777740', 'us11/deleted/file.txt', 'deleted.txt', 'text/plain', 4, 'us11-deleted-checksum', 'deleted');
+  ('77777777-7777-4777-8777-777777777748', (select id from auth.users where email = 'owner@qnotes.local'), '77777777-7777-4777-8777-777777777740', 'us11/deleted/file.txt', 'deleted.txt', 'text/plain', 4, 'us11-deleted-checksum', 'deleted'),
+  ('77777777-7777-4777-8777-777777777750', (select id from auth.users where email = 'owner@qnotes.local'), '77777777-7777-4777-8777-777777777740', 'us11/empty/file.txt', 'empty.txt', 'text/plain', 0, 'us11-empty-checksum', 'ready');
 update notesdb.attachments set deleted_at = '2026-01-03T00:00:00Z' where id = '77777777-7777-4777-8777-777777777748';
 select throws_ok(
   $$select * from public.qnotes_repair_attachment_search(p_dry_run => false, p_batch_size => 100)$$,
