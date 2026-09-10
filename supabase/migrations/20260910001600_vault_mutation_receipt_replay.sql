@@ -77,6 +77,9 @@ alter table notesdb.vault_mutations
 create index if not exists vault_mutations_owner_retention_key
   on notesdb.vault_mutations (owner_id, retention_expires_at);
 
+grant select, delete on table notesdb.vault_mutations to qnotes_vault_audit_maintenance;
+alter table notesdb.vault_mutations owner to qnotes_vault_audit_maintenance;
+
 create or replace function notesdb.vault_mutation_identity_defaults()
 returns trigger
 language plpgsql
@@ -259,6 +262,39 @@ begin
 end;
 $$;
 
+create or replace function public.qnotes_vault_purge_expired_mutation_receipts(
+  p_before timestamptz default clock_timestamp(),
+  p_limit integer default 500
+) returns integer
+language plpgsql
+security definer
+set search_path = public, notesdb, extensions
+as $$
+declare
+  removed integer;
+begin
+  if p_limit is null or p_limit < 1 or p_limit > 1000 then
+    raise exception 'Vault mutation purge limit must be between 1 and 1000' using errcode = '22023';
+  end if;
+
+  with candidates as (
+    select owner_id, mutation_id
+    from notesdb.vault_mutations
+    where retention_expires_at <= least(coalesce(p_before, clock_timestamp()), clock_timestamp())
+    order by retention_expires_at, owner_id, mutation_id
+    limit p_limit
+    for update skip locked
+  )
+  delete from notesdb.vault_mutations mutation
+  using candidates
+  where mutation.owner_id = candidates.owner_id
+    and mutation.mutation_id = candidates.mutation_id;
+
+  get diagnostics removed = row_count;
+  return removed;
+end;
+$$;
+
 -- Keep the US-04 authorization wrappers, adding a transaction lock before the
 -- actor/resource lock. The legacy functions then re-check the receipt after a
 -- competing first attempt commits.
@@ -341,8 +377,12 @@ $$;
 
 revoke all on function public.qnotes_vault_lock_mutation(uuid, uuid) from public, anon, authenticated;
 revoke all on function public.qnotes_vault_get_mutation_receipt(uuid, uuid, text, uuid, uuid, uuid, bigint, text[], uuid, text, uuid) from public, anon, authenticated;
+revoke all on function public.qnotes_vault_purge_expired_mutation_receipts(timestamptz, integer) from public, anon, authenticated, service_role;
 grant execute on function public.qnotes_vault_lock_mutation(uuid, uuid) to service_role;
 grant execute on function public.qnotes_vault_get_mutation_receipt(uuid, uuid, text, uuid, uuid, uuid, bigint, text[], uuid, text, uuid) to service_role;
+alter function public.qnotes_vault_purge_expired_mutation_receipts(timestamptz, integer) owner to qnotes_vault_audit_maintenance;
+grant execute on function public.qnotes_vault_purge_expired_mutation_receipts(timestamptz, integer) to qnotes_vault_audit_maintenance;
 
 comment on column notesdb.vault_mutations.retention_expires_at is 'Safe mutation receipt retention ends 30 days after creation; expired rows report status without returning the result.';
 comment on column notesdb.vault_mutations.hash_key_version is 'Version of the domain-separated mutation hash construction; retain compatible pepper keys through the receipt horizon before retirement.';
+comment on function public.qnotes_vault_purge_expired_mutation_receipts(timestamptz, integer) is 'Maintenance-only bounded purge for expired Vault mutation receipts.';

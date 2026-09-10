@@ -1,5 +1,5 @@
 begin;
-select plan(30);
+select plan(35);
 
 select has_column('notesdb', 'vault_mutations', 'project_id', 'mutation receipts retain the project identity');
 select has_column('notesdb', 'vault_mutations', 'environment_id', 'mutation receipts retain the environment identity');
@@ -12,6 +12,9 @@ select ok(to_regprocedure('public.qnotes_vault_lock_mutation(uuid,uuid)') is not
 select ok(to_regprocedure('public.qnotes_vault_get_mutation_receipt(uuid,uuid,text,uuid,uuid,uuid,bigint,text[],uuid,text,uuid)') is not null, 'the mutation receipt RPC exists');
 select ok(has_function_privilege('service_role', 'public.qnotes_vault_get_mutation_receipt(uuid,uuid,text,uuid,uuid,uuid,bigint,text[],uuid,text,uuid)', 'EXECUTE'), 'service_role can inspect authorized mutation receipts');
 select ok(not has_function_privilege('authenticated', 'public.qnotes_vault_get_mutation_receipt(uuid,uuid,text,uuid,uuid,uuid,bigint,text[],uuid,text,uuid)', 'EXECUTE'), 'authenticated cannot call the receipt RPC directly');
+select ok(to_regprocedure('public.qnotes_vault_purge_expired_mutation_receipts(timestamptz,integer)') is not null, 'the mutation retention purge RPC exists');
+select ok(has_function_privilege('qnotes_vault_audit_maintenance', 'public.qnotes_vault_purge_expired_mutation_receipts(timestamptz,integer)', 'EXECUTE'), 'the maintenance role can purge expired mutation receipts');
+select ok(not has_function_privilege('service_role', 'public.qnotes_vault_purge_expired_mutation_receipts(timestamptz,integer)', 'EXECUTE'), 'service role cannot purge mutation receipts directly');
 
 insert into notesdb.vault_projects (id, owner_id, slug, name)
 values ('a1700000-0000-4000-8000-000000000001', (select id from auth.users where email = 'owner@qnotes.local'), 'receipt-owner', 'Synthetic receipt owner');
@@ -155,6 +158,9 @@ select is((public.qnotes_vault_get_mutation_receipt(
   array[repeat('f', 64), repeat('e', 64)], null, 'user_jwt', 'a1700000-0000-4000-8000-000000000053'
 )->>'status'), 'idempotent', 'the receipt lookup accepts the supported legacy rotation hash');
 select is((select version from notesdb.vault_secrets where id = ((select response->'secret'->>'id' from vault_receipt_legacy_create))::uuid), 2::bigint, 'legacy rotation replay does not apply a second change');
+
+select is(public.qnotes_vault_purge_expired_mutation_receipts(clock_timestamp(), 1), 1, 'maintenance purge removes one expired mutation receipt within its bound');
+select ok(not exists (select 1 from notesdb.vault_mutations where mutation_id = 'a1700000-0000-4000-8000-000000000021'), 'expired mutation receipt metadata is removed');
 
 select * from finish();
 rollback;

@@ -536,15 +536,15 @@ export async function createVaultSecret(context: Context): Promise<Response> {
   const body = record(await context.req.json());
   const bodyProjectId = typeof body.projectId === 'string' && isUUID(body.projectId) ? body.projectId : null;
   const bodyEnvironmentId = typeof body.environmentId === 'string' && isUUID(body.environmentId) ? body.environmentId : null;
-  if (bodyProjectId && bodyEnvironmentId && (bodyProjectId !== String(environment.project_id) || bodyEnvironmentId !== String(environment.id))) {
+  if ((bodyProjectId && bodyProjectId !== String(environment.project_id)) || (bodyEnvironmentId && bodyEnvironmentId !== String(environment.id))) {
     throw new ApiError(422, 'VALIDATION_ERROR', 'projectId and environmentId must match the route resource.');
   }
   const resource = await resolveVaultResource(context, auth, 'secret:write', { environmentId: context.req.param('environmentId') ?? '' }, 'environment');
   const project = await findProject(auth.userId, String(environment.project_id));
-  const input = validateCreateVaultSecretInput({ ...body, projectId: resource.projectId, environmentId: resource.environmentId });
-  const request = { operation: 'created', projectId: resource.projectId, environmentId: resource.environmentId, name: input.name, description: input.description ?? null, value: input.value };
-  const replay = await replayVaultMutation(context, auth, 'created', input.mutationId, { projectId: resource.projectId, environmentId: resource.environmentId, secretId: null, expectedVersion: null }, await mutationRequestHashes(request));
-  if (replay) return dataBody(context, await mapVaultMutation(context, auth, replay, 'create', { ownerId: auth.userId, projectId: resource.projectId, environmentId: resource.environmentId, secretId: null }));
+  const input = validateCreateVaultSecretInput({ ...body, projectId: project.id, environmentId: environment.id });
+  const request = { operation: 'created', projectId: project.id, environmentId: environment.id, name: input.name, description: input.description ?? null, value: input.value };
+  const replay = await replayVaultMutation(context, auth, 'created', input.mutationId, { projectId: String(project.id), environmentId: String(environment.id), secretId: null, expectedVersion: null }, await mutationRequestHashes(request));
+  if (replay) return dataBody(context, await mapVaultMutation(context, auth, replay, 'create', { ownerId: auth.userId, projectId: String(project.id), environmentId: String(environment.id), secretId: null }));
   return createVaultSecretForEnvironment(context, project, environment, input);
 }
 
