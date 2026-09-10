@@ -275,3 +275,7 @@ raw qvt token is supplied separately. Vault requests use the required
 `QNOTES_URL` and a non-empty `QVAULT_URL` is rejected. The hosted HTTP MCP
 endpoint stays Notes-only. See [VAULT_ACCESS_GUIDE.md](VAULT_ACCESS_GUIDE.md)
 for the route, grant, and secret-handling contract.
+
+The release-level finding map, Docker verification gates, unavailable checks,
+and residual risks are recorded in
+[PRODUCTION_HARDENING_EVIDENCE.md](docs/PRODUCTION_HARDENING_EVIDENCE.md).

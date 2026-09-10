@@ -101,7 +101,7 @@ jobs:
           else
             changed="$(git diff --name-only HEAD^ HEAD)"
           fi
-          if printf '%s\n' "$changed" | grep -Eq '^(packages/markdown/|supabase/functions/qnotes-api/search\.ts$|supabase/functions/embedding-worker/|embedding-worker/|supabase/migrations/.*search|tests/search-evaluation-(fixtures|baseline)\.json$|scripts/(evaluate-search|search-evaluation-metrics|verify-search-regression|seed-search-benchmark|search-benchmark)\.mjs$)'; then
+          if printf '%s\n' "$changed" | grep -Eq '^(packages/markdown/|supabase/functions/qnotes-api/search\.ts$|supabase/functions/embedding-worker/|embedding-worker/|supabase/migrations/.*search|tests/search-evaluation-(fixtures|baseline)\.json$|scripts/(evaluate-search|search-evaluation-metrics|verify-search-regression|seed-search-benchmark|search-benchmark)\.mjs$|scripts/search-query-plans\.sql$)'; then
             echo "required=true" >> "$GITHUB_OUTPUT"
           else
             echo "required=false" >> "$GITHUB_OUTPUT"
@@ -155,6 +155,9 @@ jobs:
       - name: Run the checked-in search baseline
         if: steps.scope.outputs.required == 'true'
         run: pnpm run verify:search -- --seed
+      - name: Collect checked-in search query plans
+        if: steps.scope.outputs.required == 'true'
+        run: docker exec -i supabase_db_notes.quadrate.lk psql -v ON_ERROR_STOP=1 -U postgres -d postgres -f - < scripts/search-query-plans.sql
       - name: Stop the local Supabase stack
         if: always() && steps.scope.outputs.required == 'true'
         shell: bash
