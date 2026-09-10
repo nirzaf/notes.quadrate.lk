@@ -1,5 +1,5 @@
 begin;
-select plan(32);
+select plan(33);
 
 select has_table('notesdb', 'vault_audit_policy', 'Vault audit policy exists');
 select has_table('notesdb', 'vault_audit_outbox', 'Vault audit outbox exists');
@@ -40,6 +40,7 @@ select ok((select event_id = (select event_id from audit_integrity_event) and pa
 select ok((select not (payload ? 'value') and not (payload ? 'requestBody') from notesdb.vault_audit_outbox where event_id = (select event_id from audit_integrity_event)), 'the export payload excludes secret values and whole requests');
 
 select throws_ok($$update notesdb.vault_audit_events set purpose = 'tampered' where id = (select event_id from audit_integrity_event)$$, 'P0001', 'Vault audit events are append-only', 'the broker cannot update prior audit rows');
+select throws_ok($$delete from notesdb.vault_audit_events where id = (select event_id from audit_integrity_event)$$, 'P0001', 'Vault audit events are append-only', 'the broker cannot delete prior audit rows');
 
 create temporary table audit_integrity_claim on commit drop as
 select * from public.qnotes_vault_claim_audit_outbox(100);

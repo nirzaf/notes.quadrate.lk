@@ -27,10 +27,7 @@ begin
     return;
   end if;
 
-  insert into notesdb.vault_audit_events (
-    owner_id, actor_kind, actor_token_id, action, project_id, environment_id,
-    secret_id, success, result_code, request_id
-  ) values (
+  perform public.qnotes_vault_append_audit_event(
     p_owner_id,
     case when p_actor_token_id is null then 'user_jwt' else 'vault_agent' end,
     p_actor_token_id,
@@ -38,9 +35,12 @@ begin
     p_project_id,
     p_environment_id,
     p_secret_id,
+    null,
     false,
     left(regexp_replace(coalesce(p_result_code, 'access_denied'), '[\r\n]', '', 'g'), 100),
-    p_request_id
+    p_request_id,
+    p_request_id,
+    null
   );
 end;
 $$;

@@ -75,9 +75,15 @@ $$;
 
 alter function notesdb.vault_audit_outbox_insert() owner to qnotes_vault_audit_maintenance;
 
+update notesdb.vault_audit_events
+set operation_id = request_id
+where operation_id is null
+  and request_id is not null;
+
 update notesdb.vault_audit_outbox o
 set payload = o.payload || jsonb_build_object(
   'targetTokenId', e.target_token_id,
+  'operationId', e.operation_id,
   'retentionExpiresAt', e.retention_expires_at
 )
 from notesdb.vault_audit_events e

@@ -167,8 +167,9 @@ function privilegeCheck(rpc, role, expected) {
 }
 
 function tablePrivilegeCheck({ table, privilege, expected }) {
-  const expression = expected ? 'has_table_privilege' : 'not has_table_privilege';
-  return `coalesce(${expression}(${sqlString('service_role')}, ${sqlString(`notesdb.${table}`)}, ${sqlString(privilege)}), false)`;
+  const relation = `to_regclass(${sqlString(`notesdb.${table}`)})`;
+  const check = `has_table_privilege(${sqlString('service_role')}, ${relation}, ${sqlString(privilege)})`;
+  return `case when ${relation} is null then false else coalesce(${expected ? check : `not ${check}`}, false) end`;
 }
 
 const readinessExpressions = [

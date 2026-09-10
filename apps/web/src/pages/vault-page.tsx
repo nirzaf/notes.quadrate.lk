@@ -507,7 +507,7 @@ function AuditPanel({ query }: { query: VaultAuditQuery }): JSX.Element {
   return <section className="q-card q-card-pad"><div className="q-section-heading"><div className="q-section-heading-main"><h2>Vault audit history</h2><span className="q-count-badge">{query.data ? query.data.length : '—'}</span></div></div><VaultCollectionState query={query} resource="Vault audit history" emptyMessage="No Vault events yet. Secret values are never recorded in audit history.">{(events) => <div className="q-vault-audit-list">{events.map((event) => {
     const actor = event.actorKind === 'vault_agent'
       ? `${event.actorTokenName ?? 'Agent token'}${event.actorTokenPrefix ? ` (${event.actorTokenPrefix})` : ''}`
-      : 'User JWT';
+      : event.actorKind === 'system' ? 'System' : 'User JWT';
     return <div className="q-vault-audit" key={event.id}><strong>{event.action}</strong><span>{new Date(event.occurredAt).toLocaleString()} · {actor} · {event.success ? 'success' : 'failed'}</span><small>{event.projectId ?? 'No project'}{event.secretId ? ` · secret ${event.secretId}` : ''}{event.resultCode ? ` · ${event.resultCode}` : ''}{event.purpose ? ` · purpose: ${event.purpose}` : ''}</small></div>;
   })}</div>}</VaultCollectionState></section>;
 }
