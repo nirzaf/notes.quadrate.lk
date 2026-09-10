@@ -49,11 +49,13 @@ function statusMessage(attachment: Attachment): string {
   switch (attachment.status) {
     case 'pending_upload': return 'Preparing secure upload…';
     case 'uploaded': return 'Upload complete; waiting for text extraction.';
+    case 'verifying': return 'Verifying uploaded bytes…';
     case 'queued': return 'Queued for text extraction.';
     case 'processing': return 'Extracting text; search indexing follows.';
     case 'ready': return 'Ready and searchable.';
     case 'unsupported': return attachment.extractionError === 'IMAGE_OCR_UNSUPPORTED' ? 'Stored securely; image OCR is not available.' : 'Stored securely; this file has no supported text extractor.';
     case 'failed': return 'Text extraction failed. Refresh to check again or download the original.';
+    case 'deleting': return 'Removing attachment securely…';
     case 'deleted': return 'Deleted.';
   }
 }

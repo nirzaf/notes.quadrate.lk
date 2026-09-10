@@ -20,7 +20,7 @@ select is(
 );
 select is(
   (select array_agg(column_name order by ordinal_position)::text[] from information_schema.columns where table_schema = 'notesdb' and table_name = 'attachments'),
-  array['id','owner_id','note_id','bucket','object_path','original_file_name','mime_type','size_bytes','checksum_sha256','extraction_status','extraction_error','created_at','updated_at','deleted_at']::text[],
+  array['id','owner_id','note_id','bucket','object_path','original_file_name','mime_type','size_bytes','checksum_sha256','extraction_status','extraction_error','created_at','updated_at','deleted_at','storage_mode','staging_object_path','object_generation','verified_at','staging_expires_at','cleanup_attempts','cleanup_next_at']::text[],
   'attachments has the required columns'
 );
 select is(

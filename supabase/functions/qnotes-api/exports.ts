@@ -21,6 +21,13 @@ export function workspaceMaxBytes(): number {
   return Number.isSafeInteger(configured) && configured > 0 ? configured : 50 * 1024 * 1024;
 }
 
+async function sha256Bytes(value: Uint8Array): Promise<string> {
+  const copy = new ArrayBuffer(value.byteLength);
+  new Uint8Array(copy).set(value);
+  const digest = await crypto.subtle.digest('SHA-256', copy);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 export async function exportNote(context: Context): Promise<Response> {
   const auth = authFromContext(context);
   requireScope(auth, 'notes:read');
@@ -45,7 +52,7 @@ export async function exportWorkspace(context: Context): Promise<Response> {
   const notes = Array.isArray(notesResult.data) ? notesResult.data as Record<string, unknown>[] : [];
   const notebooks = Array.isArray(notebooksResult.data) ? notebooksResult.data as Record<string, unknown>[] : [];
   const noteIds = notes.map((note) => String(note.id));
-  const attachmentsResult = noteIds.length ? await appDbClient.from('attachments').select('*').eq('owner_id', auth.userId).in('note_id', noteIds).is('deleted_at', null) : { data: [], error: null };
+  const attachmentsResult = noteIds.length ? await appDbClient.from('attachments').select('*').eq('owner_id', auth.userId).in('note_id', noteIds).in('extraction_status', ['uploaded', 'queued', 'processing', 'ready']).is('deleted_at', null) : { data: [], error: null };
   if (attachmentsResult.error) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to export attachment metadata.');
   const attachments = Array.isArray(attachmentsResult.data) ? attachmentsResult.data as Record<string, unknown>[] : [];
   const files: Record<string, Uint8Array> = {};
@@ -99,6 +106,7 @@ export async function exportWorkspace(context: Context): Promise<Response> {
     if (downloaded.error || !downloaded.data) throw new ApiError(500, 'INTERNAL_ERROR', 'Unable to download an attachment for export.');
     const bytes = new Uint8Array(await downloaded.data.arrayBuffer());
     if (bytes.byteLength !== Number(attachment.size_bytes)) throw new ApiError(500, 'INTERNAL_ERROR', 'Attachment bytes do not match export metadata.');
+    if (attachment.storage_mode === 'immutable' && (String(attachment.checksum_sha256 ?? '') !== await sha256Bytes(bytes) || !attachment.verified_at)) throw new ApiError(500, 'INTERNAL_ERROR', 'Attachment bytes failed the verified digest check.');
     downloadedAttachmentBytes += bytes.byteLength;
     const actualPlan = planWorkspaceExport(noteMarkdownBytes, downloadedAttachmentBytes, manifestBytes.byteLength, notes.length + attachments.length + 1, workspaceMaxBytes());
     if (!actualPlan.ok) throw new ApiError(413, 'EXPORT_TOO_LARGE', 'The workspace export exceeds the configured size limit.');
