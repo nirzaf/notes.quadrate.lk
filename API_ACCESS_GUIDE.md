@@ -87,14 +87,14 @@ Use `GET /api/tokens` to list token metadata and `DELETE /api/tokens/:tokenId` t
 
 ## Public note sharing
 
-Create a public read-only link from an authenticated owner session or a caller-owned personal token with `shares:write`. The raw `qns_...` value is generated from 32 random bytes, returned only by this response, and never stored. The database stores a short prefix plus a peppered, domain-separated HMAC-SHA-256 hash. `expiresAt` may be `null` or an ISO timestamp no more than one year in the future. A `shares:write` token can manage only notes belonging to its own token owner.
+Create a public read-only link from an authenticated owner session or a caller-owned personal token with `shares:write`. The raw `qns_...` value is generated from 32 random bytes, returned only by this response, and never stored. The database stores a short prefix plus a peppered, domain-separated HMAC-SHA-256 hash and an immutable snapshot of the reviewed note version. `expectedVersion` must match the saved note version, `confirm` must be `true`, and `expiresAt` must be a future ISO timestamp no more than one year ahead. A changed note returns a version conflict; sensitive-classified notes cannot be published. A `shares:write` token can manage only notes belonging to its own token owner.
 
 ```bash
 curl -fsS -X POST \
   -H "Authorization: Bearer $QNOTES_TOKEN" \
   -H 'Content-Type: application/json' \
   "$QNOTES_URL/api/notes/NOTE_UUID/share" \
-  --data '{"expiresAt":"2026-09-13T12:00:00.000Z"}'
+  --data '{"expectedVersion":7,"expiresAt":"2026-09-13T12:00:00.000Z","confirm":true}'
 ```
 
 The response contains `{ data: { token, metadata } }`. Build the user-facing URL by placing the token after `#`:
@@ -103,7 +103,7 @@ The response contains `{ data: { token, metadata } }`. Build the user-facing URL
 https://notes.quadrate.lk/share#qns_<secret>
 ```
 
-`GET /api/notes/:noteId/share` returns only safe metadata for the current active share: ID, note ID, prefix, expiry, revocation time, and creation time. `POST` rotates the previous active share and returns a new raw token. `DELETE /api/notes/:noteId/share` revokes the active share. Creating or rotating a share does not publish a draft; flush the note autosave first when using the web app.
+`GET /api/notes/:noteId/share` returns only safe metadata for the current active snapshot: ID, note ID, prefix, expiry, revocation time, and creation time. `POST` explicitly publishes the exact reviewed version and rotates the previous active snapshot. `DELETE /api/notes/:noteId/share` revokes the active snapshot. Creating or rotating a share does not publish a draft; flush the note autosave first when using the web app.
 
 Resolve a link without an `Authorization` header:
 

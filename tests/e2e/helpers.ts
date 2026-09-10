@@ -274,8 +274,8 @@ export async function updateNoteApi(token: string, note: Note, contentMarkdown: 
   return body.data as Note;
 }
 
-export async function createPublicShareApi(token: string, noteId: string, expiresAt: string | null = null): Promise<{ token: string; metadata: Record<string, unknown> }> {
-  const result = await apiJson(`/api/notes/${noteId}/share`, token, { method: 'POST', body: JSON.stringify({ expiresAt }) });
+export async function createPublicShareApi(token: string, note: Pick<Note, 'id' | 'version'>, expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()): Promise<{ token: string; metadata: Record<string, unknown> }> {
+  const result = await apiJson(`/api/notes/${note.id}/share`, token, { method: 'POST', body: JSON.stringify({ expectedVersion: note.version, expiresAt, confirm: true }) });
   if (result.response.status !== 201 || !isDataEnvelope(result.body)) throw new Error(JSON.stringify(result.body));
   return result.body.data as { token: string; metadata: Record<string, unknown> };
 }
