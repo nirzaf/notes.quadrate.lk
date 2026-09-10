@@ -195,3 +195,89 @@ revoke all on function public.qnotes_requeue_embedding_failures(integer) from pu
 grant execute on function public.qnotes_requeue_embedding_failures(integer) to service_role;
 revoke all on function public.qnotes_requeue_stale_embeddings(interval) from public, anon, authenticated;
 grant execute on function public.qnotes_requeue_stale_embeddings(interval) to service_role;
+
+-- Keep terminal failures out of the scheduled queue timestamp and suppress a
+-- duplicate enqueue when the worker claims an existing failed row.
+create or replace function public.qnotes_prepare_search_document()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  expected_input_hash text;
+  page_match text[];
+  input_changed boolean := false;
+  model_changed boolean := false;
+  should_queue boolean := false;
+begin
+  expected_input_hash := public.qnotes_embedding_input_hash(new.source_title, new.heading_path, new.content);
+  new.embedding_input_hash := expected_input_hash;
+
+  if tg_op = 'UPDATE' then
+    input_changed := old.embedding_input_hash is distinct from expected_input_hash;
+    model_changed := old.embedding_model is distinct from 'gte-small'
+      or old.embedding_model_version is distinct from 'v2';
+  end if;
+
+  if new.source_type = 'attachment_chunk' and new.page_number is null then
+    page_match := regexp_match(new.source_key, ':page:([0-9]+):');
+    if page_match is not null then new.page_number := page_match[1]::integer; end if;
+  end if;
+
+  if new.embedding_status = 'pending' then
+    new.embedding := null;
+    new.embedding_model := 'gte-small';
+    new.embedding_model_version := 'v2';
+    new.embedding_error := null;
+    new.embedding_queued_at := coalesce(new.embedding_queued_at, timezone('utc', now()));
+    should_queue := tg_op = 'UPDATE' and (
+      input_changed
+      or model_changed
+      or (old.embedding_status is distinct from 'pending'
+        and old.embedding_status <> 'ready'
+        and coalesce(new.embedding_attempts, 0) = 0)
+    );
+  elsif new.embedding_status = 'failed' then
+    new.embedding := null;
+    new.embedding_model := 'gte-small';
+    new.embedding_model_version := 'v2';
+    if tg_op = 'UPDATE' and (input_changed or model_changed) then
+      new.embedding_status := 'pending';
+      new.embedding_error := null;
+      should_queue := true;
+    else
+      new.embedding_queued_at := null;
+    end if;
+  elsif new.embedding_status = 'ready' then
+    if new.embedding is null
+      or new.embedding_model is distinct from 'gte-small'
+      or new.embedding_model_version is distinct from 'v2'
+      or input_changed
+    then
+      new.embedding := null;
+      new.embedding_status := 'pending';
+      new.embedding_model := 'gte-small';
+      new.embedding_model_version := 'v2';
+      new.embedding_error := null;
+      new.embedding_queued_at := timezone('utc', now());
+      should_queue := tg_op = 'UPDATE';
+    else
+      new.embedding_queued_at := null;
+    end if;
+  end if;
+
+  -- A BEFORE trigger cannot safely call the guarded enqueue function because
+  -- the table still contains the old row. Send the exact new invariants here.
+  if should_queue then
+    perform pgmq.send('note-embeddings', jsonb_build_object(
+      'searchDocumentId', new.id,
+      'ownerId', new.owner_id,
+      'contentHash', new.content_hash,
+      'embeddingInputHash', expected_input_hash,
+      'embeddingModelVersion', 'v2'
+    ));
+  end if;
+  return new;
+end;
+$$;

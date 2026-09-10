@@ -107,7 +107,7 @@ async function processMessage(message: { message_id: number; read_count: number;
     const expectedAttempt = modeMismatch ? 0 : Number(document.embedding_attempts ?? 0);
     const { data: claimed, error: claimError } = await appDbClient
       .from('search_documents')
-      .update({ embedding_attempts: expectedAttempt + 1, embedding_mode: embeddingMode })
+      .update({ embedding_status: 'pending', embedding_attempts: expectedAttempt + 1, embedding_mode: embeddingMode })
       .eq('id', job.searchDocumentId)
       .eq('owner_id', job.ownerId)
       .eq('content_hash', job.contentHash)
@@ -171,7 +171,7 @@ async function processMessage(message: { message_id: number; read_count: number;
       .eq('owner_id', job.ownerId)
       .eq('content_hash', job.contentHash)
       .eq('embedding_input_hash', expectedInputHash)
-      .in('embedding_status', ['pending', 'failed'])
+      .eq('embedding_status', 'pending')
       .eq('embedding_model', EMBEDDING_MODEL)
       .eq('embedding_model_version', EMBEDDING_MODEL_VERSION)
       .eq('embedding_attempts', providerAttempt)
