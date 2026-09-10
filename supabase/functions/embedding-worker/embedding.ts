@@ -5,21 +5,13 @@ import {
   embeddingInputByteLength,
   embeddingInputHash as hashEmbeddingInput,
 } from '@qnotes/markdown';
+import { normalizeEmbedding, resolveEmbeddingMode, SYNTHETIC_EMBEDDING_MODE } from './policy.ts';
+
+export { normalizeEmbedding, resolveEmbeddingMode, SYNTHETIC_EMBEDDING_MODE } from './policy.ts';
 
 export const EMBEDDING_MODEL = 'gte-small';
 export const EMBEDDING_MODEL_VERSION = 'v2';
 export { EMBEDDING_INPUT_BYTE_BUDGET, EMBEDDING_INPUT_VERSION };
-export const SYNTHETIC_EMBEDDING_MODE = 'synthetic-test-v1';
-
-export type EmbeddingMode = 'provider' | typeof SYNTHETIC_EMBEDDING_MODE;
-
-export function resolveEmbeddingMode(environment: { get(name: string): string | undefined }): EmbeddingMode {
-  if (environment.get('QNOTES_FAKE_EMBEDDINGS') !== '1') return 'provider';
-  if (environment.get('QNOTES_ENVIRONMENT') !== 'test' || environment.get('QNOTES_EMBEDDING_MODE') !== SYNTHETIC_EMBEDDING_MODE) {
-    throw new Error('Synthetic embeddings require the explicit test environment and synthetic-test-v1 mode.');
-  }
-  return SYNTHETIC_EMBEDDING_MODE;
-}
 
 interface EmbeddingSession {
   run(input: string): Promise<unknown>;
@@ -54,15 +46,6 @@ export async function fakeEmbedding(value: string): Promise<number[]> {
 export const embeddingInput = buildEmbeddingInput;
 
 export const embeddingInputHash = hashEmbeddingInput;
-
-export function normalizeEmbedding(value: unknown): number[] {
-  if (!Array.isArray(value) || value.length !== 384 || !value.every((item) => typeof item === 'number' && Number.isFinite(item))) {
-    throw new Error('Embedding runtime returned an invalid vector.');
-  }
-  const magnitude = Math.sqrt(value.reduce((sum, item) => sum + item * item, 0));
-  if (!Number.isFinite(magnitude) || magnitude === 0) throw new Error('Embedding runtime returned a zero-norm vector.');
-  return value.map((item) => item / magnitude);
-}
 
 function getSession(): EmbeddingSession {
   const runtime = globalThis as unknown as { Supabase?: { ai?: { Session?: SessionConstructor } } };
