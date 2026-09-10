@@ -1,5 +1,5 @@
 import { embeddingDocumentFromRow } from './adapter.ts';
-import { EMBEDDING_INPUT_BYTE_BUDGET, embeddingInput, embeddingInputHash } from './embedding.ts';
+import { EMBEDDING_INPUT_BYTE_BUDGET, boundEmbeddingInput, embeddingInput, embeddingInputHash, normalizeEmbedding } from './embedding.ts';
 
 function assertEquals<T>(actual: T, expected: T, message: string): void {
   if (actual !== expected) throw new Error(`${message}: expected ${String(expected)}, got ${String(actual)}`);
@@ -33,4 +33,22 @@ Deno.test('worker input includes bounded prefixes and remains inside the conserv
     content: 'tail marker',
   });
   assertEquals(new TextEncoder().encode(input).length <= EMBEDDING_INPUT_BYTE_BUDGET, true, 'bounded embedding input');
+});
+
+Deno.test('query input is bounded before it reaches the provider', () => {
+  const input = boundEmbeddingInput('x'.repeat(500));
+  assertEquals(new TextEncoder().encode(input).length <= EMBEDDING_INPUT_BYTE_BUDGET, true, 'bounded query input');
+  assertEquals(input.length, EMBEDDING_INPUT_BYTE_BUDGET, 'ASCII query keeps the provider budget');
+});
+
+Deno.test('rejects sparse vectors instead of normalizing missing entries', () => {
+  const sparse = Array(384) as unknown[];
+  sparse[0] = 1;
+  let rejected = false;
+  try {
+    normalizeEmbedding(sparse);
+  } catch {
+    rejected = true;
+  }
+  assertEquals(rejected, true, 'sparse vector rejection');
 });

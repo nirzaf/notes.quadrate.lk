@@ -22,7 +22,10 @@ test('bounds complete embedding inputs and keeps oversized tail content', async 
   assert.deepEqual(chunks, splitEmbeddingContent(content, sourceTitle, headingPath));
   assert.match(chunks.at(-1), /TAIL_RETRIEVAL_MARKER_8241/);
   assert.ok(chunks.every((chunk) => embeddingInputByteLength(embeddingInput({ content: chunk, sourceTitle, headingPath })) <= EMBEDDING_INPUT_BYTE_BUDGET));
-  assert.equal(await embeddingInputHash({ content: chunks[0], sourceTitle, headingPath }), await embeddingInputHash({ content: chunks[0], sourceTitle, headingPath }));
+  const firstHash = await embeddingInputHash({ content: chunks[0], sourceTitle, headingPath });
+  const changedHash = await embeddingInputHash({ content: `${chunks[0]} changed`, sourceTitle, headingPath });
+  assert.match(firstHash, /^[a-f0-9]{64}$/);
+  assert.notEqual(firstHash, changedHash);
 });
 
 test('splits an unbroken token to the deterministic token budget', () => {

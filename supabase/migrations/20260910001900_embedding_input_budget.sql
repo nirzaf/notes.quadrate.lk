@@ -189,20 +189,227 @@ begin
     for chunk in select * from public.qnotes_embedding_content_chunks(source_title, heading_path, content)
     loop
       chunk_hash := encode(digest(chunk.content, 'sha256'), 'hex');
-      chunk_position := coalesce((item->>'position')::integer, 0) * 1000000 + chunk.chunk_index;
+      chunk_position := least(2147483647::bigint, greatest(0::bigint, coalesce((item->>'position')::bigint, 0) + chunk.chunk_index))::integer;
       expanded := expanded || jsonb_build_array(jsonb_build_object(
         'sourceType', source_type,
         'sourceId', item->>'sourceId',
         'sourceKey', source_key || ':chunk:' || chunk.chunk_index::text || '-' || left(chunk_hash, 16),
+        'blockKey', case when source_type in ('copy_block', 'code_block') then source_key else null end,
         'sourceTitle', source_title,
         'headingPath', heading_path,
         'content', chunk.content,
         'contentHash', chunk_hash,
-        'position', chunk_position
+        'position', chunk_position,
+        'pageNumber', item->>'pageNumber'
       ));
     end loop;
   end loop;
   return expanded;
+end;
+$$;
+
+-- Split metadata too; titles, tags and notebook names can exceed the provider
+-- boundary even though the note body itself is already chunked.
+create or replace function public.qnotes_sync_note_metadata(p_note_id uuid, p_owner_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  note_row notesdb.notes%rowtype;
+  notebook_name text;
+  metadata_content text;
+  metadata_hash text;
+  metadata_documents jsonb;
+  item jsonb;
+  existing notesdb.search_documents%rowtype;
+  found_document boolean;
+  should_enqueue boolean;
+  document_id uuid;
+  source_key_value text;
+  content text;
+  content_hash text;
+  position_value integer;
+begin
+  select * into note_row
+  from notesdb.notes
+  where id = p_note_id and owner_id = p_owner_id;
+  if not found then return; end if;
+
+  select nb.name into notebook_name
+  from notesdb.notebooks nb
+  where nb.id = note_row.notebook_id and nb.owner_id = p_owner_id;
+
+  metadata_content := format(
+    E'Title: %s\nSlug: %s\nTags: %s\nNotebook: %s',
+    note_row.title,
+    note_row.slug,
+    coalesce(array_to_string(note_row.tags, ', '), ''),
+    coalesce(notebook_name, '')
+  );
+  metadata_hash := encode(digest(metadata_content, 'sha256'), 'hex');
+  metadata_documents := public.qnotes_expand_embedding_documents(jsonb_build_array(jsonb_build_object(
+    'sourceType', 'note_metadata',
+    'sourceKey', 'metadata',
+    'sourceTitle', note_row.title,
+    'headingPath', null,
+    'content', metadata_content,
+    'contentHash', metadata_hash,
+    'position', 0
+  )));
+
+  delete from notesdb.search_documents d
+  where d.note_id = p_note_id
+    and d.owner_id = p_owner_id
+    and d.source_type = 'note_metadata'
+    and not exists (
+      select 1 from jsonb_array_elements(metadata_documents) x
+      where x->>'sourceKey' = d.source_key
+    );
+
+  for item in select value from jsonb_array_elements(metadata_documents)
+  loop
+    source_key_value := item->>'sourceKey';
+    content := coalesce(item->>'content', '');
+    content_hash := item->>'contentHash';
+    position_value := coalesce((item->>'position')::integer, 0);
+    existing := null;
+    select * into existing
+    from notesdb.search_documents d
+    where d.note_id = p_note_id
+      and d.owner_id = p_owner_id
+      and d.source_type = 'note_metadata'
+      and d.source_key = source_key_value
+    for update;
+    found_document := found;
+    should_enqueue := not found_document
+      or (existing.embedding_status = 'failed'
+        and existing.content_hash = content_hash
+        and coalesce(existing.embedding_attempts, 0) > 0
+        and coalesce(existing.embedding_attempts, 0) < 5);
+
+    insert into notesdb.search_documents (
+      owner_id, note_id, source_type, source_id, source_key, source_title,
+      heading_path, content, content_hash, position, embedding_status
+    ) values (
+      p_owner_id, p_note_id, 'note_metadata', null, source_key_value,
+      coalesce(item->>'sourceTitle', note_row.title), item->>'headingPath',
+      content, content_hash, position_value, 'pending'
+    )
+    on conflict (note_id, source_type, source_key) do update set
+      owner_id = excluded.owner_id,
+      source_title = excluded.source_title,
+      heading_path = excluded.heading_path,
+      content = excluded.content,
+      content_hash = excluded.content_hash,
+      position = excluded.position,
+      embedding = case
+        when notesdb.search_documents.content_hash = excluded.content_hash
+          and notesdb.search_documents.embedding_status = 'ready'
+        then notesdb.search_documents.embedding
+        else null
+      end,
+      embedding_status = case
+        when notesdb.search_documents.content_hash = excluded.content_hash
+          and notesdb.search_documents.embedding_status = 'ready'
+        then 'ready'
+        else 'pending'
+      end,
+      embedding_error = case
+        when notesdb.search_documents.content_hash = excluded.content_hash
+          and notesdb.search_documents.embedding_status = 'ready'
+        then notesdb.search_documents.embedding_error
+        else null
+      end,
+      embedding_model = case
+        when notesdb.search_documents.content_hash = excluded.content_hash
+          and notesdb.search_documents.embedding_status = 'ready'
+        then notesdb.search_documents.embedding_model
+        else null
+      end,
+      embedding_model_version = case
+        when notesdb.search_documents.content_hash = excluded.content_hash
+          and notesdb.search_documents.embedding_status = 'ready'
+        then notesdb.search_documents.embedding_model_version
+        else null
+      end
+    returning id into document_id;
+
+    if should_enqueue then
+      perform public.qnotes_enqueue_embedding(document_id, p_owner_id, content_hash);
+    end if;
+  end loop;
+end;
+$$;
+
+-- Apply the same expansion to direct attachment completion calls. This keeps
+-- older workers and repair jobs inside the provider boundary as well.
+create or replace function public.qnotes_complete_attachment_processing(p_owner_id uuid, p_attachment_id uuid, p_checksum_sha256 text, p_documents jsonb)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  item notesdb.attachments%rowtype;
+  document jsonb;
+  expanded_documents jsonb;
+  document_row notesdb.search_documents%rowtype;
+begin
+  select * into item
+  from notesdb.attachments
+  where id = p_attachment_id and owner_id = p_owner_id and deleted_at is null
+  for update;
+  if not found then return jsonb_build_object('status', 'not_found'); end if;
+  if not exists (select 1 from notesdb.notes where id = item.note_id and owner_id = p_owner_id and deleted_at is null) then
+    return jsonb_build_object('status', 'not_found');
+  end if;
+
+  select coalesce(jsonb_agg(jsonb_build_object(
+    'sourceType', 'attachment_chunk',
+    'sourceId', coalesce(value->>'sourceId', p_attachment_id::text),
+    'sourceKey', value->>'sourceKey',
+    'sourceTitle', coalesce(value->>'sourceTitle', item.original_file_name),
+    'headingPath', value->>'headingPath',
+    'content', coalesce(value->>'content', ''),
+    'contentHash', value->>'contentHash',
+    'position', coalesce((value->>'position')::integer, 0),
+    'pageNumber', value->>'pageNumber'
+  )), '[]'::jsonb)
+  into expanded_documents
+  from jsonb_array_elements(coalesce(p_documents, '[]'::jsonb)) as documents(value);
+  expanded_documents := public.qnotes_expand_embedding_documents(expanded_documents);
+
+  delete from notesdb.search_documents
+  where owner_id = p_owner_id
+    and note_id = item.note_id
+    and source_type = 'attachment_chunk'
+    and (source_id = item.id or source_key like 'attachment:' || item.id::text || ':%');
+
+  for document in select value from jsonb_array_elements(expanded_documents)
+  loop
+    insert into notesdb.search_documents (
+      owner_id, note_id, source_type, source_id, source_key, source_title,
+      heading_path, content, content_hash, position, page_number, embedding_status
+    ) values (
+      p_owner_id, item.note_id, 'attachment_chunk', item.id,
+      document->>'sourceKey', coalesce(document->>'sourceTitle', item.original_file_name),
+      document->>'headingPath', coalesce(document->>'content', ''),
+      document->>'contentHash', coalesce((document->>'position')::integer, 0),
+      nullif(document->>'pageNumber', '')::integer, 'pending'
+    )
+    returning * into document_row;
+    perform public.qnotes_enqueue_embedding(document_row.id, p_owner_id, document_row.content_hash);
+  end loop;
+
+  update notesdb.attachments
+  set checksum_sha256 = p_checksum_sha256,
+      extraction_status = 'ready',
+      extraction_error = null,
+      updated_at = timezone('utc', now())
+  where id = item.id;
+  return jsonb_build_object('status', 'ok', 'attachmentId', item.id);
 end;
 $$;
 
@@ -397,6 +604,11 @@ set search_path = public, extensions
 as $$
 declare
   document_record record;
+  blocks jsonb;
+  documents jsonb;
+  attachment_checksum text;
+  processed_notes uuid[] := '{}';
+  processed_attachments uuid[] := '{}';
   queued_count integer := 0;
 begin
   if p_limit is null or p_limit < 1 or p_limit > 1000 then
@@ -404,7 +616,9 @@ begin
   end if;
 
   for document_record in
-    select d.id
+    select d.id, d.note_id, d.owner_id, d.source_type, d.source_id,
+      d.source_key, d.source_title, d.heading_path, d.content, d.content_hash,
+      d.position, d.page_number
     from notesdb.search_documents d
     join notesdb.notes n on n.id = d.note_id and n.owner_id = d.owner_id and n.deleted_at is null
     where d.embedding_input_hash is distinct from public.qnotes_embedding_input_hash(d.source_title, d.heading_path, d.content)
@@ -412,15 +626,108 @@ begin
     limit p_limit
     for update of d skip locked
   loop
-    update notesdb.search_documents
-    set embedding = null,
-        embedding_status = 'pending',
-        embedding_error = null,
-        embedding_attempts = 0,
-        embedding_mode = 'provider',
-        embedding_queued_at = timezone('utc', now())
-    where id = document_record.id;
-    queued_count := queued_count + 1;
+    if octet_length(public.qnotes_embedding_input(document_record.source_title, document_record.heading_path, document_record.content)) > 496 then
+      if document_record.source_type = 'attachment_chunk' and document_record.source_id is not null then
+        if not document_record.source_id = any(processed_attachments) then
+          select a.checksum_sha256 into attachment_checksum
+          from notesdb.attachments a
+          where a.id = document_record.source_id
+            and a.owner_id = document_record.owner_id
+            and a.deleted_at is null;
+          select coalesce(jsonb_agg(jsonb_build_object(
+            'sourceId', d.source_id,
+            'sourceKey', d.source_key,
+            'sourceTitle', d.source_title,
+            'headingPath', d.heading_path,
+            'content', d.content,
+            'contentHash', d.content_hash,
+            'position', d.position,
+            'pageNumber', d.page_number
+          ) order by d.position, d.id), '[]'::jsonb)
+          into documents
+          from notesdb.search_documents d
+          where d.note_id = document_record.note_id
+            and d.owner_id = document_record.owner_id
+            and d.source_type = 'attachment_chunk'
+            and d.source_id = document_record.source_id;
+          if attachment_checksum is not null then
+            perform public.qnotes_complete_attachment_processing(document_record.owner_id, document_record.source_id, attachment_checksum, documents);
+          else
+            select coalesce(jsonb_agg(jsonb_build_object(
+              'blockKey', b.block_key,
+              'blockType', b.block_type,
+              'title', b.title,
+              'language', b.language,
+              'content', b.content,
+              'position', b.position,
+              'copyable', b.copyable,
+              'contentHash', b.content_hash
+            ) order by b.position, b.id), '[]'::jsonb)
+            into blocks
+            from notesdb.note_blocks b
+            where b.note_id = document_record.note_id and b.owner_id = document_record.owner_id;
+            select coalesce(jsonb_agg(jsonb_build_object(
+              'sourceType', d.source_type,
+              'sourceId', d.source_id,
+              'sourceKey', d.source_key,
+              'sourceTitle', d.source_title,
+              'headingPath', d.heading_path,
+              'content', d.content,
+              'contentHash', d.content_hash,
+              'position', d.position,
+              'pageNumber', d.page_number
+            ) order by d.position, d.id), '[]'::jsonb)
+            into documents
+            from notesdb.search_documents d
+            where d.note_id = document_record.note_id and d.owner_id = document_record.owner_id;
+            perform public.qnotes_sync_note_content(document_record.note_id, document_record.owner_id, blocks, documents);
+          end if;
+          processed_attachments := array_append(processed_attachments, document_record.source_id);
+          queued_count := queued_count + 1;
+        end if;
+      elsif not document_record.note_id = any(processed_notes) then
+        select coalesce(jsonb_agg(jsonb_build_object(
+          'blockKey', b.block_key,
+          'blockType', b.block_type,
+          'title', b.title,
+          'language', b.language,
+          'content', b.content,
+          'position', b.position,
+          'copyable', b.copyable,
+          'contentHash', b.content_hash
+        ) order by b.position, b.id), '[]'::jsonb)
+        into blocks
+        from notesdb.note_blocks b
+        where b.note_id = document_record.note_id and b.owner_id = document_record.owner_id;
+        select coalesce(jsonb_agg(jsonb_build_object(
+          'sourceType', d.source_type,
+          'sourceId', d.source_id,
+          'sourceKey', d.source_key,
+          'sourceTitle', d.source_title,
+          'headingPath', d.heading_path,
+          'content', d.content,
+          'contentHash', d.content_hash,
+          'position', d.position,
+          'pageNumber', d.page_number
+        ) order by d.position, d.id), '[]'::jsonb)
+        into documents
+        from notesdb.search_documents d
+        where d.note_id = document_record.note_id and d.owner_id = document_record.owner_id;
+        perform public.qnotes_sync_note_content(document_record.note_id, document_record.owner_id, blocks, documents);
+        processed_notes := array_append(processed_notes, document_record.note_id);
+        queued_count := queued_count + 1;
+      end if;
+    else
+      update notesdb.search_documents
+      set embedding = null,
+          embedding_status = 'pending',
+          embedding_error = null,
+          embedding_attempts = 0,
+          embedding_mode = 'provider',
+          embedding_queued_at = timezone('utc', now())
+      where id = document_record.id;
+      queued_count := queued_count + 1;
+    end if;
   end loop;
   return queued_count;
 end;

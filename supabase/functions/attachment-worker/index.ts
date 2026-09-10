@@ -1,4 +1,4 @@
-import { sha256Hex } from '@qnotes/markdown';
+import { sha256Hex, splitEmbeddingContent } from '@qnotes/markdown';
 import { sha256Bytes, uniquePaths } from '../_shared/attachment-storage.ts';
 import { archiveQueueMessage, deleteQueueMessage, readQueue } from '../_shared/queue.ts';
 import { appDbClient, serviceClient } from '../_shared/database.ts';
@@ -112,22 +112,26 @@ async function processMessage(message: { message_id: number; read_count: number;
     let position = 0;
     for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
       const pageNumber = pageIndex + 1;
+      const sourceTitle = isPdf ? `${attachment.original_file_name} — page ${pageNumber}` : attachment.original_file_name;
+      const headingPath = isPdf ? `Page ${pageNumber}` : null;
       for (const content of attachmentParagraphs(pages[pageIndex] ?? '')) {
-        const contentHash = await sha256Hex(`attachment_chunk\0${pageNumber}\0${content}`);
-        const baseKey = `attachment:${job.attachmentId}:page:${pageNumber}:${contentHash.slice(0, 16)}`;
-        const occurrence = keyOccurrences.get(baseKey) ?? 0;
-        keyOccurrences.set(baseKey, occurrence + 1);
-        documents.push({
-          sourceKey: occurrence ? `${baseKey}:${occurrence}` : baseKey,
-          sourceTitle: isPdf ? `${attachment.original_file_name} — page ${pageNumber}` : attachment.original_file_name,
-          headingPath: isPdf ? `Page ${pageNumber}` : null,
-          content,
-          contentHash,
-          position,
-          sourceId: job.attachmentId,
-          pageNumber: isPdf ? pageNumber : null,
-        });
-        position += 1;
+        for (const safeContent of splitEmbeddingContent(content, sourceTitle, headingPath)) {
+          const contentHash = await sha256Hex(`attachment_chunk\0${pageNumber}\0${safeContent}`);
+          const baseKey = `attachment:${job.attachmentId}:page:${pageNumber}:${contentHash.slice(0, 16)}`;
+          const occurrence = keyOccurrences.get(baseKey) ?? 0;
+          keyOccurrences.set(baseKey, occurrence + 1);
+          documents.push({
+            sourceKey: occurrence ? `${baseKey}:${occurrence}` : baseKey,
+            sourceTitle,
+            headingPath,
+            content: safeContent,
+            contentHash,
+            position,
+            sourceId: job.attachmentId,
+            pageNumber: isPdf ? pageNumber : null,
+          });
+          position += 1;
+        }
       }
     }
     if (!documents.length) throw new Error('NO_EXTRACTABLE_TEXT');

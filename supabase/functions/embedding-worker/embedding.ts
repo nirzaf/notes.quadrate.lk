@@ -4,6 +4,7 @@ import {
   embeddingInput as buildEmbeddingInput,
   embeddingInputByteLength,
   embeddingInputHash as hashEmbeddingInput,
+  splitEmbeddingContent,
 } from '@qnotes/markdown';
 import { normalizeEmbedding, resolveEmbeddingMode, SYNTHETIC_EMBEDDING_MODE } from './policy.ts';
 
@@ -47,6 +48,10 @@ export const embeddingInput = buildEmbeddingInput;
 
 export const embeddingInputHash = hashEmbeddingInput;
 
+export function boundEmbeddingInput(value: string): string {
+  return splitEmbeddingContent(value)[0] ?? '';
+}
+
 function getSession(): EmbeddingSession {
   const runtime = globalThis as unknown as { Supabase?: { ai?: { Session?: SessionConstructor } } };
   const Session = runtime.Supabase?.ai?.Session;
@@ -59,10 +64,11 @@ function getSession(): EmbeddingSession {
 }
 
 export async function createEmbedding(value: string): Promise<number[]> {
-  if (embeddingInputByteLength(value) > EMBEDDING_INPUT_BYTE_BUDGET) {
+  const providerInput = boundEmbeddingInput(value);
+  if (embeddingInputByteLength(providerInput) > EMBEDDING_INPUT_BYTE_BUDGET) {
     throw new Error(`Embedding input exceeds the conservative ${EMBEDDING_INPUT_BYTE_BUDGET}-byte provider budget.`);
   }
-  if (resolveEmbeddingMode(Deno.env) === SYNTHETIC_EMBEDDING_MODE) return fakeEmbedding(value);
-  const result = await getSession().run(value);
+  if (resolveEmbeddingMode(Deno.env) === SYNTHETIC_EMBEDDING_MODE) return fakeEmbedding(providerInput);
+  const result = await getSession().run(providerInput);
   return normalizeEmbedding(result);
 }

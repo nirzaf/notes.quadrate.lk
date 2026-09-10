@@ -23,7 +23,7 @@ export function utf8ByteLength(value: string): number {
 }
 
 function normalizeEmbeddingText(value: string | null | undefined): string {
-  return typeof value === 'string' ? value.replace(/\r\n?/g, '\n').trim() : '';
+  return typeof value === 'string' ? value.replace(/\r\n?/g, '\n').replace(/^[ ]+|[ ]+$/g, '') : '';
 }
 
 function takeUtf8Prefix(value: string, maxBytes: number): string {

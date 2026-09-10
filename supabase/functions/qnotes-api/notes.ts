@@ -128,11 +128,12 @@ async function blockDocuments(parsed: Awaited<ReturnType<typeof parseMarkdown>>,
       documents.push({
         sourceType,
         sourceKey: safeParts.length > 1 ? `${block.blockKey}:chunk:${index}-${contentHash.slice(0, 16)}` : block.blockKey,
+        blockKey: block.blockKey,
         sourceTitle,
         headingPath: null,
         content,
         contentHash,
-        position: block.position * 1_000_000 + index,
+        position: Math.min(2_147_483_647, Math.max(0, block.position + index)),
       });
     }
   }

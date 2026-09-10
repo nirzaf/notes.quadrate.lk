@@ -1,5 +1,5 @@
 begin;
-select plan(12);
+select plan(14);
 
 select is(
   public.qnotes_embedding_input('Title', 'Heading', 'Body'),
@@ -68,6 +68,28 @@ select ok(
     )) as documents
   ) input),
   'expanded oversized documents contain multiple search documents'
+);
+select is(
+  (select value->>'blockKey'
+   from jsonb_array_elements(public.qnotes_expand_embedding_documents(jsonb_build_array(jsonb_build_object(
+     'sourceType', 'code_block', 'sourceKey', 'block-1',
+     'sourceTitle', repeat('Long title ', 40), 'headingPath', 'Code',
+     'content', repeat('line', 500), 'contentHash', 'original-hash',
+     'position', 2147483647
+   ))))
+   limit 1),
+  'block-1',
+  'expanded code documents retain the canonical block identity'
+);
+select ok(
+  (select bool_and((value->>'position')::integer between 0 and 2147483647)
+   from jsonb_array_elements(public.qnotes_expand_embedding_documents(jsonb_build_array(jsonb_build_object(
+     'sourceType', 'code_block', 'sourceKey', 'block-1',
+     'sourceTitle', repeat('Long title ', 40), 'headingPath', 'Code',
+     'content', repeat('line', 500), 'contentHash', 'original-hash',
+     'position', 2147483647
+   )))) ),
+  'expanded positions stay inside PostgreSQL integer range'
 );
 select ok(
   (select bool_and(value->>'sourceKey' like 'block-1:chunk:%')

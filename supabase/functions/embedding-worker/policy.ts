@@ -11,10 +11,11 @@ export function resolveEmbeddingMode(environment: { get(name: string): string | 
 }
 
 export function normalizeEmbedding(value: unknown): number[] {
-  if (!Array.isArray(value) || value.length !== 384 || !value.every((item) => typeof item === 'number' && Number.isFinite(item))) {
+  const values = Array.isArray(value) ? Array.from(value) : [];
+  if (values.length !== 384 || !values.every((item) => typeof item === 'number' && Number.isFinite(item))) {
     throw new Error('Embedding runtime returned an invalid vector.');
   }
-  const magnitude = Math.sqrt(value.reduce((sum, item) => sum + item * item, 0));
+  const magnitude = Math.sqrt(values.reduce((sum, item) => sum + item * item, 0));
   if (!Number.isFinite(magnitude) || magnitude === 0) throw new Error('Embedding runtime returned a zero-norm vector.');
-  return value.map((item) => item / magnitude);
+  return values.map((item) => item / magnitude);
 }

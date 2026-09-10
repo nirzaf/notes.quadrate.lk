@@ -1,7 +1,7 @@
 import type { Context } from 'hono';
 import { DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT, QNotesValidationError, resolveAutoSearchMode, validateSearchRequest, validateLimit, validateSearchMode, validateSearchQuery } from '@qnotes/shared';
 import type { ResolvedSearchMode, SearchFilters, SearchIndexMetadata, SearchRequest, SearchResponseMetadata, SearchResult } from '@qnotes/shared';
-import { EMBEDDING_MODEL, EMBEDDING_MODEL_VERSION, createEmbedding, resolveEmbeddingMode } from '../embedding-worker/embedding.ts';
+import { EMBEDDING_MODEL, EMBEDDING_MODEL_VERSION, boundEmbeddingInput, createEmbedding, resolveEmbeddingMode } from '../embedding-worker/embedding.ts';
 import { boundQueryEmbedding, forgetQueryEmbedding, resolveQueryEmbeddingTimeout, type QueryEmbeddingCacheEntry } from './query-embedding.ts';
 import { measureNoteMetadata } from './search-timing.ts';
 import { authFromContext, requireScope, type AuthContext } from '../_shared/auth.ts';
@@ -29,7 +29,7 @@ function cachedQueryEmbedding(query: string): Promise<number[]> {
   if (existing) queryEmbeddingCache.delete(key);
   if (outstandingQueryEmbeddings >= MAX_OUTSTANDING_QUERY_EMBEDDINGS) return Promise.reject(new Error('QUERY_EMBEDDING_CONCURRENCY_LIMIT'));
   outstandingQueryEmbeddings += 1;
-  const value = createEmbedding(query).then(
+  const value = createEmbedding(boundEmbeddingInput(query)).then(
     (result) => {
       outstandingQueryEmbeddings -= 1;
       return result;
