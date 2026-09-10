@@ -9,6 +9,7 @@ import { ApiError } from '../_shared/errors.ts';
 import { appDbClient, decodeSearchCursor, encodeSearchCursor, requestHash, searchResultFromRow, serviceClient } from '../_shared/database.ts';
 import { enforceRequestBudget } from '../_shared/request-limits.ts';
 import { applyNotebookAccess, authPolicyKey, isAccountWide, scopedSearchPlan } from '../_shared/notebook-access.ts';
+import { SEARCH_RANKING_VERSION, searchCandidateLimit } from './search-budget.ts';
 
 const QUERY_EMBEDDING_CACHE_TTL_MS = 5 * 60 * 1000;
 const QUERY_EMBEDDING_CACHE_MAX_ENTRIES = 256;
@@ -157,6 +158,7 @@ function requestFingerprint(auth: AuthContext, request: SearchRequest, resolvedM
     principal: authPolicyKey(auth),
     query: request.query,
     mode: resolvedMode,
+    rankingVersion: SEARCH_RANKING_VERSION,
     embeddingMode,
     filters: request.filters,
     maxPerNote: request.maxPerNote,
@@ -265,7 +267,7 @@ export async function searchNotes(context: Context): Promise<Response> {
   const embeddingMode = resolveEmbeddingMode(Deno.env);
   const fingerprint = await requestFingerprint(auth, request, mode, embeddingMode);
   const offset = cursorOffset(request, fingerprint);
-  const retrievalLimit = request.limit + 1;
+  const retrievalLimit = searchCandidateLimit(request.limit, request.maxPerNote);
   const queryId = crypto.randomUUID();
   const embeddingStarted = performance.now();
   let embeddingMs = 0;
@@ -283,7 +285,7 @@ export async function searchNotes(context: Context): Promise<Response> {
       const fallbackItems = await keywordSearch(auth, request.query, retrievalLimit, searchFilters, offset, request.maxPerNote);
       const retrievalMs = elapsedMilliseconds(retrievalStarted);
       const [fallbackNoteMetadata, freshness] = await Promise.all([
-        measureNoteMetadata(() => noteMetadata(auth, [...new Set(fallbackItems.map((item) => item.noteId))])),
+        measureNoteMetadata(() => noteMetadata(auth, [...new Set(fallbackItems.slice(0, request.limit).map((item) => item.noteId))])),
         measuredIndexMetadata(auth),
       ]);
       const page = pageResults(fallbackItems, request, fingerprint, offset, fallbackNoteMetadata.value);
@@ -317,7 +319,7 @@ export async function searchNotes(context: Context): Promise<Response> {
     const fallbackItems = await keywordSearch(auth, request.query, retrievalLimit, searchFilters, offset, request.maxPerNote);
     retrievalMs = elapsedMilliseconds(retrievalStarted);
     const [fallbackNoteMetadata, freshness] = await Promise.all([
-      measureNoteMetadata(() => noteMetadata(auth, [...new Set(fallbackItems.map((item) => item.noteId))])),
+      measureNoteMetadata(() => noteMetadata(auth, [...new Set(fallbackItems.slice(0, request.limit).map((item) => item.noteId))])),
       measuredIndexMetadata(auth),
     ]);
     const page = pageResults(fallbackItems, request, fingerprint, offset, fallbackNoteMetadata.value);
@@ -329,7 +331,7 @@ export async function searchNotes(context: Context): Promise<Response> {
     return searchResponse(context, page.items, { queryId, modeUsed: 'keyword', degraded: true, started, embeddingMs, retrievalMs, metadataMs: fallbackNoteMetadata.metadataMs, freshnessMs: freshness.freshnessMs }, freshness.index, null, degradedReason);
   }
   const [noteMetadataResult, freshness] = await Promise.all([
-    measureNoteMetadata(() => noteMetadata(auth, [...new Set(rawItems.map((item) => item.noteId))])),
+    measureNoteMetadata(() => noteMetadata(auth, [...new Set(rawItems.slice(0, request.limit).map((item) => item.noteId))])),
     measuredIndexMetadata(auth),
   ]);
   const page = pageResults(rawItems, request, fingerprint, offset, noteMetadataResult.value);
