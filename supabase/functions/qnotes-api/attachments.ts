@@ -3,6 +3,7 @@ import { isUUID, validateLimit } from '@qnotes/shared';
 import { authFromContext, requireScope } from '../_shared/auth.ts';
 import { appDbClient, attachmentFromRow, serviceClient } from '../_shared/database.ts';
 import { ApiError } from '../_shared/errors.ts';
+import { enforceRequestBudget } from '../_shared/request-limits.ts';
 import { findOwnedNote } from './notes.ts';
 import { validateUploadedAttachmentSize } from './attachment-size.ts';
 
@@ -69,6 +70,8 @@ export async function finalizeAttachment(context: Context): Promise<Response> {
   if (!isUUID(attachmentId)) throw new ApiError(422, 'VALIDATION_ERROR', 'attachmentId must be a valid UUID.');
   const row = await appDbClient.from('attachments').select('*').eq('id', attachmentId).eq('owner_id', auth.userId).is('deleted_at', null).maybeSingle();
   if (row.error || !row.data) throw new ApiError(404, 'ATTACHMENT_NOT_FOUND', 'The attachment was not found.');
+  await enforceRequestBudget('attachment-processing', `user:${auth.userId}`);
+  context.set('limitDecision', 'attachment-processing-allowed');
   const object = await serviceClient.storage.from(row.data.bucket).download(row.data.object_path);
   if (object.error || !object.data) throw new ApiError(409, 'ATTACHMENT_NOT_UPLOADED', 'The attachment has not been uploaded.');
   const declaredSizeBytes = Number(row.data.size_bytes);

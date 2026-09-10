@@ -2,6 +2,7 @@ import type { Context } from 'hono';
 import { authFromContext, requireScope } from '../_shared/auth.ts';
 import { appDbClient, serviceClient } from '../_shared/database.ts';
 import { ApiError } from '../_shared/errors.ts';
+import { enforceRequestBudget } from '../_shared/request-limits.ts';
 import { workspaceMaxBytes } from './exports.ts';
 import { createNoteMutation } from './notes.ts';
 import {
@@ -288,6 +289,8 @@ export async function inspectWorkspaceImport(context: Context): Promise<Response
   requireScope(auth, 'notes:read', 'notes:write', 'attachments:read', 'attachments:write');
   const confirmed = context.req.query('confirm') === 'true';
   if (context.req.query('dryRun') === 'false' && !confirmed) throw new ApiError(409, 'VALIDATION_ERROR', 'Workspace restore requires explicit confirm=true after a successful dry run.');
+  await enforceRequestBudget('workspace-import', `user:${auth.userId}`, confirmed ? 2 : 1);
+  context.set('limitDecision', confirmed ? 'workspace-import-confirmed' : 'workspace-import-dry-run');
   const archive = new Uint8Array(await context.req.arrayBuffer());
   try {
     const inspection = await inspectWorkspaceArchive(archive, workspaceMaxBytes(), attachmentMaxBytes());

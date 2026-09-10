@@ -4,6 +4,8 @@ import { QNotesClient } from '@qnotes/api-client';
 import { createQNotesMcpServer } from '../_shared/generated/mcp-server/server.ts';
 import { isUUID } from '@qnotes/shared';
 import { isPersonalToken } from '../_shared/token.ts';
+import { boundedRequest, RequestBodyTooLarge } from '../_shared/request-body.ts';
+import { consumeRequestBudget, MAX_MCP_REQUEST_BODY_BYTES, MAX_OAUTH_FORM_BODY_BYTES, MAX_OAUTH_REGISTER_BODY_BYTES, requestClientPrincipal } from '../_shared/request-limits.ts';
 import { configuredStaticRedirectUris, isAllowedGoogleRedirect } from './oauth-redirects.ts';
 
 const MCP_PATHS = new Set(['', '/', '/mcp']);
@@ -213,11 +215,23 @@ async function redirectFingerprint(uri: string): Promise<string> {
   return base64Url(new Uint8Array(digest).slice(0, 12));
 }
 
-function oauthError(request: Request, error: string, description: string, status = 400): Response {
+function oauthError(request: Request, error: string, description: string, status = 400, extraHeaders?: Record<string, string>): Response {
   return json(request, { error, error_description: description }, status, {
     'Cache-Control': 'no-store',
     Pragma: 'no-cache',
+    ...extraHeaders,
   });
+}
+
+async function oauthBudget(request: Request): Promise<Response | null> {
+  try {
+    const decision = await consumeRequestBudget('oauth', requestClientPrincipal(request));
+    if (decision.unavailable) return oauthError(request, 'temporarily_unavailable', 'Request capacity could not be verified. Retry later.', 503);
+    if (!decision.allowed) return oauthError(request, 'slow_down', 'Too many OAuth requests. Retry later.', 429, { 'Retry-After': String(Math.max(1, decision.retryAfterSeconds)) });
+    return null;
+  } catch {
+    return oauthError(request, 'temporarily_unavailable', 'Request capacity could not be verified. Retry later.', 503);
+  }
 }
 
 function oauthMetadata(request: Request): Record<string, unknown> {
@@ -310,6 +324,8 @@ function authorizationRedirect(request: Request, redirectUri: string, values: Re
 }
 
 async function handleRegister(request: Request): Promise<Response> {
+  const limited = await oauthBudget(request);
+  if (limited) return limited;
   let body: Record<string, unknown>;
   try {
     body = await request.json() as Record<string, unknown>;
@@ -340,6 +356,8 @@ async function handleRegister(request: Request): Promise<Response> {
 }
 
 async function handleAuthorize(request: Request): Promise<Response> {
+  const limited = await oauthBudget(request);
+  if (limited) return limited;
   if (request.method === 'GET') {
     const params = new URL(request.url).searchParams;
     const clientId = params.get('client_id') ?? '';
@@ -388,6 +406,8 @@ async function handleAuthorize(request: Request): Promise<Response> {
 }
 
 async function handleToken(request: Request): Promise<Response> {
+  const limited = await oauthBudget(request);
+  if (limited) return limited;
   let form: FormData;
   try {
     form = await request.formData();
@@ -443,6 +463,22 @@ async function resolveBearerToken(request: Request): Promise<string | null> {
 async function handle(request: Request): Promise<Response> {
   const path = requestPath(request);
   if (request.method === 'OPTIONS') return withCors(request, new Response(null, { status: 204 }));
+  const maxBodyBytes = (path === '/register' || path === '/api/oauth/register') && request.method === 'POST'
+    ? MAX_OAUTH_REGISTER_BODY_BYTES
+    : (path === '/authorize' || path === '/token' || path === '/api/oauth/token') && request.method === 'POST'
+      ? MAX_OAUTH_FORM_BODY_BYTES
+      : MCP_PATHS.has(path) && request.method === 'POST'
+        ? MAX_MCP_REQUEST_BODY_BYTES
+        : null;
+  if (maxBodyBytes !== null) {
+    try {
+      request = await boundedRequest(request, maxBodyBytes);
+    } catch (error) {
+      if (!(error instanceof RequestBodyTooLarge)) throw error;
+      if (path === '/register' || path === '/api/oauth/register' || path === '/authorize' || path === '/token' || path === '/api/oauth/token') return oauthError(request, 'invalid_request', 'The request body is too large.', 413);
+      return json(request, { error: 'Request body is too large.' }, 413, { 'Cache-Control': 'no-store' });
+    }
+  }
   if (path === '/health' && request.method === 'GET') return json(request, { status: 'ok' });
   if ((path === '/.well-known/oauth-authorization-server' || path === '/.well-known/openid-configuration') && request.method === 'GET') return json(request, oauthMetadata(request));
   if ((path === '/.well-known/oauth-protected-resource' || path === '/.well-known/oauth-protected-resource/mcp') && request.method === 'GET') return json(request, oauthResourceMetadata(request));

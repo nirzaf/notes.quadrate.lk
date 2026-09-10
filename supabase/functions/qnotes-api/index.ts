@@ -1,5 +1,4 @@
 import { Hono } from 'hono';
-import { bodyLimit } from 'hono/body-limit';
 import { isUUID } from '@qnotes/shared';
 import { authenticateRequest, type AuthContext } from '../_shared/auth.ts';
 import { applyCors } from '../_shared/cors.ts';
@@ -19,12 +18,14 @@ import { listNotebooks, createNotebook } from './notebooks.ts';
 import { createPublicShare, getPublicShare, resolvePublicShare, revokePublicShare } from './shares.ts';
 import { authenticateVaultRequest, type VaultAuthContext } from '../_shared/vault-auth.ts';
 import { createVaultAgentToken, createVaultEnvironment, createVaultProject, createVaultSecret, createVaultSecretBySelector, deleteVaultSecret, getVaultSecret, listVaultAgentTokens, listVaultAudit, listVaultEnvironments, listVaultProjects, listVaultSecrets, listVaultSecretsBySelector, replaceVaultAgentGrants, revealVaultSecret, revealVaultSecrets, revokeVaultAgentToken, rotateVaultSecret } from './vault.ts';
-import { MAX_VAULT_SECRET_BYTES } from '@qnotes/shared';
+import { boundedRequest, RequestBodyTooLarge } from '../_shared/request-body.ts';
+import { enforceRequestBudget, MAX_API_REQUEST_BODY_BYTES, MAX_PUBLIC_SHARE_REQUEST_BODY_BYTES, MAX_VAULT_REQUEST_BODY_BYTES, requestClientPrincipal } from '../_shared/request-limits.ts';
 
 interface Variables {
   auth: AuthContext;
   vaultAuth: VaultAuthContext;
   requestId: string;
+  limitDecision: string;
 }
 
 const app = new Hono<{ Variables: Variables }>();
@@ -44,10 +45,32 @@ app.use('*', async (context, next) => {
   } finally {
     const auth = context.get('auth');
     const vaultAuth = context.get('vaultAuth');
-    console.info(JSON.stringify({ requestId, method: context.req.method, route: requestRoute(context), status: context.res.status, authKind: auth?.authKind ?? vaultAuth?.authKind ?? 'none', duration: Math.round(performance.now() - started) }));
+    console.info(JSON.stringify({ requestId, method: context.req.method, route: requestRoute(context), status: context.res.status, authKind: auth?.authKind ?? vaultAuth?.authKind ?? 'none', limitDecision: context.get('limitDecision') ?? 'not_applied', duration: Math.round(performance.now() - started) }));
   }
   context.res.headers.set('x-request-id', requestId);
   return context.res;
+});
+
+app.use('*', async (context, next) => {
+  const path = context.req.path;
+  const maxBytes = path === '/public/share/resolve'
+    ? MAX_PUBLIC_SHARE_REQUEST_BODY_BYTES
+    : path === '/api/import/workspace'
+      ? workspaceMaxBytes()
+      : path.startsWith('/vault/')
+        ? MAX_VAULT_REQUEST_BODY_BYTES
+        : path.startsWith('/api/')
+          ? MAX_API_REQUEST_BODY_BYTES
+          : null;
+  if (maxBytes === null) return next();
+  try {
+    context.req.raw = await boundedRequest(context.req.raw, maxBytes);
+  } catch (error) {
+    if (!(error instanceof RequestBodyTooLarge)) throw error;
+    context.header('Cache-Control', 'no-store');
+    return context.json(errorBody(new ApiError(413, 'REQUEST_TOO_LARGE', 'The request body is too large.'), context.get('requestId') ?? crypto.randomUUID()), 413);
+  }
+  return next();
 });
 
 app.use('/api/*', async (context, next) => {
@@ -66,11 +89,6 @@ app.use('/vault/*', async (context, next) => {
   context.set('vaultAuth', auth);
   return next();
 });
-
-app.use('/vault/*', bodyLimit({
-  maxSize: MAX_VAULT_SECRET_BYTES + 16_384,
-  onError: (context) => context.json(errorBody(new ApiError(413, 'VAULT_SECRET_TOO_LARGE', 'The Vault request is too large.'), context.get('requestId') ?? crypto.randomUUID()), 413),
-}));
 
 app.use('/api/tokens', async (context, next) => {
   context.header('Cache-Control', 'no-store');
@@ -97,11 +115,22 @@ app.use('/public/share/resolve', async (context, next) => {
   return next();
 });
 
+app.use('/public/share/resolve', async (context, next) => {
+  await enforceRequestBudget('public-share', requestClientPrincipal(context.req.raw));
+  context.set('limitDecision', 'public-share-allowed');
+  return next();
+});
+
 app.onError((error, context) => {
   const apiError = error instanceof ApiError ? error : new ApiError(500, 'INTERNAL_ERROR', 'An unexpected server error occurred.');
   const requestId = context.get('requestId') ?? crypto.randomUUID();
   const response = context.json(errorBody(apiError, requestId), apiError.status as 500);
   response.headers.set('x-request-id', requestId);
+  if (apiError.status === 429) {
+    const details = apiError.details && typeof apiError.details === 'object' && !Array.isArray(apiError.details) ? apiError.details as Record<string, unknown> : {};
+    const retryAfter = details.retryAfterSeconds;
+    if (typeof retryAfter === 'number' && Number.isSafeInteger(retryAfter) && retryAfter > 0) response.headers.set('Retry-After', String(retryAfter));
+  }
   if (context.req.path === '/public/share/resolve') {
     response.headers.set('Cache-Control', 'no-store');
     response.headers.set('Pragma', 'no-cache');
@@ -149,21 +178,10 @@ app.delete('/api/tokens/:tokenId', revokeToken);
 app.get('/api/notes/:noteId/share', getPublicShare);
 app.post('/api/notes/:noteId/share', createPublicShare);
 app.delete('/api/notes/:noteId/share', revokePublicShare);
-app.post('/public/share/resolve', bodyLimit({
-  maxSize: 1024,
-  onError: (context) => {
-    context.header('Cache-Control', 'no-store');
-    context.header('Pragma', 'no-cache');
-    context.header('X-Content-Type-Options', 'nosniff');
-    return context.json(errorBody(new ApiError(413, 'VALIDATION_ERROR', 'The public share request is too large.'), context.get('requestId') ?? crypto.randomUUID()), 413);
-  },
-}), resolvePublicShare);
+app.post('/public/share/resolve', resolvePublicShare);
 app.get('/api/export/note/:noteRef', exportNote);
 app.get('/api/export/workspace', exportWorkspace);
-app.post('/api/import/workspace', bodyLimit({
-  maxSize: workspaceMaxBytes(),
-  onError: (context) => context.json(errorBody(new ApiError(413, 'EXPORT_TOO_LARGE', 'The backup archive exceeds the configured size limit.'), context.get('requestId') ?? crypto.randomUUID()), 413),
-}), inspectWorkspaceImport);
+app.post('/api/import/workspace', inspectWorkspaceImport);
 
 app.get('/vault/projects', listVaultProjects);
 app.post('/vault/projects', createVaultProject);

@@ -5,6 +5,7 @@ import { EMBEDDING_MODEL, EMBEDDING_MODEL_VERSION, createEmbedding } from '../em
 import { authFromContext, requireScope } from '../_shared/auth.ts';
 import { ApiError } from '../_shared/errors.ts';
 import { appDbClient, decodeSearchCursor, encodeSearchCursor, requestHash, searchResultFromRow, serviceClient } from '../_shared/database.ts';
+import { enforceRequestBudget } from '../_shared/request-limits.ts';
 
 const QUERY_EMBEDDING_CACHE_TTL_MS = 5 * 60 * 1000;
 const QUERY_EMBEDDING_CACHE_MAX_ENTRIES = 256;
@@ -229,6 +230,10 @@ export async function searchNotes(context: Context): Promise<Response> {
   const started = performance.now();
   const request = await requestFromContext(context);
   const mode: ResolvedSearchMode = request.mode === 'auto' ? resolveAutoSearchMode(request.query) : request.mode;
+  if (mode !== 'keyword') {
+    await enforceRequestBudget('embedding', `user:${auth.userId}`, Math.max(1, Math.ceil(request.limit / 100)));
+    context.set('limitDecision', 'embedding-allowed');
+  }
   const fingerprint = await requestFingerprint(request, mode);
   const offset = cursorOffset(request, fingerprint);
   const retrievalLimit = request.limit + 1;
