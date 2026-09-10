@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 import { QNotesClient, QNotesHttpError } from '../dist/index.js';
 
 function jsonResponse(body, status = 200, headers = { 'content-type': 'application/json' }) {
@@ -22,30 +23,89 @@ function waitForAbort(signal) {
 
 test('normalizes base URL, serializes queries, and sends authorization', async () => {
   const calls = [];
-  const client = new QNotesClient({ baseUrl: 'http://example.test///', getAccessToken: () => 'jwt', fetchImplementation: async (url, init) => {
+  const client = new QNotesClient({ baseUrl: 'https://example.test///', getAccessToken: () => 'jwt', fetchImplementation: async (url, init) => {
     calls.push({ url, init });
     return jsonResponse({ data: { items: [], nextCursor: null } });
   } });
   await client.listNotes({ limit: 10, includeDeleted: false, tag: 'ops' });
-  assert.equal(calls[0].url, 'http://example.test/api/notes?limit=10&includeDeleted=false&tag=ops');
+  assert.equal(calls[0].url, 'https://example.test/api/notes?limit=10&includeDeleted=false&tag=ops');
   assert.equal(calls[0].init.headers.get('Authorization'), 'Bearer jwt');
+  assert.equal(calls[0].init.redirect, 'error');
+  assert.equal(calls[0].init.cache, 'no-store');
+  assert.ok(calls[0].init.signal instanceof AbortSignal);
+});
+
+test('requires HTTPS or explicitly enabled exact loopback HTTP endpoints', async () => {
+  for (const baseUrl of [
+    'http://example.test',
+    'http://127.0.0.1.attacker.test',
+    'https://example.test?token=secret',
+    'https://user:password@example.test',
+    'https://example.test/#fragment',
+    'https://example.test/functions/../qnotes-api',
+  ]) {
+    assert.throws(() => new QNotesClient({ baseUrl, getAccessToken: () => null }), /API endpoint/);
+  }
+  assert.doesNotThrow(() => new QNotesClient({ baseUrl: 'http://127.0.0.1:54321/functions/v1/qnotes-api', allowInsecureLoopback: true, getAccessToken: () => null }));
+});
+
+test('sanitizes access-token and transport failures', async () => {
+  const secret = 'qnt_synthetic_transport_secret';
+  const tokenFailure = new QNotesClient({
+    baseUrl: 'https://example.test',
+    getAccessToken: () => { throw new Error(`provider leaked ${secret}`); },
+    fetchImplementation: async () => jsonResponse({ data: { items: [], nextCursor: null } }),
+  });
+  await assert.rejects(() => tokenFailure.listNotes(), (error) => error.message === 'QNotes request failed.' && !error.message.includes(secret));
+
+  const fetchFailure = new QNotesClient({
+    baseUrl: 'https://example.test',
+    getAccessToken: () => secret,
+    fetchImplementation: async () => { throw new Error(`network leaked ${secret}`); },
+  });
+  await assert.rejects(() => fetchFailure.listNotes(), (error) => error.message === 'QNotes request failed.' && !error.message.includes(secret));
+});
+
+test('rejects credential-bearing redirects before the destination receives the body', async (t) => {
+  let sinkRequests = 0;
+  const server = createServer((request, response) => {
+    if (request.url === '/api/notes') {
+      response.writeHead(307, { Location: '/sink' });
+      response.end();
+      return;
+    }
+    sinkRequests += 1;
+    request.resume();
+    response.end();
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  const client = new QNotesClient({
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    allowInsecureLoopback: true,
+    getAccessToken: () => 'qnt_synthetic_redirect_secret',
+  });
+  await assert.rejects(() => client.createNote({ title: 'redirect', contentMarkdown: 'secret', deviceId: 'device-1', mutationId: 'mutation-1' }), /QNotes request failed/);
+  assert.equal(sinkRequests, 0);
 });
 
 test('serializes notebook, unfiled, deleted-only, and include-deleted list filters', async () => {
   const calls = [];
-  const client = new QNotesClient({ baseUrl: 'http://example.test', getAccessToken: () => null, fetchImplementation: async (url, init) => {
+  const client = new QNotesClient({ baseUrl: 'https://example.test', getAccessToken: () => null, fetchImplementation: async (url, init) => {
     calls.push({ url, init });
     return url.includes('/notes/note-1') ? jsonResponse({ data: notePayload() }) : jsonResponse({ data: { items: [], nextCursor: null } });
   } });
   await client.listNotes({ limit: 25, notebookId: 'notebook-1', unfiled: false, deletedOnly: true, includeDeleted: true, tag: 'ops' });
   await client.getNote('note-1', { includeDeleted: true });
-  assert.equal(calls[0].url, 'http://example.test/api/notes?limit=25&includeDeleted=true&deletedOnly=true&notebookId=notebook-1&unfiled=false&tag=ops');
-  assert.equal(calls[1].url, 'http://example.test/api/notes/note-1?includeDeleted=true');
+  assert.equal(calls[0].url, 'https://example.test/api/notes?limit=25&includeDeleted=true&deletedOnly=true&notebookId=notebook-1&unfiled=false&tag=ops');
+  assert.equal(calls[1].url, 'https://example.test/api/notes/note-1?includeDeleted=true');
 });
 
 test('parses error envelopes and keeps mutation requests single-shot', async () => {
   let calls = 0;
-  const client = new QNotesClient({ baseUrl: 'http://example.test', getAccessToken: () => null, fetchImplementation: async () => {
+  const client = new QNotesClient({ baseUrl: 'https://example.test', getAccessToken: () => null, fetchImplementation: async () => {
     calls += 1;
     return jsonResponse({ error: { code: 'NOTE_VERSION_CONFLICT', message: 'stale', requestId: 'request-1', details: { currentVersion: 2 } } }, 409);
   } });
@@ -55,7 +115,7 @@ test('parses error envelopes and keeps mutation requests single-shot', async () 
 
 test('exposes create outcomes while preserving the note-only create API', async () => {
   const calls = [];
-  const client = new QNotesClient({ baseUrl: 'http://example.test', getAccessToken: () => null, fetchImplementation: async (url, init) => {
+  const client = new QNotesClient({ baseUrl: 'https://example.test', getAccessToken: () => null, fetchImplementation: async (url, init) => {
     calls.push({ url, init });
     return jsonResponse({ data: notePayload({ title: 'Captured' }) }, 200, { 'content-type': 'application/json', 'x-qnotes-create-outcome': 'deduplicated' });
   } });
@@ -68,7 +128,7 @@ test('exposes create outcomes while preserving the note-only create API', async 
 });
 
 test('returns successful binary exports without JSON conversion', async () => {
-  const client = new QNotesClient({ baseUrl: 'http://example.test', getAccessToken: () => 'token', fetchImplementation: async () => new Response(new Uint8Array([80, 75, 3, 4]), { headers: { 'content-type': 'application/zip' } }) });
+  const client = new QNotesClient({ baseUrl: 'https://example.test', getAccessToken: () => 'token', fetchImplementation: async () => new Response(new Uint8Array([80, 75, 3, 4]), { headers: { 'content-type': 'application/zip' } }) });
   const response = await client.exportWorkspace();
   assert.deepEqual([...new Uint8Array(await response.arrayBuffer())], [80, 75, 3, 4]);
 });
@@ -81,15 +141,15 @@ test('supports dry-run and explicit workspace import requests', async () => {
     entries: 2, uncompressedBytes: 20, noteMarkdownBytes: 8, attachmentBytes: 0, conflicts: [],
     unsupportedFiles: [], validationFailures: [], notebooks: 0, notes: 1, attachments: 0,
   };
-  const client = new QNotesClient({ baseUrl: 'http://example.test', getAccessToken: () => 'token', fetchImplementation: async (url, init) => {
+  const client = new QNotesClient({ baseUrl: 'https://example.test', getAccessToken: () => 'token', fetchImplementation: async (url, init) => {
     calls.push({ url, init });
     return jsonResponse({ data: { ...summary, dryRun: url.endsWith('/import/workspace'), ready: true } });
   } });
   const archive = new Uint8Array([80, 75]);
   await client.importWorkspace(archive);
   await client.importWorkspace(archive, { confirm: true });
-  assert.equal(calls[0].url, 'http://example.test/api/import/workspace');
-  assert.equal(calls[1].url, 'http://example.test/api/import/workspace?confirm=true');
+  assert.equal(calls[0].url, 'https://example.test/api/import/workspace');
+  assert.equal(calls[1].url, 'https://example.test/api/import/workspace?confirm=true');
   assert.equal(calls[0].init.method, 'POST');
   assert.equal(calls[0].init.headers.get('Content-Type'), 'application/zip');
   assert.equal(calls[0].init.headers.get('Authorization'), 'Bearer token');
@@ -98,7 +158,7 @@ test('supports dry-run and explicit workspace import requests', async () => {
 
 test('supports notebook listing, creation, and versioned note moves', async () => {
   const calls = [];
-  const client = new QNotesClient({ baseUrl: 'http://example.test', getAccessToken: () => null, fetchImplementation: async (url, init) => {
+  const client = new QNotesClient({ baseUrl: 'https://example.test', getAccessToken: () => null, fetchImplementation: async (url, init) => {
     calls.push({ url, init });
     const body = url.endsWith('/notebooks') && init?.method === 'POST'
       ? { data: { id: 'n-1', name: 'Work', createdAt: '2026-01-01', updatedAt: '2026-01-01' } }
@@ -110,16 +170,16 @@ test('supports notebook listing, creation, and versioned note moves', async () =
   await client.listNotebooks();
   await client.createNotebook({ name: 'Work' });
   await client.moveNoteToNotebook('note-1', { notebookId: 'n-1', expectedVersion: 1, deviceId: 'device-1', mutationId: 'mutation-1' });
-  assert.equal(calls[0].url, 'http://example.test/api/notebooks');
+  assert.equal(calls[0].url, 'https://example.test/api/notebooks');
   assert.equal(calls[1].init.method, 'POST');
-  assert.equal(calls[2].url, 'http://example.test/api/notes/note-1/notebook');
+  assert.equal(calls[2].url, 'https://example.test/api/notes/note-1/notebook');
   assert.deepEqual(JSON.parse(calls[2].init.body), { notebookId: 'n-1', expectedVersion: 1, deviceId: 'device-1', mutationId: 'mutation-1' });
 });
 
 test('keeps caller-owned share management authenticated and validates safe metadata', async () => {
   const calls = [];
   const metadata = { id: 'share-1', noteId: 'note-1', tokenPrefix: 'qns_Abcd1234', expiresAt: null, revokedAt: null, createdAt: '2026-01-01T00:00:00Z' };
-  const client = new QNotesClient({ getAccessToken: () => 'qnt_synthetic-share-token', baseUrl: 'http://example.test', fetchImplementation: async (url, init) => {
+  const client = new QNotesClient({ getAccessToken: () => 'qnt_synthetic-share-token', baseUrl: 'https://example.test', fetchImplementation: async (url, init) => {
     calls.push({ url, init });
     if (init?.method === 'POST') return jsonResponse({ data: { token: 'qns_A'.padEnd(47, 'a'), metadata } }, 201);
     if (init?.method === 'DELETE') return jsonResponse({ data: null });
@@ -128,7 +188,7 @@ test('keeps caller-owned share management authenticated and validates safe metad
   assert.deepEqual(await client.getPublicShare('note-1'), metadata);
   assert.deepEqual(await client.createPublicShare('note-1', { expiresAt: null }), { token: 'qns_A'.padEnd(47, 'a'), metadata });
   await client.revokePublicShare('note-1');
-  assert.equal(calls[0].url, 'http://example.test/api/notes/note-1/share');
+  assert.equal(calls[0].url, 'https://example.test/api/notes/note-1/share');
   assert.equal(calls[0].init.headers.get('Authorization'), 'Bearer qnt_synthetic-share-token');
   assert.deepEqual(JSON.parse(calls[1].init.body), { expiresAt: null });
   assert.equal(calls[2].init.method, 'DELETE');
@@ -139,37 +199,37 @@ test('resolves public shares without requesting or sending a private JWT', async
   let request;
   const token = 'qns_' + 'A'.repeat(43);
   const note = { title: 'Shared', contentMarkdown: '# Shared', updatedAt: '2026-01-01T00:00:00Z' };
-  const client = new QNotesClient({ baseUrl: 'http://example.test', getAccessToken: () => { tokenProviderCalls += 1; throw new Error('private token must not be requested'); }, fetchImplementation: async (url, init) => {
+  const client = new QNotesClient({ baseUrl: 'https://example.test', getAccessToken: () => { tokenProviderCalls += 1; throw new Error('private token must not be requested'); }, fetchImplementation: async (url, init) => {
     request = { url, init };
     return jsonResponse({ data: note });
   } });
   assert.deepEqual(await client.resolvePublicShare(token), note);
   assert.equal(tokenProviderCalls, 0);
-  assert.equal(request.url, 'http://example.test/public/share/resolve');
+  assert.equal(request.url, 'https://example.test/public/share/resolve');
   assert.equal(request.init.headers.get('Authorization'), null);
   assert.deepEqual(JSON.parse(request.init.body), { token });
 });
 
 test('rejects a malformed public shared note payload', async () => {
-  const client = new QNotesClient({ baseUrl: 'http://example.test', getAccessToken: () => null, fetchImplementation: async () => jsonResponse({ data: { title: 'Shared', contentMarkdown: '' } }) });
+  const client = new QNotesClient({ baseUrl: 'https://example.test', getAccessToken: () => null, fetchImplementation: async () => jsonResponse({ data: { title: 'Shared', contentMarkdown: '' } }) });
   await assert.rejects(() => client.resolvePublicShare('qns_' + 'A'.repeat(43)), /malformed public shared note/);
 });
 
 test('posts logical append requests without rewriting the note client-side', async () => {
   const calls = [];
-  const client = new QNotesClient({ baseUrl: 'http://example.test', getAccessToken: () => 'write-token', fetchImplementation: async (url, init) => {
+  const client = new QNotesClient({ baseUrl: 'https://example.test', getAccessToken: () => 'write-token', fetchImplementation: async (url, init) => {
     calls.push({ url, init });
     return jsonResponse({ data: notePayload({ version: 2, contentMarkdown: '# Existing\n\nAdded\n', contentPlain: 'Existing Added', updatedAt: '2026-01-01T00:00:01Z' }) });
   } });
   await client.appendNote('note-1', { contentMarkdown: 'Added', expectedVersion: 1, deviceId: 'device-1', mutationId: 'mutation-1' });
-  assert.equal(calls[0].url, 'http://example.test/api/notes/note-1/append');
+  assert.equal(calls[0].url, 'https://example.test/api/notes/note-1/append');
   assert.equal(calls[0].init.method, 'POST');
   assert.deepEqual(JSON.parse(calls[0].init.body), { contentMarkdown: 'Added', expectedVersion: 1, deviceId: 'device-1', mutationId: 'mutation-1' });
 });
 
 test('posts structured search requests and retrieves bounded document context', async () => {
   const calls = [];
-  const client = new QNotesClient({ baseUrl: 'http://example.test', getAccessToken: () => 'read-token', fetchImplementation: async (url, init) => {
+  const client = new QNotesClient({ baseUrl: 'https://example.test', getAccessToken: () => 'read-token', fetchImplementation: async (url, init) => {
     calls.push({ url, init });
     return url.includes('/context?')
       ? jsonResponse({ data: { noteId: 'note-1', noteVersion: 3, documentId: 'doc-1', uri: 'qnotes://notes/note-1/documents/doc-1', title: 'Rollback', headingPath: null, content: 'exact', previous: [], next: [], updatedAt: '2026-01-01T00:00:00Z', sourceType: 'note_chunk' } })
@@ -178,11 +238,11 @@ test('posts structured search requests and retrieves bounded document context', 
   const controller = new AbortController();
   await client.searchPost({ query: 'rollback', mode: 'auto', limit: 5, maxPerNote: 2, filters: { tags: ['ops'] }, minimumConfidence: 0.45 }, { signal: controller.signal });
   await client.readNoteContext('doc-1', { before: 1, after: 1, maxTokens: 1800 });
-  assert.equal(calls[0].url, 'http://example.test/api/search');
+  assert.equal(calls[0].url, 'https://example.test/api/search');
   assert.equal(calls[0].init.method, 'POST');
-  assert.equal(calls[0].init.signal, controller.signal);
+  assert.notEqual(calls[0].init.signal, controller.signal);
   assert.deepEqual(JSON.parse(calls[0].init.body), { query: 'rollback', mode: 'auto', limit: 5, maxPerNote: 2, filters: { tags: ['ops'] }, minimumConfidence: 0.45 });
-  assert.equal(calls[1].url, 'http://example.test/api/search/documents/doc-1/context?before=1&after=1&maxTokens=1800');
+  assert.equal(calls[1].url, 'https://example.test/api/search/documents/doc-1/context?before=1&after=1&maxTokens=1800');
   assert.equal(calls[1].init.headers.get('Authorization'), 'Bearer read-token');
 });
 
@@ -198,10 +258,10 @@ test('accepts old context payloads and validates additive provenance fields', as
     updatedAt: '2026-01-01T00:00:00Z', sourceType: 'note_chunk', sourceHash: 'center-hash', truncated: true,
     tokenBudget: { max: 4, used: 4, unit: 'approximate_tokens' }, continuation: { cursor: 'opaque-context-cursor', noteVersion: 3, sourceHash: 'center-hash', nextOffset: 4 }, previousSources: [source], nextSources: [],
   };
-  const client = new QNotesClient({ baseUrl: 'http://example.test', getAccessToken: () => null, fetchImplementation: async () => jsonResponse({ data: context }) });
+  const client = new QNotesClient({ baseUrl: 'https://example.test', getAccessToken: () => null, fetchImplementation: async () => jsonResponse({ data: context }) });
   assert.deepEqual(await client.readNoteContext('doc-1'), context);
 
-  const malformedClient = new QNotesClient({ baseUrl: 'http://example.test', getAccessToken: () => null, fetchImplementation: async () => jsonResponse({ data: { ...context, previousSources: [{ ...source, truncated: 'false' }] } }) });
+  const malformedClient = new QNotesClient({ baseUrl: 'https://example.test', getAccessToken: () => null, fetchImplementation: async () => jsonResponse({ data: { ...context, previousSources: [{ ...source, truncated: 'false' }] } }) });
   await assert.rejects(() => malformedClient.readNoteContext('doc-1'), /malformed search context/);
 });
 
@@ -216,7 +276,7 @@ test('preserves search items and response metadata inside the success data envel
     index: { model: 'gte-small:v2', pendingDocuments: 2, failedDocuments: 0, oldestPendingAgeSeconds: 4, fresh: false, freshness: 'unknown' },
   };
   const client = new QNotesClient({
-    baseUrl: 'http://example.test',
+    baseUrl: 'https://example.test',
     getAccessToken: () => null,
     fetchImplementation: async () => jsonResponse({ data: response }),
   });
@@ -225,7 +285,7 @@ test('preserves search items and response metadata inside the success data envel
 
 test('rejects a malformed notes success payload instead of treating it as an empty result', async () => {
   const client = new QNotesClient({
-    baseUrl: 'http://example.test',
+    baseUrl: 'https://example.test',
     getAccessToken: () => null,
     fetchImplementation: async () => jsonResponse({ data: { items: { not: 'an array' }, nextCursor: null } }),
   });
@@ -235,7 +295,7 @@ test('rejects a malformed notes success payload instead of treating it as an emp
 test('passes cancellation signals through list and detail reads', async () => {
   const calls = [];
   const client = new QNotesClient({
-    baseUrl: 'http://example.test',
+    baseUrl: 'https://example.test',
     getAccessToken: () => null,
     fetchImplementation: async (url, init) => {
       calls.push(init.signal);
@@ -245,13 +305,15 @@ test('passes cancellation signals through list and detail reads', async () => {
   const controller = new AbortController();
   await client.listNotes({ signal: controller.signal });
   await client.getNote('note-1', { signal: controller.signal });
-  assert.deepEqual(calls, [controller.signal, controller.signal]);
+  assert.equal(calls.length, 2);
+  assert.notEqual(calls[0], controller.signal);
+  assert.notEqual(calls[1], controller.signal);
 });
 
 test('composes timeout signals while preserving the caller abort reason', async () => {
   let requestSignal;
   const client = new QNotesClient({
-    baseUrl: 'http://example.test',
+    baseUrl: 'https://example.test',
     getAccessToken: () => null,
     fetchImplementation: async (_url, init) => {
       requestSignal = init.signal;
@@ -271,7 +333,7 @@ test('composes timeout signals while preserving the caller abort reason', async 
 test('aborts a pending request at its bounded per-call timeout', async () => {
   let requestSignal;
   const client = new QNotesClient({
-    baseUrl: 'http://example.test',
+    baseUrl: 'https://example.test',
     getAccessToken: () => null,
     fetchImplementation: async (_url, init) => {
       requestSignal = init.signal;
@@ -286,7 +348,7 @@ test('aborts a pending request at its bounded per-call timeout', async () => {
 test('cleans up a request timeout after a successful response', async () => {
   let requestSignal;
   const client = new QNotesClient({
-    baseUrl: 'http://example.test',
+    baseUrl: 'https://example.test',
     getAccessToken: () => null,
     fetchImplementation: async (_url, init) => {
       requestSignal = init.signal;
@@ -301,7 +363,7 @@ test('cleans up a request timeout after a successful response', async () => {
 test('does not retry a mutation after its request is aborted', async () => {
   let calls = 0;
   const client = new QNotesClient({
-    baseUrl: 'http://example.test',
+    baseUrl: 'https://example.test',
     getAccessToken: () => null,
     fetchImplementation: async (_url, init) => {
       calls += 1;

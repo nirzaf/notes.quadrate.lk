@@ -5,3 +5,4 @@ export type { AppendNoteInput, CreatePublicShareInput, CreatePublicShareResult, 
 export { QNotesHttpError } from './http-error.ts';
 export { QVaultClient, QVaultProtocolError } from './vault-client.ts';
 export type { QNotesClientOptions as QVaultClientOptions } from './client.ts';
+export { validateApiEndpoint } from './endpoint-policy.ts';

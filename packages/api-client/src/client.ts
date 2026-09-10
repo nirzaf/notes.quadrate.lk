@@ -25,6 +25,7 @@ import type {
   VersionedNoteMutationInput,
 } from '@qnotes/shared';
 import { QNotesHttpError } from './http-error.ts';
+import { createRequestSignal, redactSensitive, requestSecrets, throwIfAborted, validateApiEndpoint } from './endpoint-policy.ts';
 
 export type CreateNoteOutcome = 'created' | 'idempotent' | 'deduplicated';
 export type NoteMutationOutcome = 'applied' | 'idempotent';
@@ -55,6 +56,7 @@ export interface QNotesClientOptions {
    */
   getAccessToken: (signal?: AbortSignal) => string | null | Promise<string | null>;
   fetchImplementation?: typeof fetch;
+  allowInsecureLoopback?: boolean;
 }
 
 export interface RequestOptions {
@@ -121,50 +123,6 @@ type Success<T> = { data: T };
 
 const SEARCH_SOURCE_TYPES = new Set(['note_metadata', 'note_chunk', 'copy_block', 'code_block', 'attachment_chunk']);
 const SEARCH_MODES = new Set(['keyword', 'semantic', 'hybrid']);
-const MAX_REQUEST_TIMEOUT_MS = 120_000;
-
-interface RequestSignal {
-  signal?: AbortSignal;
-  cleanup: () => void;
-}
-
-function boundedTimeout(timeoutMs: number | undefined): number | undefined {
-  if (timeoutMs === undefined) return undefined;
-  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new RangeError('timeoutMs must be a finite, non-negative number.');
-  return Math.min(timeoutMs, MAX_REQUEST_TIMEOUT_MS);
-}
-
-function requestTimeoutError(): DOMException {
-  return new DOMException('The request timed out.', 'TimeoutError');
-}
-
-function throwIfAborted(signal: AbortSignal | undefined): void {
-  if (signal?.aborted) throw signal.reason;
-}
-
-function createRequestSignal(callerSignal: AbortSignal | null | undefined, timeoutMs: number | undefined): RequestSignal {
-  const boundedMs = boundedTimeout(timeoutMs);
-  if (boundedMs === undefined) return callerSignal ? { signal: callerSignal, cleanup: () => {} } : { cleanup: () => {} };
-
-  const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const abortFromCaller = () => controller.abort(callerSignal?.reason);
-
-  if (callerSignal) {
-    if (callerSignal.aborted) controller.abort(callerSignal.reason);
-    else callerSignal.addEventListener('abort', abortFromCaller, { once: true });
-  }
-  if (!controller.signal.aborted) timer = setTimeout(() => controller.abort(requestTimeoutError()), boundedMs);
-
-  return {
-    signal: controller.signal,
-    cleanup: () => {
-      if (timer !== undefined) clearTimeout(timer);
-      callerSignal?.removeEventListener('abort', abortFromCaller);
-    },
-  };
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -352,7 +310,7 @@ export class QNotesClient {
   private readonly fetchImplementation: typeof fetch;
 
   constructor(options: QNotesClientOptions) {
-    this.baseUrl = options.baseUrl.replace(/\/+$/, '');
+    this.baseUrl = validateApiEndpoint(options.baseUrl, options.allowInsecureLoopback === undefined ? {} : { allowInsecureLoopback: options.allowInsecureLoopback }).replace(/\/+$/, '');
     this.getAccessToken = options.getAccessToken;
     this.fetchImplementation = options.fetchImplementation ?? globalThis.fetch.bind(globalThis);
   }
@@ -367,10 +325,13 @@ export class QNotesClient {
       const token = await this.getAccessToken(requestSignal.signal);
       throwIfAborted(requestSignal.signal);
       if (token) headers.set('Authorization', `Bearer ${token}`);
+      const secrets = requestSecrets(init.body, token);
       const response = await this.fetchImplementation(`${this.baseUrl}/api${path}`, {
         ...init,
         headers,
-        ...(requestSignal.signal ? { signal: requestSignal.signal } : {}),
+        redirect: 'error',
+        cache: 'no-store',
+        signal: requestSignal.signal,
       });
       throwIfAborted(requestSignal.signal);
       if (!response.ok) {
@@ -380,12 +341,16 @@ export class QNotesClient {
         const envelope = typeof body === 'object' && body !== null && 'error' in body ? (body as { error?: unknown }).error : null;
         const error = typeof envelope === 'object' && envelope !== null ? envelope as { code?: unknown; message?: unknown; requestId?: unknown; details?: unknown } : {};
         const code = typeof error.code === 'string' ? error.code : 'INTERNAL_ERROR';
-        throw new QNotesHttpError(response.status, code as QNotesHttpError['code'], typeof error.message === 'string' ? error.message : `Request failed with HTTP ${response.status}.`, typeof error.requestId === 'string' ? error.requestId : response.headers.get('x-request-id') ?? '', error.details);
+        throw new QNotesHttpError(response.status, code as QNotesHttpError['code'], typeof error.message === 'string' ? redactSensitive(error.message, secrets) as string : `Request failed with HTTP ${response.status}.`, typeof error.requestId === 'string' ? redactSensitive(error.requestId, secrets) as string : response.headers.get('x-request-id') ?? '', redactSensitive(error.details, secrets));
       }
       const body: unknown = await response.json();
       throwIfAborted(requestSignal.signal);
       if (typeof body !== 'object' || body === null || !('data' in body)) throw new Error('QNotes API returned an invalid success envelope.');
       return { data: (body as Success<T>).data, response };
+    } catch (error) {
+      throwIfAborted(requestSignal.signal);
+      if (error instanceof QNotesHttpError || error instanceof QNotesProtocolError) throw error;
+      throw new Error('QNotes request failed.');
     } finally {
       requestSignal.cleanup();
     }
@@ -406,10 +371,13 @@ export class QNotesClient {
       const headers = new Headers(init.headers);
       headers.set('Accept', 'application/json');
       if (init.body !== undefined && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+      const secrets = requestSecrets(init.body);
       const response = await this.fetchImplementation(`${this.baseUrl}${path}`, {
         ...init,
         headers,
-        ...(requestSignal.signal ? { signal: requestSignal.signal } : {}),
+        redirect: 'error',
+        cache: 'no-store',
+        signal: requestSignal.signal,
       });
       throwIfAborted(requestSignal.signal);
       if (!response.ok) {
@@ -419,12 +387,16 @@ export class QNotesClient {
         const envelope = typeof body === 'object' && body !== null && 'error' in body ? (body as { error?: unknown }).error : null;
         const error = typeof envelope === 'object' && envelope !== null ? envelope as { code?: unknown; message?: unknown; requestId?: unknown; details?: unknown } : {};
         const code = typeof error.code === 'string' ? error.code : 'INTERNAL_ERROR';
-        throw new QNotesHttpError(response.status, code as QNotesHttpError['code'], typeof error.message === 'string' ? error.message : `Request failed with HTTP ${response.status}.`, typeof error.requestId === 'string' ? error.requestId : response.headers.get('x-request-id') ?? '', error.details);
+        throw new QNotesHttpError(response.status, code as QNotesHttpError['code'], typeof error.message === 'string' ? redactSensitive(error.message, secrets) as string : `Request failed with HTTP ${response.status}.`, typeof error.requestId === 'string' ? redactSensitive(error.requestId, secrets) as string : response.headers.get('x-request-id') ?? '', redactSensitive(error.details, secrets));
       }
       const body: unknown = await response.json();
       throwIfAborted(requestSignal.signal);
       if (typeof body !== 'object' || body === null || !('data' in body)) throw new Error('QNotes API returned an invalid success envelope.');
       return { data: (body as Success<T>).data, response };
+    } catch (error) {
+      throwIfAborted(requestSignal.signal);
+      if (error instanceof QNotesHttpError || error instanceof QNotesProtocolError) throw error;
+      throw new Error('QNotes request failed.');
     } finally {
       requestSignal.cleanup();
     }
@@ -442,9 +414,12 @@ export class QNotesClient {
       const token = await this.getAccessToken(requestSignal.signal);
       throwIfAborted(requestSignal.signal);
       if (token) headers.set('Authorization', `Bearer ${token}`);
+      const secrets = requestSecrets(undefined, token);
       const response = await this.fetchImplementation(`${this.baseUrl}/api${path}`, {
         headers,
-        ...(requestSignal.signal ? { signal: requestSignal.signal } : {}),
+        redirect: 'error',
+        cache: 'no-store',
+        signal: requestSignal.signal,
       });
       throwIfAborted(requestSignal.signal);
       if (!response.ok) {
@@ -453,9 +428,13 @@ export class QNotesClient {
         throwIfAborted(requestSignal.signal);
         const envelope = typeof body === 'object' && body !== null && 'error' in body ? (body as { error?: unknown }).error : null;
         const error = typeof envelope === 'object' && envelope !== null ? envelope as { code?: unknown; message?: unknown; requestId?: unknown; details?: unknown } : {};
-        throw new QNotesHttpError(response.status, (typeof error.code === 'string' ? error.code : 'INTERNAL_ERROR') as QNotesHttpError['code'], typeof error.message === 'string' ? error.message : `Request failed with HTTP ${response.status}.`, typeof error.requestId === 'string' ? error.requestId : response.headers.get('x-request-id') ?? '', error.details);
+        throw new QNotesHttpError(response.status, (typeof error.code === 'string' ? error.code : 'INTERNAL_ERROR') as QNotesHttpError['code'], typeof error.message === 'string' ? redactSensitive(error.message, secrets) as string : `Request failed with HTTP ${response.status}.`, typeof error.requestId === 'string' ? redactSensitive(error.requestId, secrets) as string : response.headers.get('x-request-id') ?? '', redactSensitive(error.details, secrets));
       }
       return response;
+    } catch (error) {
+      throwIfAborted(requestSignal.signal);
+      if (error instanceof QNotesHttpError) throw error;
+      throw new Error('QNotes request failed.');
     } finally {
       requestSignal.cleanup();
     }

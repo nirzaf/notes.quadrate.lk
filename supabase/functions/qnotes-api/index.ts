@@ -58,6 +58,10 @@ app.use('/api/*', async (context, next) => {
 });
 
 app.use('/vault/*', async (context, next) => {
+  context.header('Cache-Control', 'no-store');
+  context.header('Pragma', 'no-cache');
+  context.header('X-Content-Type-Options', 'nosniff');
+  context.header('Referrer-Policy', 'no-referrer');
   const auth = await authenticateVaultRequest(context.req.raw);
   context.set('vaultAuth', auth);
   return next();
@@ -67,6 +71,14 @@ app.use('/vault/*', bodyLimit({
   maxSize: MAX_VAULT_SECRET_BYTES + 16_384,
   onError: (context) => context.json(errorBody(new ApiError(413, 'VAULT_SECRET_TOO_LARGE', 'The Vault request is too large.'), context.get('requestId') ?? crypto.randomUUID()), 413),
 }));
+
+app.use('/api/tokens', async (context, next) => {
+  context.header('Cache-Control', 'no-store');
+  context.header('Pragma', 'no-cache');
+  context.header('X-Content-Type-Options', 'nosniff');
+  context.header('Referrer-Policy', 'no-referrer');
+  return next();
+});
 
 app.use('/public/share/resolve', async (context, next) => {
   context.header('Cache-Control', 'no-store');
@@ -91,7 +103,7 @@ app.onError((error, context) => {
     response.headers.set('Referrer-Policy', 'no-referrer');
     response.headers.set('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'");
   }
-  if (context.req.path.startsWith('/vault/secrets/reveal') || context.req.path === '/vault/agent-tokens') {
+  if (context.req.path.startsWith('/vault/') || context.req.path.startsWith('/api/tokens')) {
     response.headers.set('Cache-Control', 'no-store');
     response.headers.set('Pragma', 'no-cache');
     response.headers.set('X-Content-Type-Options', 'nosniff');

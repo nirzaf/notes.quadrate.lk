@@ -3,12 +3,11 @@
 import { spawn } from 'node:child_process';
 import { statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
-import { URL } from 'node:url';
+import { validateApiEndpoint } from '../../packages/api-client/dist/endpoint-policy.js';
 
 const NOTES_PROFILES = new Set(['read', 'share', 'write']);
 const VAULT_PROFILES = new Set(['none', 'metadata', 'reveal', 'write']);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const LOCAL_HTTP_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 const ENV_KEYS_TO_ISOLATE = [
   'QNOTES_URL',
   'QNOTES_MCP_PROFILE',
@@ -17,6 +16,7 @@ const ENV_KEYS_TO_ISOLATE = [
   'QNOTES_WRITE_TOKEN',
   'QNOTES_MCP_DEVICE_ID',
   'QNOTES_MCP_ENABLE_PUBLIC_SHARE',
+  'QNOTES_ALLOW_INSECURE_LOOPBACK',
   'QVAULT_TOKEN',
   'QVAULT_MCP_PROFILE',
   'QVAULT_URL',
@@ -77,18 +77,12 @@ function validateServerPath(value) {
   return value;
 }
 
-function validateUrl(value) {
-  if (typeof value !== 'string' || !value || value !== value.trim() || value.includes('\0')) throw configurationError();
-  let parsed;
+function validateUrl(value, allowInsecureLoopback) {
   try {
-    parsed = new URL(value);
+    return validateApiEndpoint(value, { allowInsecureLoopback });
   } catch {
     throw configurationError();
   }
-  if (parsed.username || parsed.password || parsed.search || parsed.hash) throw configurationError();
-  if (parsed.protocol === 'https:') return value;
-  if (parsed.protocol === 'http:' && LOCAL_HTTP_HOSTS.has(parsed.hostname)) return value;
-  throw configurationError();
 }
 
 function selectedCredential(environment, key) {
@@ -112,7 +106,9 @@ function buildChildEnvironment(options, parentEnvironment) {
   const notesAlias = 'QNOTES_PLUGIN_TOKEN';
   const childEnvironment = { ...parentEnvironment };
   for (const key of ENV_KEYS_TO_ISOLATE) delete childEnvironment[key];
-  childEnvironment.QNOTES_URL = validateUrl(parentEnvironment.QNOTES_URL);
+  const allowInsecureLoopback = parentEnvironment.QNOTES_ALLOW_INSECURE_LOOPBACK === 'true';
+  childEnvironment.QNOTES_URL = validateUrl(parentEnvironment.QNOTES_URL, allowInsecureLoopback);
+  if (allowInsecureLoopback) childEnvironment.QNOTES_ALLOW_INSECURE_LOOPBACK = 'true';
   const token = selectedCredential(parentEnvironment, notesAlias);
   if (options.notesProfile === 'read') childEnvironment.QNOTES_READ_TOKEN = token;
   if (options.notesProfile === 'share') childEnvironment.QNOTES_TOKEN = token;

@@ -49,7 +49,7 @@ export function createClientFromEnvironment(): QNotesClient {
   const baseUrl = process.env.QNOTES_URL;
   const token = process.env.QNOTES_TOKEN;
   if (!baseUrl || !token) throw new Error('QNOTES_URL and QNOTES_TOKEN are required.');
-  return new Client({ baseUrl, getAccessToken: () => token });
+  return new Client({ baseUrl, getAccessToken: () => token, allowInsecureLoopback: process.env.QNOTES_ALLOW_INSECURE_LOOPBACK === 'true' });
 }
 
 function textFromArgs(args: string[]): string {
