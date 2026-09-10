@@ -10,8 +10,8 @@ export interface QueryEmbeddingCacheEntry {
 
 export function resolveQueryEmbeddingTimeout(value: string | undefined): number {
   const configured = Number(value ?? DEFAULT_QUERY_EMBEDDING_TIMEOUT_MS);
-  if (!Number.isSafeInteger(configured) || configured <= 0) return DEFAULT_QUERY_EMBEDDING_TIMEOUT_MS;
-  return Math.min(configured, MAX_QUERY_EMBEDDING_TIMEOUT_MS);
+  if (!Number.isSafeInteger(configured) || configured <= 0 || configured > MAX_QUERY_EMBEDDING_TIMEOUT_MS) return DEFAULT_QUERY_EMBEDDING_TIMEOUT_MS;
+  return configured;
 }
 
 export function boundQueryEmbedding<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {

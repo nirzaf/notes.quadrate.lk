@@ -8,7 +8,7 @@ test('query embedding timeout configuration stays positive and bounded', () => {
   assert.equal(resolveQueryEmbeddingTimeout(undefined), DEFAULT_QUERY_EMBEDDING_TIMEOUT_MS);
   assert.equal(resolveQueryEmbeddingTimeout('not-a-number'), DEFAULT_QUERY_EMBEDDING_TIMEOUT_MS);
   assert.equal(resolveQueryEmbeddingTimeout('0'), DEFAULT_QUERY_EMBEDDING_TIMEOUT_MS);
-  assert.equal(resolveQueryEmbeddingTimeout(String(MAX_QUERY_EMBEDDING_TIMEOUT_MS + 1)), MAX_QUERY_EMBEDDING_TIMEOUT_MS);
+  assert.equal(resolveQueryEmbeddingTimeout(String(MAX_QUERY_EMBEDDING_TIMEOUT_MS + 1)), DEFAULT_QUERY_EMBEDDING_TIMEOUT_MS);
   assert.equal(resolveQueryEmbeddingTimeout('125'), 125);
 });
 
