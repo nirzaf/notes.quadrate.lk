@@ -180,6 +180,7 @@ export async function createNote(context: Context): Promise<Response> {
   if (input.notebookId) assertNotebookAccess(auth, input.notebookId);
   else assertUnfiledAccess(auth);
   const mapped = await createNoteMutation(auth.userId, input, crypto.randomUUID());
+  assertNoteAccess(auth, mapped.note.notebookId);
   const outcome = mapped.status === 'ok' ? 'created' : mapped.status === 'idempotent' ? 'idempotent' : 'deduplicated';
   const response = dataBody(context, mapped.note, outcome === 'created' ? 201 : 200);
   response.headers.set('x-qnotes-create-outcome', outcome);
