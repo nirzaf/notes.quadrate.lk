@@ -1,5 +1,5 @@
 begin;
-select plan(38);
+select plan(39);
 
 -- Stable create input, including a title that falls back to note-untitled in
 -- the API, is idempotent even when the retry supplies a fresh candidate ID.
@@ -145,6 +145,7 @@ insert into notesdb.search_documents (owner_id, note_id, source_type, source_id,
 values ((select id from auth.users where email = 'owner@qnotes.local'), '77777777-7777-4777-8777-777777777722', 'code_block', '77777777-7777-4777-8777-777777777723', 'filtered-code', 'Filtered Code', 'filtered-code-marker', 'filtered-code-doc-hash', 0, 'pending');
 select is((select count(*)::integer from public.qnotes_keyword_search((select id from auth.users where email = 'owner@qnotes.local'), 'filtered-code-marker', 10, '{"notebookIds":["77777777-7777-4777-8777-777777777721"],"tags":["ops"],"sourceTypes":["code_block"],"languages":["bash"],"updatedAfter":"2026-01-01T00:00:00Z"}'::jsonb, 0, 2)), 1, 'notebook tag source language and updated-after filters compose');
 select is((select count(*)::integer from public.qnotes_keyword_search((select id from auth.users where email = 'owner@qnotes.local'), 'filtered-code-marker', 10, '{"unfiled":true}'::jsonb, 0, 2)), 0, 'Unfiled filtering excludes filed notes');
+select is((select count(*)::integer from public.qnotes_keyword_search((select id from auth.users where email = 'owner@qnotes.local'), 'hy', 1000, '{}'::jsonb, 0, 1)), 60, 'short substring fallback remains bounded and searchable');
 
 -- Current v2 vectors participate; incompatible v1 state is cleared and does
 -- not participate in semantic retrieval.

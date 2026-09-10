@@ -66,12 +66,22 @@ as $$
       and (f.updated_after is null or n.updated_at > f.updated_after)
       and (not f.unfiled or n.notebook_id is null)
   ),
-  exact_candidates as (
-    select b.id, row_number() over (order by b.source_priority, b.id)::integer as channel_rank
+  exact_matches as (
+    select b.id, b.source_priority
     from base b cross join params p
-    where (b.source_type = 'note_metadata' and lower(b.note_slug) = p.normalized_query)
-       or lower(b.source_key) = p.normalized_query
-       or lower(coalesce(b.block_key, '')) = p.normalized_query
+    where b.source_type = 'note_metadata' and lower(b.note_slug) = p.normalized_query
+    union
+    select b.id, b.source_priority
+    from base b cross join params p
+    where lower(b.source_key) = p.normalized_query
+    union
+    select b.id, b.source_priority
+    from base b cross join params p
+    where lower(coalesce(b.block_key, '')) = p.normalized_query
+  ),
+  exact_candidates as (
+    select id, row_number() over (order by source_priority, id)::integer as channel_rank
+    from exact_matches
   ),
   title_candidates as (
     select b.id, row_number() over (order by b.source_priority, b.id)::integer as channel_rank
@@ -84,21 +94,31 @@ as $$
     select b.id, row_number() over (order by ts_rank_cd(b.search_vector, p.ts_query) desc, b.source_priority, b.id)::integer as channel_rank
     from base b cross join params p where b.search_vector @@ p.ts_query
   ),
+  short_trigram_matches as (
+    select b.id, b.source_priority
+    from base b cross join params p
+    where length(p.normalized_query) < 3
+      and (
+        position(p.normalized_query in lower(coalesce(b.source_title, ''))) > 0
+        or position(p.normalized_query in lower(coalesce(b.source_key, ''))) > 0
+        or position(p.normalized_query in lower(coalesce(b.content, ''))) > 0
+      )
+    order by b.source_priority, b.id
+    limit (select least(1000, greatest(50, result_limit + least(result_offset, 1000))) from params)
+  ),
   trigram_candidates as (
     select b.id, row_number() over (order by greatest(similarity(lower(b.source_title), p.normalized_query), similarity(lower(b.source_key), p.normalized_query), similarity(lower(b.content), p.normalized_query)) desc, b.source_priority, b.id)::integer as channel_rank
     from base b cross join params p
-    where lower(b.source_title) % p.normalized_query or lower(b.source_key) % p.normalized_query
+    where length(p.normalized_query) >= 3
+      and (lower(b.source_title) % p.normalized_query or lower(b.source_key) % p.normalized_query
        or lower(b.content) % p.normalized_query
-       or (length(p.normalized_query) < 3 and (
-         position(p.normalized_query in lower(coalesce(b.source_title, ''))) > 0
-         or position(p.normalized_query in lower(coalesce(b.source_key, ''))) > 0
-         or position(p.normalized_query in lower(coalesce(b.content, ''))) > 0
-       ))
-       or (length(p.normalized_query) >= 3 and (
-         lower(b.source_title) like '%' || p.like_query || '%' escape E'\\'
+       or lower(b.source_title) like '%' || p.like_query || '%' escape E'\\'
          or lower(b.source_key) like '%' || p.like_query || '%' escape E'\\'
          or lower(b.content) like '%' || p.like_query || '%' escape E'\\'
-       ))
+      )
+    union all
+    select id, row_number() over (order by source_priority, id)::integer as channel_rank
+    from short_trigram_matches
   ),
   keyword_scores as (
     select id, sum(weight / (60.0 + channel_rank))::double precision as score
