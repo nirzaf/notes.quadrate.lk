@@ -14,3 +14,8 @@ test-results/
 .tmp/
 tests/e2e/.auth/
 __pycache__/
+*.pyc
+.wrangler/
+.vscode/
+.idea/
+coverage/
