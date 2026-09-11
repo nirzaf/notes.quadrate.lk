@@ -19,6 +19,10 @@ behavioral evidence. A green build is not a production security claim.
 Run these gates against the final candidate and record the exact commit in the
 release identity above. A skipped gate stays visible as unavailable.
 
+Set `SUPABASE_DB_CONTAINER` to the local Docker database container before
+running the query-plan command. Do not commit a machine-specific container
+name or hosted project reference in this report.
+
 | Gate | Command or workflow job | Result | Evidence |
 | --- | --- | --- | --- |
 | Type contracts | `pnpm run typecheck` / `core` | `TBD` | Workspace TypeScript checks |
@@ -26,7 +30,7 @@ release identity above. A skipped gate stays visible as unavailable.
 | Edge behavior and parity | `pnpm run test:edge`, `pnpm run verify:edge-shared` / `core` | `TBD` | Deno Edge tests and generated-source comparison |
 | Build | `pnpm run build` / `core` | `TBD` | Workspace build and parity |
 | Migrated SQL and RLS | `pnpm run verify:local` / `integration` | `TBD` | Self-hosted Docker database; no reset |
-| Search quality and plans | `pnpm run verify:search -- --seed`, `docker exec -i supabase_db_notes.quadrate.lk psql -v ON_ERROR_STOP=1 -U postgres -d postgres -f - < scripts/search-query-plans.sql` / `search regression` | `TBD` | Seeded local regression, relevance floors, bounded latency, and checked-in query plans |
+| Search quality and plans | `pnpm run verify:search -- --seed`, `docker exec -i "$SUPABASE_DB_CONTAINER" psql -v ON_ERROR_STOP=1 -U postgres -d postgres -f - < scripts/search-query-plans.sql` / `search regression` | `TBD` | Seeded local regression, relevance floors, bounded latency, and checked-in query plans |
 | Browser release smoke | `pnpm run test:e2e:smoke` / `browser smoke` | `TBD` | `tests/e2e/release-smoke.spec.ts` only: release navigation, Vault shell, public rendering, login accessibility, and attachment panel |
 | Focused browser security | `pnpm exec playwright test tests/e2e/accessibility.spec.ts tests/e2e/auth.spec.ts tests/e2e/attachments.spec.ts tests/e2e/notebooks.spec.ts tests/e2e/notes.spec.ts tests/e2e/oauth-replay.spec.ts tests/e2e/public-sharing.spec.ts tests/e2e/search.spec.ts tests/e2e/tokens-cli.spec.ts tests/e2e/vault-browser-safety.spec.ts tests/e2e/vault.spec.ts --project=chromium` (manual; no CI job) | `unavailable` | Focused accessibility, auth, notebook, note editing, search, token/share, attachment privacy, OAuth replay, and Vault secret-safety coverage |
 | Browser recovery round-trip | `pnpm exec playwright test tests/e2e/workspace-recovery.spec.ts --project=chromium` (manual; no CI job) | `unavailable` | Dry-run safety, conflicts, private attachments, token/share exclusion, and retry idempotency |

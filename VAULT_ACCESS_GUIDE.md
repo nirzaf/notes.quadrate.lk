@@ -5,6 +5,10 @@ separate from the Notes plane: Notes stores Markdown and searchable context;
 Vault stores encrypted secret values in Supabase Vault and exposes only
 owner- and grant-scoped metadata, reveal, and mutation operations.
 
+The feature is optional and deployment-specific. The examples use a local
+function root or `<project-ref>` placeholder; replace those values with the
+URLs and Supabase project reference for your own installation.
+
 ## Token and data boundaries
 
 - `qnt_...` is the existing personal Notes token. It cannot authenticate to
@@ -180,8 +184,8 @@ grants at different scopes, for example:
     "revokedAt": null,
     "createdAt": "2026-09-08T00:00:00.000Z",
     "grants": [
-      { "id": "grant-1", "projectId": "project-id", "projectName": "Pearl Blanc", "environmentId": null, "secretId": null, "action": "metadata:read", "createdAt": "2026-09-08T00:00:00.000Z" },
-      { "id": "grant-2", "projectId": "project-id", "projectName": "Pearl Blanc", "environmentId": "environment-id", "environmentName": "production", "secretId": "secret-id", "secretName": "CLOUDFLARE_API_TOKEN", "action": "secret:reveal", "createdAt": "2026-09-08T00:00:00.000Z" }
+      { "id": "grant-1", "projectId": "project-id", "projectName": "Example project", "environmentId": null, "secretId": null, "action": "metadata:read", "createdAt": "2026-01-01T00:00:00.000Z" },
+      { "id": "grant-2", "projectId": "project-id", "projectName": "Example project", "environmentId": "environment-id", "environmentName": "production", "secretId": "secret-id", "secretName": "DEPLOYMENT_API_TOKEN", "action": "secret:reveal", "createdAt": "2026-01-01T00:00:00.000Z" }
     ]
   }]
 }
@@ -217,7 +221,7 @@ Production deployment runs a separate read-only readiness gate after the Vault
 migrations and before dependent Edge Functions:
 
 ```bash
-SUPABASE_PROJECT_ID=ciyoandzjezgqxjpcrin pnpm run verify:vault
+SUPABASE_PROJECT_ID=<project-ref> pnpm run verify:vault
 ```
 
 The gate uses the repository-pinned Supabase CLI. It safely captures the

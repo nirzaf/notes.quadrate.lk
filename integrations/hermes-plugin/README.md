@@ -5,6 +5,9 @@ and workflow guidance; it does **not** replace the QNotes MCP server or expose a
 second Notes/Vault API. QNotes remains responsible for authentication,
 ownership, scopes, versions, grants, and mutation safety.
 
+The plugin is optional. It can be tested directly from this checkout, or
+installed from a reviewed remote commit after the repository is published.
+
 ## What it provides
 
 - `/qnotes` and `/qnotes-help` for static setup guidance.
@@ -117,7 +120,7 @@ After this plugin exists in an authorized remote commit, a pinned subdirectory
 install can use:
 
 ```bash
-hermes plugins install nirzaf/qnotes/integrations/hermes-plugin \
+hermes plugins install <owner>/<repository>/integrations/hermes-plugin \
   --ref <reviewed-full-commit-sha> --no-enable
 ```
 

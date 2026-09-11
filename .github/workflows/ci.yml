@@ -394,9 +394,9 @@ jobs:
       - name: Link and preview production migrations
         run: |
           pnpm exec supabase link --project-ref "$SUPABASE_PROJECT_ID" --yes
-          pnpm exec supabase db push --linked --dry-run
+          pnpm exec supabase db push --linked --include-all --dry-run
       - name: Apply production migrations
-        run: pnpm exec supabase db push --linked --yes
+        run: pnpm exec supabase db push --linked --include-all --yes
       - name: Verify production Vault readiness
         run: pnpm run verify:vault
       - name: Deploy Supabase Edge Functions

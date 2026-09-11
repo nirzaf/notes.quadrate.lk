@@ -28,6 +28,14 @@ Use short imperative Conventional Commit-style subjects such as `feat: ...`, `fi
 
 Never commit tokens, service-role keys, production Vite values, or ignored `.env` files. Local E2E setup is restricted to loopback Supabase and dedicated test users. Do not run database resets against production; follow `deployment.md` for linked migrations and releases. Run the full-history scan in `SECURITY.md` before visibility changes. Workspace backup imports require a dry run followed by explicit `confirm=true`, reject conflicts without overwriting existing data, use stable retry identities, and keep attachments private.
 
+## Documentation
+
+Tracked Markdown is public documentation. Use local examples and placeholders
+for project references, domains, account names, and credentials. Update the
+root README and the narrowest linked guide when behavior, routes, profiles,
+limits, or deployment configuration changes. Keep generated Edge copies and
+their documentation aligned with the source packages.
+
 Agent Vault is a separate `/vault/*` plane. Keep qnt/qns/Notes behavior and the
 hosted HTTP MCP surface unchanged. Vault plaintext must never enter Notes
 search, embeddings, logs, browser persistence, public shares, or workspace
