@@ -13,3 +13,4 @@ playwright-report/
 test-results/
 .tmp/
 tests/e2e/.auth/
+__pycache__/
