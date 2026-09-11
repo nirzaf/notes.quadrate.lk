@@ -11,14 +11,18 @@ Vite root and API health endpoint before running the smoke command with
 `QNOTES_E2E_EXTERNAL_API=1`, and stops both processes before stopping Supabase.
 Playwright reuses the workflow-managed Vite process and uses the focused release
 smoke config with one worker and explicit deadlines. Search evaluation remains
-path-gated after the job starts. The complete Playwright E2E
-suite remains a local/manual command (`pnpm run test:e2e`) and is not run by
-CI/CD. The login smoke checks only an explicit structural axe rule allowlist;
-full axe coverage remains in the complete local/manual suite and Issue #22. A
-push to `master` runs the release gate only when the browser smoke and all other
-enabled checks pass, then applies production migrations, runs the read-only
-Vault readiness gate, deploys the production Supabase functions, publishes the
-frontend, and deploys the Cloudflare Pages site.
+path-gated after the job starts. The complete Playwright E2E suite remains a
+local/manual command (`pnpm run test:e2e`) and is not run by CI/CD. The browser
+smoke uses the checked-in structural accessibility allow-list; the complete
+local/manual suite provides the broader accessibility coverage. A push to
+`master` runs the release gate only when the browser smoke and all other enabled
+checks pass, then the optional deploy job applies migrations, runs the read-only
+Vault readiness gate, deploys the Edge Functions, and publishes the frontend.
+
+The workflow has four verification jobs (`core`, `integration`,
+`search_regression`, and `browser_smoke`), followed by `release_gate` and the
+environment-protected `deploy` job. Search regression is skipped when a push or
+pull request does not touch a search-sensitive path.
 
 ## Production environment
 
@@ -34,6 +38,12 @@ the repository or a workflow file. Configure these environment secrets:
 The workflow also accepts the compatibility fallback `CLOUDFLARE_API_KEY` and
 `CLOUDFLARE_EMAIL`, but a scoped Cloudflare API token is preferred. GitHub
 automatically masks configured secret values in Actions logs.
+
+The checked-in deploy job contains the maintainer's Supabase project, frontend
+origin, and Pages project values. A fork or self-hosted deployment must replace
+those values in `.github/workflows/ci.yml` and set its own protected
+environment URL before enabling production deployment. Pull requests do not
+receive production secrets.
 
 Do not add `QNOTES_VAULT_TOKEN_PEPPER` to this environment. The deploy job
 safely captures the `supabase secrets list` JSON and checks that server-only
@@ -86,5 +96,5 @@ The production-only readiness check must use an authenticated linked project;
 it is not a local Supabase startup/reset step:
 
 ```bash
-SUPABASE_PROJECT_ID=ciyoandzjezgqxjpcrin pnpm run verify:vault
+SUPABASE_PROJECT_ID=<project-ref> pnpm run verify:vault
 ```

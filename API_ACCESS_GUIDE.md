@@ -1,13 +1,17 @@
 # QNotes API, CLI, and MCP Adapter Guide
 
-This guide describes the current QNotes REST API, the `qnotes` CLI, the `@qnotes/api-client` package, and the native `@qnotes/mcp-server` package.
+This guide describes the current QNotes REST API, the `qnotes` CLI, the
+`@qnotes/api-client` package, and the native `@qnotes/mcp-server` package. It
+applies to local and self-hosted deployments; a hosted QNotes service is
+optional.
 
 ## API base URL and authentication
 
-The web application is at [notes.quadrate.lk](https://notes.quadrate.lk/). The production API is the `qnotes-api` Supabase Edge Function:
+Choose the web origin and API function root for the deployment you are using:
 
 ```text
-https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-api
+Web origin:  https://your-qnotes.example
+API root:    https://<project-ref>.supabase.co/functions/v1/qnotes-api
 ```
 
 For local development, the function root is:
@@ -25,12 +29,12 @@ All `/api` routes except `/api/health` require an `Authorization: Bearer <token>
 
 The `/api/tokens` routes require a Supabase user-session JWT specifically. A personal token cannot create, list, or revoke personal tokens.
 
-Public sharing is deliberately separate from note mutation scopes. The owner share-management routes below accept either a Supabase user-session JWT or a caller-owned `qnt_...` personal token with `shares:write`; an older personal token without that scope receives `403 INSUFFICIENT_SCOPE`. The unauthenticated resolver is `POST /public/share/resolve`, not an `/api` route, and accepts only a `qns_...` share secret in a small JSON body. The browser URL is `https://notes.quadrate.lk/share#qns_...`: the fragment is read locally and is not sent in the HTTP request URL.
+Public sharing is deliberately separate from note mutation scopes. The owner share-management routes below accept either a Supabase user-session JWT or a caller-owned `qnt_...` personal token with `shares:write`; an older personal token without that scope receives `403 INSUFFICIENT_SCOPE`. The unauthenticated resolver is `POST /public/share/resolve`, not an `/api` route, and accepts only a `qns_...` share secret in a small JSON body. The browser URL is `<web-origin>/share#qns_...`: the fragment is read locally and is not sent in the HTTP request URL.
 
 Set credentials in a shell without putting the token in a URL:
 
 ```bash
-export QNOTES_URL='https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-api'
+export QNOTES_URL='https://<project-ref>.supabase.co/functions/v1/qnotes-api'
 export QNOTES_TOKEN='qnt_paste_the_token_here'
 ```
 
@@ -40,13 +44,12 @@ Keep personal tokens in a process environment, password manager, or secret manag
 
 Create a token in the web app:
 
-1. Sign in to [QNotes](https://notes.quadrate.lk/).
-2. Open [Integrations](https://notes.quadrate.lk/settings/integrations) (the legacy `/settings/tokens` route remains available).
+1. Open your deployment's web origin and sign in.
+2. Open **Integrations** (the legacy `/settings/tokens` route remains available).
 3. Choose the read-only profile unless the client must create public links or write notes, then select the smallest profile and a real expiry. The public-sharing profile requires `notes:read`, `search:read`, and `shares:write`.
-4. Select **Selected notebooks** and choose the notebooks the token may use. Enable **Unfiled notes** separately when needed. Choose **All notebooks** only when account-wide access is intentional.
-5. Create the token and copy the complete `qnt_...` value immediately.
+4. Create the token and copy the complete `qnt_...` value immediately.
 
-The full token is returned only once and is held only in the Integrations page’s transient state; the settings page shows only its prefix afterward. The guided form offers 7-day, 30-day, 90-day, 1-year, and no-expiry choices and sends the corresponding ISO `expiresAt` (or `null`) to the existing token API. Tokens remain revocable. Every token has an explicit access mode. Existing tokens are recorded as account-wide during the forward migration so an empty notebook-grant list never changes an older token into a deny-all token.
+The full token is returned only once and is held only in the Integrations page’s transient state; the settings page shows only its prefix afterward. The guided form offers 7-day, 30-day, 90-day, 1-year, and no-expiry choices and sends the corresponding ISO `expiresAt` (or `null`) to the existing token API. Tokens remain revocable.
 
 ### Scopes
 
@@ -59,7 +62,7 @@ The full token is returned only once and is held only in the Integrations page�
 | `attachments:read` | List attachments and create 60-second download URLs |
 | `attachments:write` | Request signed uploads, finalize uploads, and delete attachments |
 
-Workspace ZIP export requires both `notes:read` and `attachments:read`. A notebook-scoped token receives only its granted notebooks and permitted unfiled notes. Workspace import requires an account-wide token because an archive can create new notebook identities; a scoped token fails closed.
+Workspace ZIP export requires both `notes:read` and `attachments:read`.
 
 For a read-only text-search assistant, start with:
 
@@ -80,30 +83,30 @@ curl -fsS -X POST \
   -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
   -H 'Content-Type: application/json' \
   "$QNOTES_URL/api/tokens" \
-  --data '{"name":"Backup script","scopes":["notes:read","attachments:read"],"access":{"mode":"notebooks","notebookIds":["NOTEBOOK_UUID"],"allowUnfiled":false},"expiresAt":null}'
+  --data '{"name":"Backup script","scopes":["notes:read","attachments:read"],"expiresAt":null}'
 ```
 
-Use `GET /api/tokens` to list token metadata and `DELETE /api/tokens/:tokenId` to revoke a token. Listing returns prefixes, scopes, and the access mode plus notebook IDs, never full token values. The account-wide request shape is `"access":{"mode":"account","notebookIds":[],"allowUnfiled":true}`. Older clients that omit `access` remain account-wide for compatibility and should be reissued with an explicit access object.
+Use `GET /api/tokens` to list token metadata and `DELETE /api/tokens/:tokenId` to revoke a token. Listing returns prefixes and metadata, never full token values.
 
 ## Public note sharing
 
-Create a public read-only link from an authenticated owner session or a caller-owned personal token with `shares:write`. The raw `qns_...` value is generated from 32 random bytes, returned only by this response, and never stored. The database stores a short prefix plus a peppered, domain-separated HMAC-SHA-256 hash and an immutable snapshot of the reviewed note version. `expectedVersion` must match the saved note version, `confirm` must be `true`, and `expiresAt` must be a future ISO timestamp no more than one year ahead. A changed note returns a version conflict; sensitive-classified notes cannot be published. A `shares:write` token can manage only notes belonging to its own token owner.
+Create a public read-only link from an authenticated owner session or a caller-owned personal token with `shares:write`. The raw `qns_...` value is generated from 32 random bytes, returned only by this response, and never stored. The database stores a short prefix plus a peppered, domain-separated HMAC-SHA-256 hash. `expiresAt` may be `null` or an ISO timestamp no more than one year in the future. A `shares:write` token can manage only notes belonging to its own token owner.
 
 ```bash
 curl -fsS -X POST \
   -H "Authorization: Bearer $QNOTES_TOKEN" \
   -H 'Content-Type: application/json' \
   "$QNOTES_URL/api/notes/NOTE_UUID/share" \
-  --data '{"expectedVersion":7,"expiresAt":"2026-09-13T12:00:00.000Z","confirm":true}'
+  --data '{"expiresAt":"2026-09-13T12:00:00.000Z"}'
 ```
 
 The response contains `{ data: { token, metadata } }`. Build the user-facing URL by placing the token after `#`:
 
 ```text
-https://notes.quadrate.lk/share#qns_<secret>
+https://your-qnotes.example/share#qns_<secret>
 ```
 
-`GET /api/notes/:noteId/share` returns only safe metadata for the current active snapshot: ID, note ID, prefix, expiry, revocation time, and creation time. `POST` explicitly publishes the exact reviewed version and rotates the previous active snapshot. `DELETE /api/notes/:noteId/share` revokes the active snapshot. Creating or rotating a share does not publish a draft; flush the note autosave first when using the web app.
+`GET /api/notes/:noteId/share` returns only safe metadata for the current active share: ID, note ID, prefix, expiry, revocation time, and creation time. `POST` rotates the previous active share and returns a new raw token. `DELETE /api/notes/:noteId/share` revokes the active share. Creating or rotating a share does not publish a draft; flush the note autosave first when using the web app.
 
 Resolve a link without an `Authorization` header:
 
@@ -114,7 +117,7 @@ curl -fsS -X POST \
   --data '{"token":"qns_<secret>"}'
 ```
 
-A successful resolver response contains only `title`, `contentMarkdown`, and `updatedAt` when no read-range controls are supplied. Agent and other large-content callers can request a bounded page with `offset` (a UTF-8 byte offset), an inclusive `lineStart`/`lineEnd` range, and `maxBytes`; the response adds `contentBytes`, `totalBytes`, `offset`, `nextOffset`, `truncated`, `contentComplete`, `sourceHash`, and an opaque `continuation` when another page exists. Public resolver responses are `no-store`, and the public page sends no attachment requests.
+A successful resolver response contains only `title`, `contentMarkdown`, and `updatedAt`. Unknown, expired, revoked, deleted, malformed, and wrong-format tokens return the same `404 PUBLIC_SHARE_NOT_FOUND` response. Public resolver responses are `no-store`, and the public page sends no attachment requests.
 
 AI agents and other HTTP clients can fetch the same shared note with the unauthenticated JSON resolver. The token must be supplied in the POST body; it must not appear in a path, query string, referrer, or log:
 
@@ -127,7 +130,7 @@ curl -fsS \
   --data '{"token":"qns_<secret>"}'
 ```
 
-The resolver returns `{ data: { title, contentMarkdown, updatedAt } }` for a complete read, or the same envelope with page metadata for a bounded read. It does not require a private JWT and sends `Cache-Control: no-store`, `X-Robots-Tag: noindex`, `Referrer-Policy: no-referrer`, and a restrictive content security policy. Invalid, expired, revoked, deleted, malformed, and wrong-format tokens return the same generic `404 PUBLIC_SHARE_NOT_FOUND` response. Requests using another method, including a query-token request, are not supported. The web share dialog explains the POST/MCP workflow without constructing another secret-bearing URL.
+The resolver returns `{ data: { title, contentMarkdown, updatedAt } }`, does not require a private JWT, and sends `Cache-Control: no-store`, `X-Robots-Tag: noindex`, `Referrer-Policy: no-referrer`, and a restrictive content security policy. Invalid, expired, revoked, deleted, malformed, and wrong-format tokens return the same generic `404 PUBLIC_SHARE_NOT_FOUND` response. Requests using another method, including a query-token request, are not supported. The web share dialog explains the POST/MCP workflow without constructing another secret-bearing URL.
 
 See [AI_AGENTS_SHARED_LINKS.md](AI_AGENTS_SHARED_LINKS.md) for an agent-oriented explanation of browser share URLs, POST JSON retrieval, Markdown content handling, and safe token handling.
 
@@ -181,15 +184,6 @@ The main validation limits are:
 | Attachment upload | Default 20 MiB, configurable with `QNOTES_MAX_ATTACHMENT_BYTES` |
 | Workspace ZIP | Default 50 MiB, configurable with `QNOTES_EXPORT_MAX_BYTES`; preflight rejects estimates above the limit or more than 5,000 archive entries |
 
-Every API request body is bounded before JSON, form, or archive parsing. The
-general API limit is 8 MiB, public-share resolution is 1 KiB, Vault requests
-are 278,528 bytes (256 KiB plus request overhead), and workspace imports use the configured ZIP limit. Oversized
-bodies return `413 REQUEST_TOO_LARGE`. Costly public-share, OAuth, semantic
-embedding, workspace export/import, and attachment-finalization operations
-use shared one-minute budgets; rejected requests return `429 RATE_LIMITED`
-with `Retry-After`, while an unavailable shared limiter fails closed with
-`503 RESOURCE_LIMIT_UNAVAILABLE`.
-
 ## REST API with cURL
 
 ### Health, notebooks, and notes
@@ -242,13 +236,11 @@ curl -fsS \
   "$QNOTES_URL/api/notes/your-note-slug"
 ```
 
-Note summaries contain `id`, `slug`, `title`, a plain-text `excerpt`, `tags`, `notebookId`, version, timestamps, and `deletedAt`. Full notes additionally contain `contentMarkdown` and derived `contentPlain`. `GET /api/notes/:noteId` accepts the same `offset`, inclusive `lineStart`/`lineEnd`, `maxBytes`, and opaque `continuation` controls for exact Markdown paging. A paged response preserves the canonical Markdown in `contentMarkdown` and leaves `contentPlain` empty so the serialized page remains bounded; derive plain text after reconstructing the complete Markdown body. Continuations bind the note, version, source hash, caller, and notebook policy and must be requested again after an edit or access-policy change.
+Note summaries contain `id`, `slug`, `title`, a plain-text `excerpt`, `tags`, `notebookId`, version, timestamps, and `deletedAt`. Full notes additionally contain `contentMarkdown` and derived `contentPlain`.
 
 ### Search
 
-The default API mode is `auto`. It uses keyword retrieval for UUIDs, slugs, quoted phrases, and short code-like identifiers, and hybrid retrieval for natural-language questions. Explicit `keyword`, `semantic`, and `hybrid` modes remain available. Keyword search covers note metadata, note chunks, copyable blocks, and extracted attachment text. Exact normalized source identifiers use owner-scoped btree indexes, while full-text and fuzzy channels use their matching GIN indexes; wildcard characters in fuzzy queries are treated literally. Search results are returned as document items with at most two documents per note; snippets are centered on the matching passage when possible. Semantic or hybrid search uses asynchronous 384-dimensional embeddings and may not include newly written content until the worker processes its queue.
-
-Semantic indexing uses the `gte-small:v2` provider generation with QNotes embedding-input contract `v3`. The canonical input includes bounded title and heading prefixes plus body content. QNotes enforces a conservative 496-byte UTF-8 ceiling and reserves 16 provider special-token positions within the documented 512-token `gte-small` limit; oversized note, code, and copyable-body content is split deterministically on nonblank lines and then UTF-8 boundaries so tail content remains indexed. Full named code and copyable blocks remain available through the block endpoints. The Supabase Edge Runtime exposes the embedding `Session.run` call but does not expose a matching tokenizer, so this byte ceiling is a verified safety boundary rather than an exact provider token count. Do not widen it or infer multilingual quality from it: [Supabase documents `gte-small` as English-only with a 512-token maximum](https://supabase.com/docs/guides/functions/ai-models), and [the model card lists the same sequence length](https://huggingface.co/thenlper/gte-small). A service-only requeue operation processes stale input generations in bounded batches; no embedding rebuild runs as part of note writes or migrations.
+The default API mode is `auto`. It uses keyword retrieval for UUIDs, slugs, quoted phrases, and short code-like identifiers, and hybrid retrieval for natural-language questions. Explicit `keyword`, `semantic`, and `hybrid` modes remain available. Keyword search covers note metadata, note chunks, copyable blocks, and extracted attachment text. Search results are returned as document items with at most two documents per note; snippets are centered on the matching passage when possible. Semantic or hybrid search uses asynchronous 384-dimensional embeddings and may not include newly written content until the worker processes its queue.
 
 The existing GET endpoint remains available:
 
@@ -285,8 +277,7 @@ curl -fsS -X POST \
   }'
 ```
 
-The structured success response is `{ data: { queryId, modeUsed, degraded, degradedReason?, timing, index, items, nextCursor } }`. Each item includes `documentId`, `noteId`, `noteVersion`, a stable `qnotes://notes/{noteId}/documents/{documentId}` URI, title, heading path, source type/language, snippet, tags, notebook, updated time, match reasons, and normalized/raw scores. `timing` separates embedding, retrieval, metadata, freshness, serialization, and total milliseconds where available. `index` reports the embedding model, pending/failed document counts, oldest pending age, and freshness as `fresh`, `stale`, or `unknown`; unknown means the diagnostic freshness lookup failed and does not mean that retrieval returned no notes. `nextCursor` is opaque and bound to the principal policy, query, resolved mode, embedding mode, filters, per-note cap, score threshold, and ranking version; pass it unchanged in the next POST body. Candidate retrieval is bounded from page size and per-note diversity and capped at 1,000 rows, while metadata hydration is limited to the returned page. The server consumes only returned page rows, so the lookahead row is returned on the next page. `minimumRelativeScore` is a page-relative ranking threshold and is not calibrated confidence. `minimumConfidence` remains accepted as a deprecated request alias. Explicit semantic or hybrid retrieval falls back to keyword results with `degraded: true` when embeddings or semantic retrieval are unavailable; degraded responses intentionally return `nextCursor: null` so a later page cannot silently change ranking mode.
-The structured success response is `{ data: { queryId, modeUsed, degraded, degradedReason?, timing, index, items, nextCursor } }`. Each item includes `documentId`, `noteId`, `noteVersion`, a stable `qnotes://notes/{noteId}/documents/{documentId}` URI, title, heading path, source type/language, snippet, tags, notebook, updated time, match reasons, and normalized/raw scores. `timing` separates embedding, retrieval, metadata, freshness, serialization, and total milliseconds where available. `index` reports the embedding model, pending/failed document counts, oldest pending age, and freshness as `fresh`, `stale`, or `unknown`; unknown means the diagnostic freshness lookup failed and does not mean that retrieval returned no notes. `nextCursor` is opaque and bound to the principal policy, query, resolved mode, embedding mode, filters, per-note cap, score threshold, and ranking version; pass it unchanged in the next POST body. Candidate retrieval is bounded from page size and per-note diversity and capped at 1,000 rows, while metadata hydration is limited to the returned page. The server consumes only returned page rows, so the lookahead row is returned on the next page. `minimumRelativeScore` is a page-relative ranking threshold and is not calibrated confidence. `minimumConfidence` remains accepted as a deprecated request alias. Explicit semantic or hybrid retrieval falls back to keyword results with `degraded: true` when embeddings or semantic retrieval are unavailable; degraded responses intentionally return `nextCursor: null` so a later page cannot silently change ranking mode. Query embeddings are bounded by `QNOTES_QUERY_EMBEDDING_TIMEOUT_MS` (default 500 ms, maximum 5 seconds); late provider work is discarded and at most eight query embeddings remain in flight per Edge Function instance. Tune the deadline from local/staging measurements rather than treating the default as a latency guarantee.
+The structured success response is `{ data: { queryId, modeUsed, degraded, degradedReason?, timing, index, items, nextCursor } }`. Each item includes `documentId`, `noteId`, `noteVersion`, a stable `qnotes://notes/{noteId}/documents/{documentId}` URI, title, heading path, source type/language, snippet, tags, notebook, updated time, match reasons, and normalized/raw scores. `timing` separates embedding, retrieval, metadata, freshness, serialization, and total milliseconds where available. `index` reports the embedding model, pending/failed document counts, oldest pending age, and freshness as `fresh`, `stale`, or `unknown`; unknown means the diagnostic freshness lookup failed and does not mean that retrieval returned no notes. `nextCursor` is opaque and bound to the query, resolved mode, filters, per-note cap, and score threshold; pass it unchanged in the next POST body. The server consumes only returned page rows, so the lookahead row is returned on the next page. `minimumRelativeScore` is a page-relative ranking threshold and is not calibrated confidence. `minimumConfidence` remains accepted as a deprecated request alias. Explicit semantic or hybrid retrieval falls back to keyword results with `degraded: true` when embeddings or semantic retrieval are unavailable; degraded responses intentionally return `nextCursor: null` so a later page cannot silently change ranking mode.
 
 Search pages default to 20 items and accept at most 500 items. When `nextCursor` is non-null, request the next page by passing that opaque value unchanged:
 
@@ -313,88 +304,10 @@ Read one exact document with bounded neighboring context:
 curl -fsS --get \
   -H "Authorization: Bearer ***" \
   "$QNOTES_URL/api/search/documents/DOCUMENT_UUID/context" \
-  --data 'before=1' --data 'after=1' --data 'maxTokens=1800' --data 'maxBytes=65536'
+  --data 'before=1' --data 'after=1' --data 'maxTokens=1800'
 ```
 
-The context response contains `noteId`, `noteVersion`, `documentId`, stable URI, title, heading path, bounded `content`, `previous` and `next` neighboring chunks, `updatedAt`, `sourceType`, `sourceId`, `sourceKey`, `sourceTitle`, and attachment `pageNumber` when applicable. It also includes `contentBytes`, `totalBytes`, `offset`, `nextOffset`, `truncated`, `contentComplete`, `neighborsTruncated`, an approximate-token `tokenBudget`, the center `sourceHash`, and additive `previousSources`/`nextSources` entries with independent document IDs, source keys, hashes, versions, and attachment/page provenance. The legacy `previous` and `next` string arrays remain as empty compatibility fields; use the canonical provenance-bearing `previousSources` and `nextSources` entries for neighboring content. When `truncated` is true for the center content, follow `continuation.cursor` by passing it as `continuation` on the next context request. The cursor is bound to the document, note version, source hash, token principal, and notebook-policy revision and must be requested again after an edit or access-grant change. The route enforces ownership and notebook grants, excludes deleted notes, and keeps neighbors within the same note source; attachment neighbors are restricted to the same attachment. If the owning note changes during the read, the route returns a retriable `NOTE_VERSION_CONFLICT` instead of claiming that the context is internally consistent. `maxBytes` measures the complete serialized JSON response, including the `{ data: ... }` envelope, and an approximate token budget remains enforced separately.
-
-### Capability discovery and incremental editing
-
-Agents can discover the effective token scopes, supported operations, and
-response limits before selecting a workflow:
-
-```bash
-curl -fsS \
-  -H "Authorization: Bearer $QNOTES_TOKEN" \
-  "$QNOTES_URL/api/capabilities"
-```
-
-`GET /api/capabilities` returns `schemaVersion: 1`, the effective `read`,
-`share`, or `write` profile, the caller's scopes, operation names, and the
-server limits for search results, context tokens, change pages, outline
-sections, and section replacement bytes. A Supabase user JWT reports the
-scopes available to that authenticated user; a personal token reports its
-own scopes.
-
-Use an outline before editing a note. It returns deterministic section IDs,
-1-based line ranges, heading paths, section content hashes, child counts, and
-block identifiers/hashes. It never returns section or block bodies, and the
-outline is capped at 500 sections:
-
-```bash
-curl -fsS \
-  -H "Authorization: Bearer $QNOTES_TOKEN" \
-  "$QNOTES_URL/api/notes/NOTE_UUID/outline"
-```
-
-Patch one section by sending the section ID, the outline's `noteVersion`, the
-section's `contentHash`, replacement Markdown, and stable device and mutation
-IDs:
-
-Before writing, use the same request shape with
-`POST /api/notes/NOTE_UUID/section/preview`. The preview checks the version,
-section hash, anchor, and replacement parsing without creating a mutation
-receipt or changing the note. It returns the current version and hash,
-replacement byte count, candidate Markdown hash, and `wouldChange` flag. The
-write remains a separate explicit `PATCH` request.
-
-```bash
-curl -fsS -X PATCH \
-  -H "Authorization: Bearer $QNOTES_TOKEN" \
-  -H 'Content-Type: application/json' \
-  "$QNOTES_URL/api/notes/NOTE_UUID/section" \
-  --data '{
-    "sectionId": "section-REPLACE_WITH_OUTLINE_ID",
-    "expectedVersion": 7,
-    "expectedContentHash": "REPLACE_WITH_SECTION_SHA256",
-    "replacementMarkdown": "Updated body\n- Keep the unrelated sections",
-    "deviceId": "11111111-1111-4111-8111-111111111111",
-    "mutationId": "22222222-2222-4222-8222-222222222222"
-  }'
-```
-
-The section patch is an exact optimistic mutation. The API rejects a stale
-note version, missing section, ambiguous section ID, or changed section hash
-with `409` and writes nothing. The existing note transaction updates the
-authoritative Markdown, parsed blocks, and search documents together. The
-response contains the updated note and
-`x-qnotes-mutation-outcome: applied | idempotent`.
-
-If the patch response is lost, retry the same request with the original
-`deviceId` and `mutationId`. A separate status lookup returns only mutation
-metadata, so it is safe to use for recovery:
-
-```bash
-curl -fsS \
-  -H "Authorization: Bearer $QNOTES_TOKEN" \
-  "$QNOTES_URL/api/mutations/22222222-2222-4222-8222-222222222222"
-```
-
-`GET /api/sync` remains the bounded, owner- and notebook-authorized change
-enumeration surface. Use its opaque cursor to discover changed note IDs and
-versions, then outline and patch the exact note. Delete and public-share
-operations still require their existing explicit confirmation and policy
-boundaries.
+The context response contains `noteId`, `noteVersion`, `documentId`, stable URI, title, heading path, bounded `content`, `previous` and `next` neighboring chunks, `updatedAt`, `sourceType`, `sourceId`, `sourceKey`, `sourceTitle`, and attachment `pageNumber` when applicable. It also includes an explicit `truncated` flag, an approximate-token `tokenBudget`, the center `sourceHash`, and additive `previousSources`/`nextSources` entries with independent document IDs, source keys, hashes, versions, and attachment/page provenance. When `truncated` is true for the center content, follow `continuation.cursor` by passing it as `continuation` on the next context request; the cursor is bound to the document, note version, and source hash and must not be reused after an edit. The legacy string arrays remain available for compatibility. The route enforces ownership, excludes deleted notes, and keeps neighbors within the same note source; attachment neighbors are restricted to the same attachment. If the owning note changes during the read, the route returns a retriable `NOTE_VERSION_CONFLICT` instead of claiming that the context is internally consistent.
 
 ### Create, update, and organize notes
 
@@ -498,17 +411,6 @@ curl -fsS \
   "$QNOTES_URL/api/notes/your-note-slug/blocks/deploy"
 ```
 
-Exact block content can be read by UTF-8 byte offset, inclusive line range, or a continuation from an earlier page:
-
-```bash
-curl -fsS --get \
-  -H "Authorization: Bearer $QNOTES_TOKEN" \
-  "$QNOTES_URL/api/notes/your-note-slug/blocks/deploy" \
-  --data 'offset=0' --data 'maxBytes=8192'
-```
-
-The response keeps the block metadata and adds `contentBytes`, `totalBytes`, `offset`, `nextOffset`, `truncated`, `contentComplete`, and `continuation` when more content remains. `maxBytes` is a hard serialized UTF-8 response ceiling; QNotes slices only the Markdown or block content, so metadata and JSON remain valid. Line ranges preserve the source bytes and newline style. A continuation is bound to the authenticated caller, notebook policy, note version, block, and content hash. Stale or unauthorized continuations fail closed.
-
 Fenced code blocks are automatically assigned stable-looking `auto-...` block keys. Named blocks use the `:::copy{id="..." ...}` Markdown extension. Named IDs must be unique within a note; supported types are `copy`, `code`, `prompt`, `command`, `sql`, `json`, `yaml`, `env`, `url`, `quote`, and `checklist`.
 
 ### Pagination and sync
@@ -521,7 +423,7 @@ curl -fsS \
   "$QNOTES_URL/api/notes?limit=500&cursor=NEXT_CURSOR"
 ```
 
-`GET /api/sync` returns lightweight note metadata changes rather than note bodies. Its default page size is 200 and maximum is 500. Persist the cursor in the calling application and continue while `hasMore` is true. Personal-token cursors are bound to the token and its current notebook policy; a grant revocation or notebook move can return `422 VALIDATION_ERROR` with `cursor is invalid or expired.`, after which the client must restart without a cursor. The browser performs that reset online and clears its replaceable cached note summaries and lexical records while retaining unsent drafts; each successful page stores fetched authorized content, tombstones, and the page cursor atomically. The offline cache is account-specific and bounded to its most recent 2,000 notes; an offline device cannot be remotely purged.
+`GET /api/sync` returns lightweight note metadata changes rather than note bodies. Its default page size is 200 and maximum is 500. Persist the cursor in the calling application and continue while `hasMore` is true:
 
 ```bash
 curl -fsS \
@@ -535,13 +437,11 @@ Each change includes `noteId`, `slug`, `title`, `tags`, `notebookId`, `version`,
 
 Supported MIME types are `text/plain`, `text/markdown`, `application/pdf`, `image/png`, `image/jpeg`, and `image/webp`. The API default upload limit is 20 MiB. Text, Markdown, and text-bearing PDFs are extracted and indexed asynchronously. Images are accepted and stored privately, but the worker reports `unsupported` with `IMAGE_OCR_UNSUPPORTED` because image OCR is not implemented.
 
-Attachment upload is a two-step API plus one direct staging Storage operation:
+Attachment upload is a two-step API plus one direct Storage operation:
 
 1. Request a signed upload URL with `attachments:write`.
-2. Upload the bytes directly to the private `note-attachments` bucket using the returned staging `path` and `token`.
-3. Finalize the attachment. The API verifies the byte count, supported file signature, final object bytes, and SHA-256 digest, then promotes the immutable final object and queues extraction.
-
-The signed path is under `staging/` and is registered to one pending attachment. Authenticated Storage clients cannot overwrite finalized objects or delete final objects directly. `DELETE /api/attachments/:attachmentId` starts a lifecycle-authorized cleanup; the worker retries object removal when Storage is temporarily unavailable and requeues stale processing rows.
+2. Upload the bytes directly to the private `note-attachments` bucket using the returned `path` and `token`.
+3. Finalize the attachment so the processing worker queues extraction.
 
 Request the signed upload URL:
 
@@ -566,7 +466,7 @@ curl -fsS -X POST \
   "$QNOTES_URL/api/attachments/ATTACHMENT_UUID/finalize"
 ```
 
-List active attachments for a note with `GET /api/notes/:noteRef/attachments`. The attachment status moves through `pending_upload`, `verifying`, `queued`, `processing`, and then `ready`, `failed`, or `unsupported`. Deletion moves through `deleting` before the worker records `deleted`; search rows are removed when deletion starts. Search can return ready attachment chunks.
+List active attachments for a note with `GET /api/notes/:noteRef/attachments`. The attachment status moves through `pending_upload`, `queued`, `processing`, and then `ready`, `failed`, or `unsupported`. Search can return ready attachment chunks.
 
 Create a short-lived download URL with `attachments:read`:
 
@@ -576,7 +476,7 @@ curl -fsS \
   "$QNOTES_URL/api/attachments/ATTACHMENT_UUID"
 ```
 
-The response contains `signedUrl` and `expiresInSeconds: 60`. `DELETE /api/attachments/:attachmentId` soft-deletes the metadata immediately and returns success when object cleanup finishes inline, or `202` with `status: "deleting"` when the worker must retry cleanup.
+The response contains `signedUrl` and `expiresInSeconds: 60`. `DELETE /api/attachments/:attachmentId` removes the object and soft-deletes its metadata.
 
 ### Exports
 
@@ -598,7 +498,7 @@ curl -fsS \
   -o qnotes-backup.zip
 ```
 
-The ZIP contains `notes/<safe-slug>-<note-id>.md`, `attachments/<safe-slug>/<attachment-id>-<file-name>`, and `manifest.json`. The version-two manifest includes notebooks, note-to-notebook IDs, Markdown paths, and attachment metadata. Deleted notes and deleted attachments are excluded; stored image attachments remain included even when their extraction status is `unsupported`. Before any Storage download, the API checks Markdown bytes, declared attachment bytes, manifest bytes, and the 5,000-entry limit against the default 50 MiB compressed ZIP limit (configurable with `QNOTES_EXPORT_MAX_BYTES`); it retains a final ZIP-size check.
+The ZIP contains `notes/<safe-slug>-<note-id>.md`, `attachments/<safe-slug>/<attachment-id>-<file-name>`, and `manifest.json`. The version-two manifest includes notebooks, note-to-notebook IDs, Markdown paths, and attachment metadata. Deleted notes and deleted attachments are excluded. Before any Storage download, the API checks Markdown bytes, declared attachment bytes, manifest bytes, and the 5,000-entry limit against the default 50 MiB compressed ZIP limit (configurable with `QNOTES_EXPORT_MAX_BYTES`); it retains a final ZIP-size check.
 
 Validate a workspace backup without writing any data. The dry-run endpoint accepts the exported ZIP as the request body and requires all four note/attachment read/write scopes:
 
@@ -631,7 +531,7 @@ pnpm install --frozen-lockfile
 pnpm --filter @qnotes/api-client build
 pnpm --filter @qnotes/cli build
 
-export QNOTES_URL='https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-api'
+export QNOTES_URL='https://<project-ref>.supabase.co/functions/v1/qnotes-api'
 export QNOTES_TOKEN='qnt_paste_the_token_here'
 ```
 
@@ -664,7 +564,7 @@ pnpm --filter @qnotes/cli exec node dist/index.js --help
 
 ## Use the JavaScript client
 
-`@qnotes/api-client` handles the `/api` prefix, bearer authorization, `{ data: ... }` envelopes, binary exports, abort signals, bounded per-call deadlines, and structured `QNotesHttpError` failures. Request option objects accept `signal` and optional `timeoutMs`; deadlines are capped at 120 seconds, and a timeout abort uses a `TimeoutError` reason. Existing signal callers remain supported, and the client does not retry mutations. The access-token provider receives the request signal when one exists, but a provider that ignores it cannot be forcibly cancelled; the client checks for cancellation before sending the HTTP request. `search` returns `{ items, queryId, modeUsed, degraded, timing, index, nextCursor, truncated? }`; use `items` for matching documents and inspect the metadata when measuring retrieval or handling keyword fallback:
+`@qnotes/api-client` handles the `/api` prefix, bearer authorization, `{ data: ... }` envelopes, binary exports, abort signals, bounded per-call deadlines, and structured `QNotesHttpError` failures. Request option objects accept `signal` and optional `timeoutMs`; deadlines are capped at 120 seconds, and a timeout abort uses a `TimeoutError` reason. Existing signal callers remain supported, and the client does not retry mutations. The access-token provider receives the request signal when one exists, but a provider that ignores it cannot be forcibly cancelled; the client checks for cancellation before sending the HTTP request. `search` returns `{ items, queryId, modeUsed, degraded, timing, index, nextCursor }`; use `items` for matching documents and inspect the metadata when measuring retrieval or handling keyword fallback:
 
 ```js
 import { QNotesClient } from '@qnotes/api-client';
@@ -695,7 +595,7 @@ console.log(response.items);
 console.log(response.timing);
 ```
 
-The client exposes `listNotes`, `listNotebooks`, `createNotebook`, `getNote`, `getCapabilities`, `getNoteOutline`, `createNote`, `createNoteDetailed`, `updateNote`, `updateNoteDetailed`, `patchNoteSection`, `appendNote`, `appendNoteDetailed`, `moveNoteToNotebook`, `deleteNote`, `deleteNoteDetailed`, `restoreNote`, `restoreNoteDetailed`, `getMutationStatus`, `listBlocks`, `getBlock`, `search`, `searchPost`, `readNoteContext`, `sync`, `listAttachments`, `requestAttachmentUpload`, `finalizeAttachment`, `getAttachmentDownloadUrl`, `deleteAttachment`, `listTokens`, `createToken`, `revokeToken`, `exportNote`, `exportWorkspace`, and `importWorkspace`. The note-only mutation methods preserve the existing REST response shape; the `Detailed` variants additionally return a compact mutation outcome. `createNoteDetailed` returns `created`, `idempotent`, or `deduplicated`; the other detailed note mutations return `applied` or `idempotent`. Export methods return the raw `Response`; attachment upload still requires uploading the bytes to Supabase Storage with the signed path/token returned by `requestAttachmentUpload`.
+The client exposes `listNotes`, `listNotebooks`, `createNotebook`, `getNote`, `createNote`, `createNoteDetailed`, `updateNote`, `updateNoteDetailed`, `appendNote`, `appendNoteDetailed`, `moveNoteToNotebook`, `deleteNote`, `deleteNoteDetailed`, `restoreNote`, `restoreNoteDetailed`, `listBlocks`, `getBlock`, `search`, `searchPost`, `readNoteContext`, `sync`, `listAttachments`, `requestAttachmentUpload`, `finalizeAttachment`, `getAttachmentDownloadUrl`, `deleteAttachment`, `listTokens`, `createToken`, `revokeToken`, `exportNote`, `exportWorkspace`, and `importWorkspace`. The note-only mutation methods preserve the existing REST response shape; the `Detailed` variants additionally return a compact mutation outcome. `createNoteDetailed` returns `created`, `idempotent`, or `deduplicated`; the other detailed note mutations return `applied` or `idempotent`. Export methods return the raw `Response`; attachment upload still requires uploading the bytes to Supabase Storage with the signed path/token returned by `requestAttachmentUpload`.
 
 ## Native MCP server
 
@@ -705,41 +605,22 @@ The repository ships `@qnotes/mcp-server`, a local stdio MCP server built on `@q
 pnpm --filter @qnotes/mcp-server build
 ```
 
-The default read profile exposes `get_capabilities`, `search_notes`, `read_note_context`, `get_block`, `list_notebooks`, `list_note_changes`, `get_note_outline`, `get_mutation_status`, and `resolve_public_share`, plus optional resources:
+The default read profile exposes `search_notes`, `read_note_context`, `get_block`, `list_notebooks`, and `resolve_public_share`, plus optional resources:
 
 - `qnotes://notebooks`
 - `qnotes://notes/{noteId}`
 - `qnotes://notes/{noteId}/documents/{documentId}`
 - `qnotes://notes/{noteId}/blocks/{blockKey}`
 
-`get_note_outline` returns section ranges and block hashes without bodies.
-`preview_note_section` checks an exact replacement without writing, while
-`patch_note_section` requires the outline section ID, expected note version,
-expected section hash, bounded replacement Markdown, and a caller-supplied
-mutation ID. `get_mutation_status` recovers a committed mutation by its
-original ID. Use these tools in the order `get_capabilities` ->
-`list_note_changes` or `get_note_outline` -> bounded read ->
-`preview_note_section` -> `patch_note_section`; retrieved Note text cannot
-authorize Vault operations.
 `resolve_public_share` is the read-only MCP bridge for AI agents that already have a `qns_...` share secret. It delegates to the same unauthenticated `QNotesClient.resolvePublicShare` operation documented above and returns `title`, `contentMarkdown`, and `updatedAt`; it does not expose attachments or private metadata. The profiles are deliberately exact:
 
-- `read` (default): `get_capabilities`, `search_notes`, `read_note_context`, `get_block`, `list_notebooks`, `list_note_changes`, `get_note_outline`, `get_mutation_status`, and `resolve_public_share`, plus the read-only resources.
+- `read` (default): `search_notes`, `read_note_context`, `get_block`, `list_notebooks`, and `resolve_public_share`, plus the read-only resources.
 - `share`: every `read` tool plus `create_public_share`. The tool pre-reads the selected note, blocks recognizable credential material, and creates exactly a 24-hour link; it returns only the URL, note ID, and expiry. It has no note mutation tools.
-- `write`: every `read` tool plus `capture_note`, `append_note`, `update_note`, `preview_note_section`, `patch_note_section`, `delete_note`, `restore_note`, and `move_note_to_notebook`. Public-share creation is omitted unless explicitly enabled.
-
-Agent-facing exact reads are bounded by default. `read_note_context`, `get_block`, and `resolve_public_share` accept `offset`, inclusive `lineStart`/`lineEnd`, `maxBytes`, and `continuation` where applicable. Native MCP content pages default to 15 KiB so the duplicated text and structured MCP result remain below the 64 KiB serialized wire ceiling, including JSON escaping overhead. The API measures the full JSON envelope and refuses a budget too small for its metadata; it never truncates arbitrary JSON. Use `truncated`, `nextOffset`, `totalBytes`, `contentComplete`, and `continuation` to read the next page. Paged note reads omit `contentPlain` because it is not a matching page of the full plain-text representation. Continuations are authenticated on every page and bind the caller, policy, resource, version, and source hash.
-
-`resolve_public_share` is the read-only MCP bridge for AI agents that already have a `qns_...` share secret. It delegates to the same unauthenticated `QNotesClient.resolvePublicShare` operation documented above and returns bounded `title`, `contentMarkdown`, and `updatedAt` pages; it does not expose attachments or private metadata.
+- `write`: every `read` tool plus `capture_note`, `append_note`, `update_note`, `delete_note`, `restore_note`, and `move_note_to_notebook`. Public-share creation is omitted unless explicitly enabled.
 
 The native `share` profile uses the same caller-owned personal token as its QNotes client, via `QNOTES_TOKEN` (or the read-token fallback `QNOTES_READ_TOKEN`), and that token must include `notes:read`, `search:read`, and `shares:write`. It never accepts or configures a shared owner JWT. The `write` profile keeps its existing `QNOTES_WRITE_TOKEN` behavior but omits `create_public_share` by default. To expose that tool in a write process, set `QNOTES_MCP_ENABLE_PUBLIC_SHARE=true` and use a caller-owned write token that includes `shares:write`; the flag is an explicit capability declaration, while API scopes still enforce the token boundary. Prefer the separate `share` profile when public sharing is the only write capability required. `mutationId` is optional in each write tool for compatibility, but a caller that may retry after an ambiguous transport result must supply the same mutation ID for the same logical operation. Keep the generated `QNOTES_MCP_DEVICE_ID` unchanged across process restarts; the existing owner-scoped `(owner_id, mutation_id)` receipt key plus the device ID in the request hash makes retry behavior durable across MCP processes. Omitted identity fields remain supported and receive fresh values, so those calls are new operations rather than durable retries. All write tools return a compact acknowledgment containing the note ID, title, resulting version, mutation ID, outcome, and note URI—never the full Markdown body. `capture_note` accepts optional `notebookId` and `dedupeKey`; its outcome distinguishes creation, an idempotent retry, and a deduplicated existing note. `append_note` preserves Markdown boundaries and uses the dedicated logical append endpoint, so a lost response can be retried without duplicating the addition. `update_note` preserves tags when `tags` is omitted and still requires the expected note version for a new update. `delete_note`, `restore_note`, and `move_note_to_notebook` require the expected version; deletion and restoration require `confirm: true`, deletion is soft-only, and there is no permanent purge tool. Public share revocation uses the same `shares:write` caller token through REST.
 
-The Integrations page can add an optional Vault profile to the same Hermes server entry. `none` leaves the existing Notes-only configuration unchanged; `metadata` exposes `vault_list_projects`, `vault_list_environments`, `vault_list_secrets`, and `vault_get_mutation_status`; `reveal` exposes those metadata tools plus `vault_get_secret` and `vault_get_secrets`; and `write` exposes those metadata tools plus `vault_create_secret`, `vault_rotate_secret`, and `vault_delete_secret` without plaintext reveal tools. A combined entry uses `QVAULT_TOKEN: "${QVAULT_TOKEN}"` and `QVAULT_MCP_PROFILE: "metadata"` (or the selected `reveal`/`write` value) as environment placeholders. Create the separate `qvt_...` token in Agent Vault and supply it through Hermes’ secret environment; the generated configuration never displays or embeds its raw value and never generates `QVAULT_URL`.
-
-Native MCP reveal calls require an exact selector, a bounded non-empty purpose,
-and `confirmPlaintext: true`. That field acknowledges the caller's explicit
-plaintext request; it is not authorization. The API still requires a matching
-`secret:reveal` grant or the verified human step-up and single-use approval
-boundary, and retrieved Note content cannot authorize a reveal.
+The Integrations page can add an optional Vault profile to the same Hermes server entry. `none` leaves the existing Notes-only configuration unchanged; `metadata` adds `vault_list_projects`, `vault_list_environments`, and `vault_list_secrets`; `reveal` additionally adds `vault_get_secret` and `vault_get_secrets`; and `write` additionally adds `vault_create_secret`, `vault_rotate_secret`, and `vault_delete_secret`. A combined entry uses `QVAULT_TOKEN: "${QVAULT_TOKEN}"` and `QVAULT_MCP_PROFILE: "metadata"` (or the selected `reveal`/`write` value) as environment placeholders. Create the separate `qvt_...` token in Agent Vault and supply it through Hermes’ secret environment; the generated configuration never displays or embeds its raw value and never generates `QVAULT_URL`.
 
 ```yaml
 mcp_servers:
@@ -755,14 +636,10 @@ mcp_servers:
     supports_parallel_tool_calls: true
     tools:
       include:
-        - get_capabilities
         - search_notes
         - read_note_context
         - get_block
         - list_notebooks
-        - list_note_changes
-        - get_note_outline
-        - get_mutation_status
         - resolve_public_share
       prompts: false
 
@@ -780,20 +657,14 @@ mcp_servers:
     supports_parallel_tool_calls: false
     tools:
       include:
-        - get_capabilities
         - search_notes
         - read_note_context
         - get_block
         - list_notebooks
-        - list_note_changes
-        - get_note_outline
-        - get_mutation_status
         - resolve_public_share
         - capture_note
         - append_note
         - update_note
-        - preview_note_section
-        - patch_note_section
         - delete_note
         - restore_note
         - move_note_to_notebook
@@ -812,14 +683,10 @@ mcp_servers:
     supports_parallel_tool_calls: false
     tools:
       include:
-        - get_capabilities
         - search_notes
         - read_note_context
         - get_block
         - list_notebooks
-        - list_note_changes
-        - get_note_outline
-        - get_mutation_status
         - resolve_public_share
         - create_public_share
       prompts: false
@@ -831,46 +698,48 @@ The generated `write` entry is least-privilege by default: it omits both `create
 
 Keep Notes and Vault tokens in the MCP server process environment. Do not put them in tool arguments, URLs, or returned resource content. Vault uses the required `QNOTES_URL`; `QVAULT_URL` is unsupported and must not be added to a generated config. Browser search selection telemetry is stored locally as query/document IDs and timestamps; plaintext queries are not logged or transmitted as telemetry.
 
-## Gemini Spark remote MCP endpoint
+## Optional hosted HTTP MCP endpoint
 
-Gemini Spark can connect to the hosted read-only MCP endpoint:
+If you deploy `qnotes-mcp`, Gemini Spark or another MCP client can connect to
+its Streamable HTTP endpoint:
 
 ```text
-https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-mcp
+https://<project-ref>.supabase.co/functions/v1/qnotes-mcp
 ```
 
-By default, the endpoint exposes `get_capabilities`, `search_notes`,
-`read_note_context`, `get_block`, `list_notebooks`, `list_note_changes`,
-`get_note_outline`, `get_mutation_status`, and the read-only
-`qnotes://...` resources. It accepts a personal `qnt_...` token in the
-`Authorization: Bearer ...` header; the least-privilege read token profile is
-`notes:read, search:read`; approval fails closed when the pasted personal token
-does not include both scopes. A deployment explicitly configured with
-`QNOTES_MCP_PROFILE=share` selects the share profile, and the authenticated
-caller’s own OAuth-resolved personal token must additionally have
-`shares:write` to use `create_public_share`; there is no shared owner or share
-credential. Write note tools are never exposed by hosted MCP. Absent or
-unknown `QNOTES_MCP_PROFILE` values remain read-only.
+By default, the endpoint exposes `search_notes`, `read_note_context`, and
+`get_block`, plus read-only `qnotes://...` resources. A deployment explicitly
+configured with `QNOTES_MCP_PROFILE=share` can add `create_public_share` for
+the authenticated caller's own token when it has `shares:write`. Write note
+tools are never exposed by hosted MCP. Absent or unknown profile values remain
+read-only.
 
-To connect it in Gemini Spark, open Connected Apps, enter the endpoint under **Custom apps for Spark**, and choose **Next**. The endpoint supports Gemini’s standard dynamic OAuth client registration and PKCE flow. When the QNotes authorization page opens, paste the personal `qnt_...` token created in Integrations and choose **Approve & Connect**. QNotes hashes that token only to bind a persisted grant to the source account, action scopes, notebook policy, exact client, and exact MCP resource. The issued `qoa` bearer contains only the signed grant reference, expires after 15 minutes, and can be revoked through the OAuth revocation endpoint; clients reauthorize after expiry because no refresh flow is exposed. The raw personal token is never placed in the authorization URL, authorization code, or access token. Google’s current custom-app flow and its security warning are documented in [Gemini Spark’s custom-app instructions](https://support.google.com/gemini/answer/17209137). If Gemini falls back to **Advanced Settings**, use `qnotes-gemini` as the Client ID and leave Client secret empty; the authorization page still requests the personal token. The token is shown in full only once, so revoke it from [Personal API tokens](https://notes.quadrate.lk/settings/tokens) if it is exposed or no longer needed. The hosted endpoint accepts Google’s OAuth redirect hosts only.
+To connect it in Gemini Spark, open Connected Apps, enter the deployment's
+endpoint under **Custom apps for Spark**, and choose **Next**. The endpoint
+supports dynamic OAuth client registration and PKCE. When the QNotes
+authorization page opens, paste a personal `qnt_...` token created in the web
+app and choose **Approve & Connect**. The server issues Gemini an encrypted,
+opaque OAuth bearer token; the personal token is not placed in the
+authorization URL. Configure `QNOTES_MCP_CONSENT_URL` to the deployment's
+`/oauth/authorize` route and allow only the exact Google redirect URIs registered
+with the provider. Google's current custom-app flow is documented in
+[Gemini Spark's custom-app instructions](https://support.google.com/gemini/answer/17209137).
+If Gemini falls back to **Advanced Settings**, use `qnotes-gemini` as the
+Client ID and leave Client secret empty.
 
 After building the server and saving the generated config, verify the two layers separately. A browser “Verify token/API access” check only proves that the token can call the API; it does not start Hermes. Run `hermes mcp test qnotes_read` or `hermes mcp test qnotes_write` to exercise Hermes’ real stdio configuration. For an ambiguous write result, repeat the tool call with the same `mutationId`; do not generate a new ID until starting a new logical mutation.
 
 ## Endpoint reference
 
-All `/api` routes except health require a bearer credential. The public share resolver is the one unauthenticated application route; personal tokens and grant-bound OAuth bearers must have the listed scope, and `/api/tokens` requires a Supabase user JWT even though it has no personal-token scope. OAuth bearers are accepted only for the exact hosted MCP resource and resolve their active grant on every request; they never authenticate Agent Vault routes.
+All `/api` routes except health require a bearer credential. The public share resolver is the one unauthenticated application route; personal tokens must have the listed scope, and `/api/tokens` requires a Supabase user JWT even though it has no personal-token scope.
 
 | Method | Route | Scope / credential |
 | --- | --- | --- |
 | `GET` | `/api/health` | None |
-| `GET` | `/api/capabilities` | Authenticated caller |
 | `GET` | `/api/notes` | `notes:read` |
-| `GET` | `/api/notes/:noteRef/outline` | `notes:read` |
 | `GET` | `/api/notes/:noteRef` | `notes:read` |
 | `POST` | `/api/notes` | `notes:write` |
 | `PATCH` | `/api/notes/:noteId` | `notes:write` |
-| `POST` | `/api/notes/:noteId/section/preview` | `notes:write` |
-| `PATCH` | `/api/notes/:noteId/section` | `notes:write` |
 | `POST` | `/api/notes/:noteId/append` | `notes:write` |
 | `PATCH` | `/api/notes/:noteId/notebook` | `notes:write` |
 | `DELETE` | `/api/notes/:noteId` | `notes:write` |
@@ -886,7 +755,6 @@ All `/api` routes except health require a bearer credential. The public share re
 | `GET` | `/api/search/documents/:documentId/context` | `search:read` |
 | `POST` | `/api/context` | `search:read` |
 | `GET` | `/api/sync` | `notes:read` |
-| `GET` | `/api/mutations/:mutationId` | `notes:read` or `notes:write` |
 | `GET` | `/api/notes/:noteRef/attachments` | `attachments:read` |
 | `POST` | `/api/attachments/upload-url` | `attachments:write` |
 | `POST` | `/api/attachments/:attachmentId/finalize` | `attachments:write` |
@@ -908,25 +776,16 @@ All `/api` routes except health require a bearer credential. The public share re
 - `401 INVALID_TOKEN`: the access token or personal token is invalid, revoked, or belongs to another environment.
 - `401 TOKEN_EXPIRED`: the personal token expiry has passed.
 - `403 INSUFFICIENT_SCOPE`: the personal token does not include the required scope, or a token-management route was called with a personal token instead of a Supabase JWT.
-- `400 invalid_scope` or `403 access_denied`: the hosted OAuth client requested an unsupported scope or the source personal token cannot provide the configured hosted profile.
-- `401 INVALID_TOKEN` after OAuth revocation or expiry: reauthorize the hosted client; OAuth has no refresh-token flow.
 - `404 NOTE_NOT_FOUND`, `NOTEBOOK_NOT_FOUND`, or `ATTACHMENT_NOT_FOUND`: the resource is missing or belongs to another owner.
-- `404 MUTATION_NOT_FOUND`: no committed mutation receipt with that ID is visible to the caller.
 - `409 NOTE_VERSION_CONFLICT`: for a new logical write, re-read the note and retry intentionally with its current version and a new mutation ID; for an ambiguous append response, retry the same logical request with the original mutation ID first.
-- `409 NOTE_SECTION_CONFLICT`: the section ID is missing or ambiguous, or its content hash no longer matches; obtain a fresh outline before starting a new patch.
 - `409 NOTE_SLUG_CONFLICT`: choose a slug not used by another active note.
 - `409 NOTE_DEDUPE_CONFLICT`: another active note already uses the dedupe key of a note being restored.
 - `409 NOTEBOOK_NAME_CONFLICT`: choose a notebook name not used by another notebook for the owner.
 - `409 MUTATION_REUSE_CONFLICT`: do not reuse a mutation ID for a different request.
-- `404 VAULT_MUTATION_NOT_FOUND`: the owner or authorized qvt caller has no retained receipt for that mutation ID.
-- `409 VAULT_MUTATION_REUSE`: the Vault mutation ID was used for a different operation, resource, version, or request.
-- `409 VAULT_MUTATION_EXPIRED`: the 30-day Vault receipt retention period ended; begin a new operation with a new mutation ID.
 - `413 ATTACHMENT_TOO_LARGE` or `EXPORT_TOO_LARGE`: reduce the payload or raise the corresponding server-side limit.
 - `422 ATTACHMENT_SIZE_MISMATCH`: the uploaded Storage object did not match the declared byte count; the object is rejected before processing is queued.
-- `422 ATTACHMENT_TYPE_MISMATCH`: the uploaded bytes do not match the declared supported MIME type.
 - `422 VALIDATION_ERROR`: check required fields, UUIDs, versions, Markdown, pagination values, and input limits.
 - `409 ATTACHMENT_NOT_UPLOADED`: upload to the signed Storage URL before finalizing.
-- `409 ATTACHMENT_UPLOAD_EXPIRED`, `ATTACHMENT_VERIFYING`, or `ATTACHMENT_GENERATION_CONFLICT`: the staged object can no longer be finalized; request a new upload when appropriate.
 - `422 UNSUPPORTED_ATTACHMENT_TYPE`: use one of the supported MIME types.
 - `422 DUPLICATE_BLOCK_KEY` or `INVALID_COPY_BLOCK`: fix the named/fenced Markdown block syntax and make named IDs unique within the note.
 - `403 CORS_ORIGIN_DENIED`: send the request from an origin in the server’s exact `QNOTES_ALLOWED_ORIGIN` allow-list.
@@ -934,7 +793,7 @@ All `/api` routes except health require a bearer credential. The public share re
 - `404 PUBLIC_SHARE_NOT_FOUND`: the share secret is invalid, expired, revoked, or the note was deleted. The response is intentionally indistinguishable across those cases.
 - `503 SEMANTIC_SEARCH_UNAVAILABLE`: embedding-backed retrieval or its database RPC failed; use `mode=keyword` temporarily or verify the embedding runtime and worker deployment. Query-embedding failures are returned as degraded keyword results instead.
 
-Do not use the Supabase database password, service-role key, publishable key, or an Auth session token as a replacement for a personal `qnt_...` token in a script or MCP adapter. If a personal token is exposed, revoke it immediately from [Integrations](https://notes.quadrate.lk/settings/integrations) and create a replacement.
+Do not use the Supabase database password, service-role key, publishable key, or an Auth session token as a replacement for a personal `qnt_...` token in a script or MCP adapter. If a personal token is exposed, revoke it immediately from the web app's **Integrations** page and create a replacement.
 
 ## Agent Vault API
 
@@ -943,35 +802,12 @@ live under `/vault/*` and accept a Supabase user JWT or a scoped `qvt_...`
 agent token. `qnt_...` and `qns_...` credentials are rejected by Vault.
 
 The Vault API supports project/environment metadata, encrypted secret create,
-rotate, delete, metadata-only reads, authorized mutation receipt status,
-explicit single or bounded batch reveal, and JWT-only agent-token/grant/audit
-administration. Secret mutations require an `expectedVersion` and UUID
-`mutationId`; the server binds the mutation to a domain-separated HMAC of the
-canonical request and retains safe receipt metadata for 30 days. Retrying the
-same request with the same mutation ID returns the original result, including
-after a delete, while a changed request or expired receipt is rejected. `GET
-/vault/mutations/:mutationId` returns the bounded receipt and never returns a
-secret value or historical request body. Native MCP reveal requests require an
-exact selector, bounded `purpose`, and `confirmPlaintext: true`; the API
-enforces the matching grant or verified human approval. Reveal responses write
-no plaintext to metadata or audit and return `Cache-Control: no-store`.
-
-Exact resource operations use `POST /vault/environments/resolve` and
-`POST /vault/secrets/resolve`. These service-mediated lookups return only the
-immutable project, environment, and optional secret IDs after checking the
-owner, actor, and requested action in one authorization transaction. They do
-not call list endpoints, so a qvt grant scoped to one secret can rotate,
-delete, reveal, or read that secret without a project enumeration grant. A
-denied lookup returns no resource metadata.
-
-Project and environment selectors accept case-insensitive slugs or immutable
-UUIDs. Unprefixed UUIDs are IDs; use `slug:<value>` for a UUID-shaped slug and
-`id:<uuid>` for an explicit ID. Secret-name lookup is case-insensitive against
-the active lower-cased uniqueness key, while the stored name casing is
-preserved. Use `name:<value>` for a UUID-shaped name. Duplicate display names
-are disambiguated by slug or immutable ID, and the resolver never selects the
-first match. The native MCP write and reveal tools apply these rules before
-calling ID-based Vault operations.
+rotate, delete, metadata-only reads, explicit single or bounded batch reveal,
+and JWT-only agent-token/grant/audit administration. Secret mutations require
+an `expectedVersion` and UUID `mutationId`; the server binds the mutation to a
+domain-separated HMAC of the canonical request, so a mutation ID cannot be
+reused for a different request. Reveal requests require a bounded `purpose`,
+write no plaintext to metadata or audit, and return `Cache-Control: no-store`.
 
 The complete route table, limits, MCP profiles, and data-boundary rules are in
 [VAULT_ACCESS_GUIDE.md](VAULT_ACCESS_GUIDE.md). For the native adapter, set

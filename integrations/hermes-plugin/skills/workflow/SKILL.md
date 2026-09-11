@@ -2,7 +2,7 @@
 name: workflow
 description: Use authorized QNotes and Vault tools safely.
 version: 0.1.0
-author: Fazrin (@nirzaf), Hermes Agent
+author: QNotes contributors
 license: MIT
 platforms: [linux, macos, windows]
 ---

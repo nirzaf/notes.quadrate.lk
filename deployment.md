@@ -1,130 +1,88 @@
 # QNotes deployment
 
-QNotes has two production parts:
+QNotes deploys as a Supabase backend plus a static web frontend. Supabase
+provides PostgreSQL, Auth, Storage, Realtime, Edge Functions, queues, and
+scheduled workers. Cloudflare Pages is one supported frontend host; any
+SPA-compatible static host can serve `apps/web/dist`.
 
-- Supabase project `ciyoandzjezgqxjpcrin`: PostgreSQL, Auth, Storage, Realtime, and Edge Functions.
-- Cloudflare Pages project `notes-quadrate-lk`: the Vite frontend at [notes.quadrate.lk](https://notes.quadrate.lk/).
-
-Database migrations create application objects in the `notesdb` schema. Do not run `supabase db reset` against production.
+This file is a self-hosting template. Replace the placeholders with values for
+your own Supabase project, public web origin, and frontend host. Never copy
+production IDs, domains, or secrets from another deployment.
 
 ## Requirements
 
-- Node.js with Corepack enabled.
+- Node.js 18 or newer, Corepack, pnpm 12.1.0, and Deno 2.9.6 or newer.
 - A clean checkout of the repository.
-- Access to the Supabase project and its database password.
-- A scoped Cloudflare API token with Pages edit access, or an interactive Wrangler login.
-- Production secrets available from a password manager. Never commit them or put them in Vite variables.
+- A Supabase project, CLI login, and database password for linked migrations.
+- A frontend host that supports SPA fallback. Cloudflare Pages requires a
+  scoped API token or an interactive Wrangler login.
+- Production secrets in a password manager or secret manager.
 
-## GitHub Actions CI/CD
-
-The repository workflow at `.github/workflows/ci.yml` uses GitHub-hosted
-`ubuntu-latest` runners. Pull requests run the core checks, local Supabase
-SQL/database integration tests, the path-gated search regression job, and a
-bounded Chromium browser smoke job against local Supabase. The smoke job
-covers the release-critical browser surfaces without starting worker functions.
-The complete Playwright E2E suite remains a local/manual command
-(`pnpm run test:e2e`) and is not run by CI/CD. A push to `master` deploys only
-after the browser smoke and other enabled checks pass through the GitHub
-`production` environment. See
-[`.github/GITHUB_ACTIONS.md`](.github/GITHUB_ACTIONS.md) for the runner model,
-production secrets, and local reproduction commands.
-
-Required deployment values are stored as secrets in the GitHub `production`
-environment: `SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_PASSWORD`,
-`VITE_SUPABASE_PUBLISHABLE_KEY`, `CLOUDFLARE_ACCOUNT_ID`, and
-`CLOUDFLARE_API_TOKEN`. The Cloudflare token only needs Pages Edit access. The
-Supabase database password is used only by the non-interactive migration step.
-The workflow accepts `CLOUDFLARE_API_KEY` plus `CLOUDFLARE_EMAIL` as a
-compatibility fallback when a scoped token is unavailable.
-
-After applying database migrations, the production job runs
-`pnpm run verify:vault` before deploying any Edge Function. The gate uses the
-pinned Supabase CLI to safely capture the secrets-list JSON, examines only each
-entry's `name` (checking that `QNOTES_VAULT_TOKEN_PEPPER` is present), ignores
-any `value` field, and never logs secret values. It also runs a linked,
-read-only boolean readiness query for the Supabase Vault extension/schema,
-Agent Vault metadata tables, service-only RPCs, and their execute privileges.
-`QNOTES_VAULT_TOKEN_PEPPER` is not a GitHub Actions environment secret.
-
-The repository pins pnpm to `12.1.0`:
+The repository pins pnpm:
 
 ```bash
 corepack enable
 corepack install --global pnpm@12.1.0
-pnpm --version
 pnpm install --frozen-lockfile
 ```
 
-## One-time account setup
+## Configure deployment values
 
-Authenticate both CLIs and link Supabase to the intended project:
+Set deployment-specific values in the shell that performs the release:
 
 ```bash
-pnpm exec supabase login
-pnpm exec supabase link --project-ref ciyoandzjezgqxjpcrin
-
-npx --yes wrangler@4.128.0 login
-npx --yes wrangler@4.128.0 whoami
-npx --yes wrangler@4.128.0 pages project list
+export SUPABASE_PROJECT_REF='<project-ref>'
+export SUPABASE_URL="https://${SUPABASE_PROJECT_REF}.supabase.co"
+export QNOTES_WEB_URL='https://your-qnotes.example'
+export PAGES_PROJECT_NAME='your-pages-project'
 ```
 
-Confirm that the Pages project is `notes-quadrate-lk` before deploying. Its production branch is `master`; do not create a second Pages project.
-
-## Production configuration
-
-The frontend receives only these public, build-time values:
+The frontend build receives only public values:
 
 ```bash
-export VITE_SUPABASE_URL="https://ciyoandzjezgqxjpcrin.supabase.co"
-export VITE_QNOTES_API_URL="https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-api"
+export VITE_SUPABASE_URL="$SUPABASE_URL"
+export VITE_QNOTES_API_URL="$SUPABASE_URL/functions/v1/qnotes-api"
 read -rsp 'Supabase publishable key: ' VITE_SUPABASE_PUBLISHABLE_KEY
 printf '\n'
 export VITE_SUPABASE_PUBLISHABLE_KEY
 ```
 
-The publishable key is safe for the browser, but it is still a secret-bearing configuration value: keep it out of Git and do not use a service-role key here. The build embeds these values into `apps/web/dist`.
+The publishable key can be embedded in the browser build. Never use a
+service-role key as a `VITE_*` value.
 
-Set the server-only Edge Function secrets in Supabase. `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are provided to Supabase Edge Functions automatically; never expose the service-role key as `VITE_*`:
+Set these server-only Edge Function secrets through the Supabase CLI. Use
+password-manager or secret-manager input for the values; do not place them in
+the repository or a shell history file:
 
 ```bash
-read -rsp 'QNOTES token pepper: ' QNOTES_TOKEN_PEPPER
+read -rsp 'QNotes token pepper: ' QNOTES_TOKEN_PEPPER
 printf '\n'
-read -rsp 'QNOTES Vault token pepper: ' QNOTES_VAULT_TOKEN_PEPPER
+read -rsp 'QNotes Vault token pepper: ' QNOTES_VAULT_TOKEN_PEPPER
 printf '\n'
-read -rsp 'QNOTES worker secret: ' QNOTES_INTERNAL_WORKER_SECRET
+read -rsp 'QNotes worker secret: ' QNOTES_INTERNAL_WORKER_SECRET
 printf '\n'
 
-pnpm exec supabase secrets set --project-ref ciyoandzjezgqxjpcrin \
-  QNOTES_ALLOWED_ORIGIN="https://notes.quadrate.lk" \
+pnpm exec supabase secrets set --project-ref "$SUPABASE_PROJECT_REF" \
+  QNOTES_ALLOWED_ORIGIN="$QNOTES_WEB_URL" \
   QNOTES_TOKEN_PEPPER="$QNOTES_TOKEN_PEPPER" \
   QNOTES_VAULT_TOKEN_PEPPER="$QNOTES_VAULT_TOKEN_PEPPER" \
   QNOTES_INTERNAL_WORKER_SECRET="$QNOTES_INTERNAL_WORKER_SECRET" \
-  QNOTES_MAX_ATTACHMENT_BYTES="20971520" \
-  QNOTES_EXPORT_MAX_BYTES="52428800" \
-  QNOTES_CLIENT_IP_HEADER="x-forwarded-for"
+  QNOTES_MAX_ATTACHMENT_BYTES='20971520' \
+  QNOTES_EXPORT_MAX_BYTES='52428800' \
+  QNOTES_MCP_CONSENT_URL="$QNOTES_WEB_URL/oauth/authorize"
 ```
 
-Production must not set `QNOTES_FAKE_EMBEDDINGS=1`, `QNOTES_ENVIRONMENT=test`, or `QNOTES_EMBEDDING_MODE=synthetic-test-v1`. The worker rejects a synthetic configuration before leasing queue messages. Local and staging structural tests must set all three synthetic-mode values together; a fake flag without the explicit test identity fails closed.
+Do not set `QNOTES_FAKE_EMBEDDINGS=1` in production. Semantic search and the
+embedding worker require the embedding runtime available to the deployment.
 
-The Edge Functions reject request bodies before parsing them: general API
-requests are capped at 8 MiB, public-share resolution at 1 KiB, Vault requests
-at 278,528 bytes (256 KiB plus request overhead), and workspace imports at `QNOTES_EXPORT_MAX_BYTES` (50 MiB by
-default). Shared service-only budget windows cover public sharing, OAuth,
-semantic embeddings, workspace export/import, and attachment processing.
-They return `429` with `Retry-After`; if the database limiter cannot be
-verified, the operation fails closed with `503`. The local Supabase evidence
-also records `max_rows = 1000` and Storage `file_size_limit = "50MiB"` in
-`supabase/config.toml`. The production gateway must overwrite or strip the
-configured `QNOTES_CLIENT_IP_HEADER` before forwarding requests; verify that
-gateway behavior as deployment evidence before enabling production traffic.
-
-The worker pg_cron jobs created by the migrations use Supabase Vault and invoke the workers every 30 seconds. A separate `qnotes-requeue-stale-embeddings` job runs daily at 03:00 UTC (06:00 UTC+03) as an embedding recovery/catch-up schedule. In the Supabase SQL Editor, create these Vault entries once, using the same worker secret as above. If the named entries already exist, update them instead of creating duplicates:
+The worker cron jobs read the project URL and worker secret from Supabase Vault.
+Create or update these entries in the SQL editor with the real values:
 
 ```sql
 select vault.create_secret(
-  'https://ciyoandzjezgqxjpcrin.supabase.co',
+  '<supabase-project-url>',
   'qnotes_project_url',
-  'QNotes production project URL'
+  'QNotes project URL'
 );
 
 select vault.create_secret(
@@ -134,11 +92,40 @@ select vault.create_secret(
 );
 ```
 
-The hosted MCP static OAuth client is fail-closed unless `QNOTES_MCP_STATIC_REDIRECT_URIS` is configured as a comma-separated list of the exact HTTPS Google/Gemini redirect URI(s) currently registered with the provider. The value is matched by an exact URI fingerprint, including path, and every entry must use one of the accepted Google redirect hosts. Do not configure only a hostname or invent a redirect path. Dynamic OAuth client registration remains available independently and continues to bind each registered redirect URI exactly.
+If hosted MCP is enabled, set `QNOTES_MCP_ALLOWED_ORIGINS` to the exact
+browser origins that may connect and set
+`QNOTES_MCP_STATIC_REDIRECT_URIS` to the exact HTTPS redirect URIs registered
+with the OAuth provider. Dynamic registration still binds each redirect URI
+exactly. An absent or unknown `QNOTES_MCP_PROFILE` remains read-only; only the
+explicit `share` value adds public-share creation.
+
+## GitHub Actions
+
+The workflow in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs
+core, integration, search-regression, and browser-smoke jobs for pull requests
+and pushes. A push to `master` can then pass through `release_gate` and the
+environment-protected `deploy` job.
+
+The deploy job is wired to the maintainer's environment-specific values. Before
+enabling it in a fork, replace its Supabase project reference, frontend/API
+URLs, Pages project, deployment URL, and protected GitHub environment. Store
+only these deployment credentials in that environment:
+
+- `SUPABASE_ACCESS_TOKEN`;
+- `SUPABASE_DB_PASSWORD`;
+- `VITE_SUPABASE_PUBLISHABLE_KEY`;
+- `CLOUDFLARE_ACCOUNT_ID`;
+- `CLOUDFLARE_API_TOKEN`.
+
+The readiness gate checks the server-side
+`QNOTES_VAULT_TOKEN_PEPPER` in Supabase by name. Do not add its value as a
+GitHub Actions secret. See [`.github/GITHUB_ACTIONS.md`](.github/GITHUB_ACTIONS.md)
+for the runner lifecycle and local reproduction commands.
 
 ## Release procedure
 
-Run the following from the repository root. Database changes should be applied before deploying functions that depend on them.
+Run from the repository root. Apply database migrations before deploying code
+that depends on them.
 
 ### 1. Synchronize and inspect Git
 
@@ -149,88 +136,98 @@ git status --short --branch
 git rev-parse HEAD
 ```
 
-Do not deploy with unexpected local changes. Commit and push the intended release first.
+Stop if the worktree contains unexpected changes.
 
 ### 2. Validate the workspace
 
 ```bash
 pnpm run typecheck
 pnpm run test:unit
-pnpm exec supabase db push --linked --dry-run
+pnpm exec supabase db push --linked --include-all --dry-run
 ```
 
-The current release includes the additive migrations through `20260910002000_vault_authorization_race_hardening.sql`. Review them in the dry-run output before applying; the OAuth grant migration (`20260910001700_oauth_grants.sql`) adds persisted, service-only OAuth grants, exact resource/client binding, source-token policy intersection, short-lived grant-bound access tokens, per-grant revocation, and bounded expired-grant cleanup. Apply it before updating `qnotes-api` and `qnotes-mcp`; old wrapped OAuth access tokens fail closed after the function update and clients must reauthorize. The latest migrations add the isolated Agent Vault metadata plane, service-only RPCs, replay protections, bounded batch reveal, exact resource resolution, authorization rechecks that fail closed when a project is archived during a secret operation, and bounded replay-receipt cleanup, alongside the unchanged pre-`expectedVersion` rotate replay compatibility, the caller-owned `shares:write` personal-token scope, the RLS-protected `notesdb.note_shares` table, reviewed version-bound immutable public snapshots, service-only create/rotate/revoke/resolve RPCs, automatic share revocation on note soft-delete, and a service-only single-use hosted MCP authorization-code receipt. Earlier migrations add staged attachment uploads, immutable final object paths, byte-signature and digest verification, service-only processing/deletion transitions, retryable object cleanup, the transaction-safe logical append receipt for the REST API, CLI, and MCP write profile, pagination and embedding queue race fixes, legacy RPC wrappers on the v2 contract, restore dedupe conflict reporting, incompatible-vector isolation, and the daily stale-embedding recovery schedule.
+Review the dry-run migration list. Use `pnpm exec supabase migration list` to
+compare local and remote history when they disagree. `--include-all` is
+required when a reviewed local migration was added after a later remote
+version; confirm the project reference and every listed migration first. Never
+use `db reset` on a hosted project.
 
-### 3. Apply pending production migrations
+### 3. Apply pending migrations
 
 ```bash
-pnpm exec supabase db push --linked
+pnpm exec supabase db push --linked --include-all
 ```
 
-When prompted, enter the production database password from the password manager. Review the migration list before accepting. Never use `db reset` on the hosted project.
+Review the migration list before accepting. The current schema includes the
+Notes plane, public-share records, transaction receipts, search and embedding
+invariants, private attachments, and the isolated Agent Vault plane with
+replay protections and bounded reveal.
 
-### 4. Verify production Vault readiness
+### 4. Verify Agent Vault readiness
 
-The migration must be applied before this check, and this check must pass
-before any function that depends on Agent Vault is deployed:
+Run this after migrations and before deploying dependent functions:
 
 ```bash
-SUPABASE_PROJECT_ID=ciyoandzjezgqxjpcrin pnpm run verify:vault
+SUPABASE_PROJECT_ID="$SUPABASE_PROJECT_REF" pnpm run verify:vault
 ```
 
-This is a read-only verification. The captured secrets-list output is examined
-only for entry names; any secret value is ignored and never logged. The check
-does not create or rotate credentials, change database state, or expose a
-health route. It requires Supabase CLI authentication through the existing
-`SUPABASE_ACCESS_TOKEN`; do not put `QNOTES_VAULT_TOKEN_PEPPER` in the shell,
-Git, or a GitHub Actions secret for this check.
+The check is read-only. It captures the Supabase secrets-list JSON, examines
+only entry names to confirm `QNOTES_VAULT_TOKEN_PEPPER`, ignores any `value`
+field, and runs boolean-only database checks for the Vault extension, schema,
+metadata tables, service-only RPCs, and execute privileges. It does not create,
+reveal, rotate, or mutate production credentials.
 
-### 5. Deploy Supabase Edge Functions
+### 5. Deploy Edge Functions
 
 ```bash
-pnpm exec supabase functions deploy qnotes-api embedding-worker attachment-worker qnotes-mcp \
-  --project-ref ciyoandzjezgqxjpcrin \
+pnpm exec supabase functions deploy \
+  qnotes-api embedding-worker attachment-worker qnotes-mcp \
+  --project-ref "$SUPABASE_PROJECT_REF" \
   --no-verify-jwt \
   --use-api \
   --import-map supabase/functions/deno.json
 ```
 
-The functions perform their own authentication. The worker functions additionally require the `x-qnotes-worker-secret` value supplied by the Vault cron jobs.
+The functions perform their own authentication. Worker requests additionally
+require the `x-qnotes-worker-secret` value supplied by the Vault cron jobs.
+Skip `qnotes-mcp` if the deployment does not provide hosted MCP.
 
-### 6. Build the production frontend
-
-Keep the `VITE_*` values in the current shell or CI secret store only:
+### 6. Build the frontend
 
 ```bash
 pnpm run build
 ```
 
-This builds all workspace packages, builds `apps/web`, and verifies that generated Edge shared sources are synchronized.
+This builds every workspace package, builds `apps/web`, and verifies that the
+generated Edge copies match their source packages.
 
-### 7. Deploy Cloudflare Pages
+### 7. Publish the frontend
 
-Deploy the generated `apps/web/dist` directory to the existing production project and attach the exact Git commit:
+For Cloudflare Pages:
 
 ```bash
 npx --yes wrangler@4.128.0 pages deploy apps/web/dist \
-  --project-name notes-quadrate-lk \
+  --project-name "$PAGES_PROJECT_NAME" \
   --branch master \
   --commit-hash "$(git rev-parse HEAD)" \
   --commit-message "$(git log -1 --pretty=%s)" \
   --commit-dirty=false
 ```
 
-The frontend build includes `apps/web/public/_headers`, which applies `no-store`, `no-referrer`, `noindex`, and a restrictive CSP to `/share`; keep that file in the Pages artifact. `apps/web/public/robots.txt` also disallows crawler access to `/share`. Do not deploy a public-share frontend until the matching database migration and `qnotes-api` function are available.
-
-The command returns a deployment URL. A `master` deployment is production; other branches may create preview deployments.
+Keep `apps/web/public/_headers`, `apps/web/public/_redirects`, and
+`apps/web/public/robots.txt` in the published artifact. The share route relies
+on SPA fallback and sends restrictive caching, referrer, CSP, and crawler
+headers. Do not publish a public-share frontend before its migrations and API
+function are available.
 
 ## Verify the release
 
 ```bash
-curl -fsS https://notes.quadrate.lk/
-curl -fsS https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-api/api/health
-curl -fsS https://ciyoandzjezgqxjpcrin.supabase.co/functions/v1/qnotes-mcp/health
-npx --yes wrangler@4.128.0 pages deployment list --project-name notes-quadrate-lk
+curl --fail --silent --show-error "$QNOTES_WEB_URL/"
+curl --fail --silent --show-error \
+  "$SUPABASE_URL/functions/v1/qnotes-api/api/health"
+curl --fail --silent --show-error \
+  "$SUPABASE_URL/functions/v1/qnotes-mcp/health"
 git status --short --branch
 git rev-parse HEAD
 git rev-parse origin/master
@@ -238,43 +235,41 @@ git rev-parse origin/master
 
 Expected results:
 
-- The website returns HTTP 200.
-- The API health endpoint returns a successful JSON response.
-- The remote MCP health endpoint returns `{"status":"ok"}`.
-- The latest Pages deployment is `Production`, branch `master`, and shows the intended commit.
+- the frontend returns HTTP 200;
+- the API health route returns a successful JSON response;
+- the MCP health route returns `{"status":"ok"}` when hosted MCP is enabled;
 - `HEAD` matches `origin/master` and the worktree is clean.
 
-For a feature release, also sign in at [notes.quadrate.lk](https://notes.quadrate.lk/) and exercise the changed behavior. A healthy root page alone does not verify authenticated note operations.
+Exercise the changed authenticated behavior after the route checks. A healthy
+root page does not verify sign-in, note writes, attachments, search workers,
+public sharing, or Vault grants.
 
 ## Rollback
 
-Use the Cloudflare Pages deployment list to roll back to the last known-good production deployment. If database migrations were part of the release, review their compatibility before rolling back the frontend or functions; do not reverse migrations by deleting production tables.
+Roll back the frontend to a known-good static deployment through the selected
+hosting provider. Review migration compatibility before rolling back functions
+or the frontend after a database migration; do not delete production tables to
+reverse migration history. Re-deploy the last known-good commit when a complete
+application rollback is required.
 
 ## Common failures
 
-- **Frontend says configuration is missing:** rebuild with all three `VITE_*` values set in the same shell that runs `pnpm run build`.
-- **API requests fail with CORS errors:** ensure `QNOTES_ALLOWED_ORIGIN` is exactly `https://notes.quadrate.lk`.
-- **Workers return 401 or cron jobs do nothing:** the Edge Function `QNOTES_INTERNAL_WORKER_SECRET` and Vault `qnotes_internal_worker_secret` values must match exactly.
-- **Migration history differs:** inspect the linked migration history and repository migrations before using any include-all option; do not force a reset.
-- **Wrong Pages target:** run `pages project list` and verify `notes-quadrate-lk` before uploading.
+- **Frontend configuration is missing:** set all three `VITE_*` values in the
+  same environment that runs `pnpm run build`.
+- **CORS is denied:** set `QNOTES_ALLOWED_ORIGIN` to the exact frontend origin,
+  including scheme and port.
+- **Workers return 401 or queues stay pending:** the Edge Function worker secret
+  and the `qnotes_internal_worker_secret` Vault entry must match exactly.
+- **Vault readiness fails:** apply migrations first and verify that the
+  server-only `QNOTES_VAULT_TOKEN_PEPPER` entry exists; never print its value.
+- **Migration history differs:** inspect local and linked history before using
+  an include-all option. Do not force a reset.
+- **MCP OAuth fails:** set the consent URL and exact redirect URI allow-list for
+  the deployment. Do not use a hostname without its registered path.
+- **Wrong frontend target:** list the hosting provider's projects and confirm
+  the intended project before uploading.
 
-## Agent Vault release notes
-
-The additive migrations `20260907000200_agent_vault.sql`,
-`20260908000100_agent_vault_batch_reveal.sql`, and
-`20260909000100_agent_vault_rotate_replay_compat.sql` add the isolated Agent
-Vault plane, Supabase Vault-backed service-only RPCs, qvt grants, audit, replay
-receipts, bounded batch reveal, and unchanged pre-`expectedVersion` rotate
-replay compatibility. Before any non-local rollout, provision the
-server-only `QNOTES_VAULT_TOKEN_PEPPER` in the Edge Function environment and
-run the readiness gate above. Do not put it in `VITE_*`, browser storage, Git,
-or GitHub Actions secrets. This feature must not change qnt/qns Notes or
-hosted-MCP behavior, and the migrations must be reviewed and applied before
-frontend deployment.
-
-## Public snapshot release notes
-
-The `20260910001200_reviewed_public_snapshots.sql` migration adds reviewed,
-version-bound immutable public snapshots and the service-only create/resolve
-contract. It does not use Agent Vault or require `QNOTES_VAULT_TOKEN_PEPPER`;
-review and apply it before deploying the updated API or frontend.
+For the data boundaries and full-history scan, read
+[SECURITY.md](SECURITY.md). For API and profile details, read
+[API_ACCESS_GUIDE.md](API_ACCESS_GUIDE.md) and
+[VAULT_ACCESS_GUIDE.md](VAULT_ACCESS_GUIDE.md).
