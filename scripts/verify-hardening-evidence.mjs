@@ -66,11 +66,41 @@ const stagingRows = sectionBetween('## Staging evidence template')
   .map((line) => line.split('|').slice(1, -1).map((cell) => cell.trim()))
   .filter((cells) => cells.length === 5 && cells[0] !== 'Rehearsal' && !cells.every((cell) => /^[-\s]+$/.test(cell)));
 const missingStagingRows = requiredStagingRows.filter((name) => !stagingRows.some((cells) => cells[0] === name));
+const gateSection = sectionBetween('## Gate record', '## Finding-to-evidence matrix');
+const gateRows = gateSection
+  .split(/\r?\n/)
+  .map((line) => line.split('|').slice(1, -1).map((cell) => cell.trim()))
+  .filter((cells) => cells.length === 4 && cells[0] !== 'Gate' && !/^[-\s]+$/.test(cells[0]));
+const requiredGateNames = [
+  'Type contracts',
+  'Unit behavior',
+  'Edge behavior and parity',
+  'Build',
+  'Migrated SQL and RLS',
+  'Search quality and plans',
+  'Browser release smoke',
+  'Vault readiness',
+  'Workflow aggregation',
+];
+const missingGateNames = requiredGateNames.filter((name) => !gateRows.some((cells) => cells[0] === name));
+const approvedGateResults = new Set([
+  'passed', 'passed (path-gated)', 'unavailable', 'not run', 'not applicable', 'failed',
+]);
+const gateErrors = [];
+for (const cells of gateRows) {
+  const result = cells[2]?.replaceAll('`', '') ?? '';
+  if (/TBD/i.test(cells[2] ?? '')) gateErrors.push(`gate '${cells[0]}' still has a TBD result`);
+  if (result && !approvedGateResults.has(result)) gateErrors.push(`gate '${cells[0]}' has non-standard result '${result}'`);
+}
+const identitySection = sectionBetween('## Release identity', '## Gate record');
+const shaMatch = identitySection.match(/Evidence target SHA.*?`([a-fA-F0-9]+)`/);
+const evidenceShaValid = shaMatch && shaMatch[1].length === 40;
+
 const nonUnavailableStagingRows = stagingRows
   .filter((cells) => cells[3].replaceAll('`', '') !== 'unavailable')
   .map((cells) => `${cells[0]}=${cells[3] || '<empty>'}`);
 
-if (missingStories.length || incompleteMatrixRows.length || matrixRows.length !== requiredStories.length || missingPhrases.length || missingResidualPhrases.length || missingEvidencePaths.length || missingStagingRows.length || nonUnavailableStagingRows.length) {
+if (missingStories.length || incompleteMatrixRows.length || matrixRows.length !== requiredStories.length || missingPhrases.length || missingResidualPhrases.length || missingEvidencePaths.length || missingStagingRows.length || nonUnavailableStagingRows.length || missingGateNames.length || gateErrors.length || !evidenceShaValid) {
   throw new Error([
     `Missing stories: ${missingStories.join(', ') || 'none'}`,
     `Incomplete matrix rows: ${incompleteMatrixRows.join(', ') || 'none'}`,
@@ -80,7 +110,10 @@ if (missingStories.length || incompleteMatrixRows.length || matrixRows.length !=
     `missing evidence paths: ${missingEvidencePaths.join(', ') || 'none'}`,
     `missing staging rows: ${missingStagingRows.join(', ') || 'none'}`,
     `non-unavailable staging results: ${nonUnavailableStagingRows.join(', ') || 'none'}`,
+    `missing gate names: ${missingGateNames.join(', ') || 'none'}`,
+    `gate errors: ${gateErrors.join('; ') || 'none'}`,
+    `evidence target SHA: ${evidenceShaValid ? 'valid 40-character SHA' : 'missing or not a 40-character SHA'}`,
   ].join('. ') + '.');
 }
 
-console.log(`Hardening evidence matrix is complete for ${requiredStories.length} stories; cited paths, residual risks, and unavailable staging results are verified.`);
+console.log(`Hardening evidence matrix is complete for ${requiredStories.length} stories; cited paths, residual risks, gate results, evidence SHA, and unavailable staging results are verified.`);

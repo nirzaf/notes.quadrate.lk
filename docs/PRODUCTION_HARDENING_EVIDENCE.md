@@ -8,16 +8,21 @@ behavioral evidence. A green build is not a production security claim.
 | Field | Value |
 | --- | --- |
 | Repository | `nirzaf/qnotes` |
-| Candidate base | `master` |
-| Candidate head | `ea2d0e3` (US-28 recorded in [PR #119](https://github.com/nirzaf/qnotes/pull/119)); later documentation-only commits may advance the tip |
-| Verification environment | Self-hosted Supabase running through Docker on loopback |
+| Branch | `master` |
+| Evidence target SHA | `dc6e36c767cb6ac39c333e3910a68a396d2b3e73` |
+| Workflow run | [#398](https://github.com/nirzaf/qnotes/actions/runs/34580771910), push to `master` |
+| Verification environment | GitHub Actions (`ubuntu-latest` and `windows-latest`); Self-hosted Supabase running through Docker on loopback for integration, search, and browser jobs |
+| Production deployment | Observed successful — [https://notes.quadrate.lk/](https://notes.quadrate.lk/) |
 | Data boundary | The existing data-bearing local stack is preserved; no reset or production data migration is performed by this program |
 | Credential boundary | Synthetic test credentials only; no production secret movement, revocation, permission cutover, or deployment |
+| Documentation revision semantics | This record reflects evidence observed at the target SHA. Future commits must update the evidence target SHA and gate results rather than claiming inherited status |
 
 ## Gate record
 
-Run these gates against the final candidate and record the exact commit in the
-release identity above. A skipped gate stays visible as unavailable.
+Run these gates against the evidence target SHA and record the exact commit in
+the release identity above. Each `passed` result identifies its provenance.
+A skipped gate stays visible as `unavailable`. A path-gated job that did not
+execute its expensive stages is labelled `passed (path-gated)`.
 
 Set `SUPABASE_DB_CONTAINER` to the local Docker database container before
 running the query-plan command. Do not commit a machine-specific container
@@ -25,18 +30,26 @@ name or hosted project reference in this report.
 
 | Gate | Command or workflow job | Result | Evidence |
 | --- | --- | --- | --- |
-| Type contracts | `pnpm run typecheck` / `core` | `TBD` | Workspace TypeScript checks |
-| Unit behavior | `pnpm run test:unit` / `core` | `TBD` | Node, package, and plugin tests |
-| Edge behavior and parity | `pnpm run test:edge`, `pnpm run verify:edge-shared` / `core` | `TBD` | Deno Edge tests and generated-source comparison |
-| Build | `pnpm run build` / `core` | `TBD` | Workspace build and parity |
-| Migrated SQL and RLS | `pnpm run verify:local` / `integration` | `TBD` | Self-hosted Docker database; no reset |
-| Search quality and plans | `pnpm run verify:search -- --seed`, `docker exec -i "$SUPABASE_DB_CONTAINER" psql -v ON_ERROR_STOP=1 -U postgres -d postgres -f - < scripts/search-query-plans.sql` / `search regression` | `TBD` | Seeded local regression, relevance floors, bounded latency, and checked-in query plans |
-| Browser release smoke | `pnpm run test:e2e:smoke` / `browser smoke` | `TBD` | `tests/e2e/release-smoke.spec.ts` only: release navigation, Vault shell, public rendering, login accessibility, and attachment panel |
-| Focused browser security | `pnpm exec playwright test tests/e2e/accessibility.spec.ts tests/e2e/auth.spec.ts tests/e2e/attachments.spec.ts tests/e2e/notebooks.spec.ts tests/e2e/notes.spec.ts tests/e2e/oauth-replay.spec.ts tests/e2e/public-sharing.spec.ts tests/e2e/search.spec.ts tests/e2e/tokens-cli.spec.ts tests/e2e/vault-browser-safety.spec.ts tests/e2e/vault.spec.ts --project=chromium` (manual; no CI job) | `unavailable` | Focused accessibility, auth, notebook, note editing, search, token/share, attachment privacy, OAuth replay, and Vault secret-safety coverage |
+| Type contracts | `pnpm run typecheck` / `core` | `passed` | Workflow run [#398](https://github.com/nirzaf/qnotes/actions/runs/34580771910), job `core` (35s), step `pnpm run typecheck`, target SHA `dc6e36c` |
+| Unit behavior | `pnpm run test:unit` / `core` | `passed` | Workflow run [#398](https://github.com/nirzaf/qnotes/actions/runs/34580771910), job `core` (35s), step `pnpm run test:unit`, target SHA `dc6e36c` |
+| Edge behavior and parity | `pnpm run test:edge`, `pnpm run verify:edge-shared` / `core` | `passed` | Workflow run [#398](https://github.com/nirzaf/qnotes/actions/runs/34580771910), job `core` (35s), steps `pnpm run test:edge` and `pnpm run verify:edge-shared`, target SHA `dc6e36c` |
+| Build | `pnpm run build` / `core` | `passed` | Workflow run [#398](https://github.com/nirzaf/qnotes/actions/runs/34580771910), job `core` (35s), step `pnpm run build`, target SHA `dc6e36c` |
+| Migrated SQL and RLS | `pnpm run verify:local` / `integration` | `passed` | Workflow run [#398](https://github.com/nirzaf/qnotes/actions/runs/34580771910), job `integration` (2m 24s), step `pnpm exec supabase test db`, target SHA `dc6e36c` |
+| Search quality and plans | `pnpm run verify:search -- --seed`, query plans / `search regression` | `passed (path-gated)` | Workflow run [#398](https://github.com/nirzaf/qnotes/actions/runs/34580771910), job `search regression` (6s). The commit changed only attachment ownership files; no search-sensitive paths were modified, so the expensive seed and query-plan stages were skipped |
+| Browser release smoke | `pnpm run test:e2e:smoke` / `browser smoke` | `passed` | Workflow run [#398](https://github.com/nirzaf/qnotes/actions/runs/34580771910), job `browser smoke` (2m 50s), step `pnpm run test:e2e:smoke`, target SHA `dc6e36c` |
+| Focused browser security | Manual Playwright suite (no CI job) | `unavailable` | Focused accessibility, auth, notebook, note editing, search, token/share, attachment privacy, OAuth replay, and Vault secret-safety coverage |
 | Browser recovery round-trip | `pnpm exec playwright test tests/e2e/workspace-recovery.spec.ts --project=chromium` (manual; no CI job) | `unavailable` | Dry-run safety, conflicts, private attachments, token/share exclusion, and retry idempotency |
-| Vault readiness | `pnpm run verify:vault` | `TBD` | Synthetic readiness checks and documented isolation residual |
+| Vault readiness | `pnpm run verify:vault` | `passed` | Workflow run [#398](https://github.com/nirzaf/qnotes/actions/runs/34580771910), job `deploy production` (1m 37s), step `pnpm run verify:vault`, target SHA `dc6e36c` |
 | Tenant vector recall | `pnpm run measure:search-recall -- --local-recall --owner-id <uuid>` (manual; no CI job) | `unavailable` | Uses the checked-in `scripts/measure-tenant-vector-recall.mjs` probe; it requires local provider-backed 384-dimensional embeddings for the named owner, so synthetic vectors do not support a semantic quality claim |
-| Workflow aggregation | `release gate` | `TBD` | Required job names and results are recorded from GitHub |
+| Workflow aggregation | `release gate` | `passed` | Workflow run [#398](https://github.com/nirzaf/qnotes/actions/runs/34580771910), job `release gate` (2s), target SHA `dc6e36c` |
+| Production deployment | `deploy production` | `passed` | Workflow run [#398](https://github.com/nirzaf/qnotes/actions/runs/34580771910), job `deploy production` (1m 37s). Observed steps: production secret prerequisite check, migration link and preview, migration apply, Vault readiness, Edge Function deployment, frontend build, Cloudflare Pages deployment, production endpoint verification |
+| Provider-backed semantic recall | `pnpm run measure:search-recall` (manual; no CI job) | `unavailable` | Requires a staging fixture with ready provider embeddings; synthetic vectors are structural-test data and are excluded from semantic quality claims |
+| Recovery rehearsals | Staging evidence template below | `unavailable` | Requires a named operator and a disposable staging target |
+
+> Production endpoint verification proves the checked endpoints responded as
+> expected; it does not independently prove every authenticated workflow,
+> search mode, attachment workflow, Vault grant path, or disaster-recovery
+> scenario.
 
 ## Finding-to-evidence matrix
 
@@ -57,7 +70,7 @@ PR link does not make an unmerged PR's files part of this candidate.
 | US-08 / [#70](https://github.com/nirzaf/qnotes/issues/70) | Implemented in [PR #104](https://github.com/nirzaf/qnotes/pull/104) | `supabase/tests/0010_public_note_sharing.test.sql`; `tests/e2e/public-sharing.spec.ts` |
 | US-09 / [#71](https://github.com/nirzaf/qnotes/issues/71) | Implemented in [PR #103](https://github.com/nirzaf/qnotes/pull/103) | `supabase/tests/0019_notebook_scoped_access.test.sql`; `tests/e2e/notebooks.spec.ts` |
 | US-10 / [#72](https://github.com/nirzaf/qnotes/issues/72) | Implemented in [PR #105](https://github.com/nirzaf/qnotes/pull/105) | `supabase/tests/0005_realtime_and_storage.test.sql`; `tests/e2e/attachments.spec.ts` |
-| US-11 / [#73](https://github.com/nirzaf/qnotes/issues/73) | Implemented in [PR #94](https://github.com/nirzaf/qnotes/pull/94) | `supabase/tests/0007_search_hardening.test.sql` — attachment search preservation and repair bounds |
+| US-11 / [#73](https://github.com/nirzaf/qnotes/issues/73) | Implemented in [PR #93](https://github.com/nirzaf/qnotes/pull/93) | `supabase/tests/0007_search_hardening.test.sql` — attachment search preservation and repair bounds |
 | US-12 / [#74](https://github.com/nirzaf/qnotes/issues/74) | Implemented in [PR #95](https://github.com/nirzaf/qnotes/pull/95) | `supabase/tests/0014_request_budgets.test.sql`; `supabase/functions/_shared/request-body.test.ts` |
 | US-13 / [#75](https://github.com/nirzaf/qnotes/issues/75) | Implemented in [PR #101](https://github.com/nirzaf/qnotes/pull/101) | `supabase/tests/0018_vault_audit_integrity.test.sql` — append-only, export, retry, and denial paths |
 | US-14 / [#76](https://github.com/nirzaf/qnotes/issues/76) | Implemented in [PR #96](https://github.com/nirzaf/qnotes/pull/96) | `packages/mcp-server/test/server.test.mjs`; generated Edge parity |
@@ -121,11 +134,42 @@ Never put plaintext secrets, bearer tokens, or full environment output here.
 
 | Rehearsal | Target / operator | Evidence ID | Result | Recovery note |
 | --- | --- | --- | --- | --- |
-| Encrypted backup restore | `TBD` | `TBD` | `unavailable` | Requires disposable staging database and redacted restore log |
-| Least-privilege credential rotation | `TBD` | `TBD` | `unavailable` | Requires staged role map and post-rotation access check |
-| Audit-export recovery | `TBD` | `TBD` | `unavailable` | Requires redacted export checksum and replay checkpoint |
-| Incident disablement | `TBD` | `TBD` | `unavailable` | Requires staged disable switch and re-enable approval |
+| Encrypted backup restore | `unavailable` | `unavailable` | `unavailable` | Requires disposable staging database and redacted restore log |
+| Least-privilege credential rotation | `unavailable` | `unavailable` | `unavailable` | Requires staged role map and post-rotation access check |
+| Audit-export recovery | `unavailable` | `unavailable` | `unavailable` | Requires redacted export checksum and replay checkpoint |
+| Incident disablement | `unavailable` | `unavailable` | `unavailable` | Requires staged disable switch and re-enable approval |
+
+## Post-hardening release changes
+
+Changes merged after the original US-28 evidence candidate
+([`ea2d0e3`](https://github.com/nirzaf/qnotes/commit/ea2d0e387b9c58a7bc355601ce4d3970945c299f),
+[PR #119](https://github.com/nirzaf/qnotes/pull/119)):
+
+- [`6606d0a`](https://github.com/nirzaf/qnotes/commit/6606d0af3de7f14f1881731b736927b8cd4f5126)
+  [US-27] Atomically apply offline sync pages (#110) — guarded incremental
+  note editing (US-18) strengthened with atomic offline sync page application.
+- [`25d7030`](https://github.com/nirzaf/qnotes/commit/25d7030fdfd2fc04d8f901741eacba267eeecc39)
+  [US-25] Bound and version embedding inputs (#118) — embedding input
+  validation (US-25) landed with additional budget and version guards.
+- [`4238b1a`](https://github.com/nirzaf/qnotes/commit/4238b1a4cbf184d428b8b95dbc9b8e1631380fb9)
+  feat: bound search fusion candidates (#111) — search fusion (US-22/US-24)
+  strengthened with a 1,000-candidate bound.
+- [`b4a95a9`](https://github.com/nirzaf/qnotes/commit/b4a95a9640941f890e03f5e5e5f8dff376771c86)
+  docs: publish open-source self-hosting guidance (#120) — documentation
+  rewrite; no behavioral change.
+- [`069a0dc`](https://github.com/nirzaf/qnotes/commit/069a0dca897c0bf4df30fd903fb2eaca3b6e0551)
+  docs: sync guides with current routes, profiles, and limits — documentation
+  drift correction; no behavioral change.
+- [`b7a1874`](https://github.com/nirzaf/qnotes/commit/b7a1874e1ec782ea3ecc32e05b806641008d9361)
+  perf: prefetch note reads and defer share metadata (#60) — performance
+  improvement; note-read prefetch and deferred share metadata. Not a security
+  fix.
+- [`dc6e36c`](https://github.com/nirzaf/qnotes/commit/dc6e36c767cb6ac39c333e3910a68a396d2b3e73)
+  perf: narrow attachment ownership lookup (#61) — performance improvement;
+  attachment listing now selects only the note identity column instead of the
+  full note row. Not a security fix.
 
 Run `node scripts/verify-hardening-evidence.mjs` before changing the final
-candidate status. The check confirms that all 28 rows and the required
-limitations remain present; it does not replace the behavioral gates.
+candidate status. The check confirms that all 28 rows, the required
+limitations, gate results, and the evidence target SHA format remain present;
+it does not replace the behavioral gates.
