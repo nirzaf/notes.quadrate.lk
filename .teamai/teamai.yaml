@@ -1,0 +1,12 @@
+team: notes.quadrate.lk
+mode: self
+description: TeamAI single-repo (knowledge on main, reports on teamai-reports)
+repo: https://github.com/nirzaf/notes.quadrate.lk.git
+provider: github
+sharing:
+  rules:
+    enforced: []
+  docs:
+    localDir: ./.teamai/docs
+  env:
+    injectShellProfile: true
