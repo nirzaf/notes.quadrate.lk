@@ -1,7 +1,8 @@
 # GitHub Actions CI/CD
 
 The workflow in [`workflows/ci.yml`](workflows/ci.yml) uses GitHub-hosted
-`ubuntu-latest` runners. Pull requests run the core checks, local Supabase
+`ubuntu-latest` runners plus one `windows-latest` job. Pull requests run the core
+checks, the Windows Hermes launcher checks, local Supabase
 SQL/database integration tests, the search regression job, and the short
 Chromium browser smoke job. The smoke job installs bundled Chromium, starts
 local Supabase, writes local environment files, seeds only the dedicated test
@@ -19,9 +20,10 @@ local/manual suite provides the broader accessibility coverage. A push to
 checks pass, then the optional deploy job applies migrations, runs the read-only
 Vault readiness gate, deploys the Edge Functions, and publishes the frontend.
 
-The workflow has four verification jobs (`core`, `integration`,
-`search_regression`, and `browser_smoke`), followed by `release_gate` and the
-environment-protected `deploy` job. Search regression is skipped when a push or
+The workflow has five verification jobs (`core`, `hermes_windows`,
+`integration`, `search_regression`, and `browser_smoke`), followed by
+`release_gate` and the environment-protected `deploy` job. `release_gate`
+requires all five verification jobs. Search regression is skipped when a push or
 pull request does not touch a search-sensitive path.
 
 ## Production environment

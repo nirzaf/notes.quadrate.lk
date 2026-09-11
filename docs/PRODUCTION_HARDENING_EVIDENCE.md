@@ -9,7 +9,7 @@ behavioral evidence. A green build is not a production security claim.
 | --- | --- |
 | Repository | `nirzaf/qnotes` |
 | Candidate base | `master` |
-| Candidate head | `TBD until the US-28 merge` |
+| Candidate head | `ea2d0e3` (US-28 recorded in [PR #119](https://github.com/nirzaf/qnotes/pull/119)); later documentation-only commits may advance the tip |
 | Verification environment | Self-hosted Supabase running through Docker on loopback |
 | Data boundary | The existing data-bearing local stack is preserved; no reset or production data migration is performed by this program |
 | Credential boundary | Synthetic test credentials only; no production secret movement, revocation, permission cutover, or deployment |
@@ -35,7 +35,7 @@ name or hosted project reference in this report.
 | Focused browser security | `pnpm exec playwright test tests/e2e/accessibility.spec.ts tests/e2e/auth.spec.ts tests/e2e/attachments.spec.ts tests/e2e/notebooks.spec.ts tests/e2e/notes.spec.ts tests/e2e/oauth-replay.spec.ts tests/e2e/public-sharing.spec.ts tests/e2e/search.spec.ts tests/e2e/tokens-cli.spec.ts tests/e2e/vault-browser-safety.spec.ts tests/e2e/vault.spec.ts --project=chromium` (manual; no CI job) | `unavailable` | Focused accessibility, auth, notebook, note editing, search, token/share, attachment privacy, OAuth replay, and Vault secret-safety coverage |
 | Browser recovery round-trip | `pnpm exec playwright test tests/e2e/workspace-recovery.spec.ts --project=chromium` (manual; no CI job) | `unavailable` | Dry-run safety, conflicts, private attachments, token/share exclusion, and retry idempotency |
 | Vault readiness | `pnpm run verify:vault` | `TBD` | Synthetic readiness checks and documented isolation residual |
-| Tenant vector recall | `pnpm run evaluate:search -- --seed` (manual; no CI job) | `unavailable` | Uses the checked-in `scripts/evaluate-search.mjs`; the provider-backed tenant recall probe is not present at this commit, so synthetic vectors do not support a semantic quality claim |
+| Tenant vector recall | `pnpm run measure:search-recall -- --local-recall --owner-id <uuid>` (manual; no CI job) | `unavailable` | Uses the checked-in `scripts/measure-tenant-vector-recall.mjs` probe; it requires local provider-backed 384-dimensional embeddings for the named owner, so synthetic vectors do not support a semantic quality claim |
 | Workflow aggregation | `release gate` | `TBD` | Required job names and results are recorded from GitHub |
 
 ## Finding-to-evidence matrix
@@ -69,7 +69,7 @@ PR link does not make an unmerged PR's files part of this candidate.
 | US-20 / [#82](https://github.com/nirzaf/qnotes/issues/82) | Implemented in [PR #113](https://github.com/nirzaf/qnotes/pull/113) | `supabase/tests/0011_oauth_authorization_code.test.sql`; `tests/e2e/oauth-replay.spec.ts` |
 | US-21 / [#83](https://github.com/nirzaf/qnotes/issues/83) | Implemented in [PR #106](https://github.com/nirzaf/qnotes/pull/106) | `supabase/tests/0007_search_hardening.test.sql`; `tests/e2e/search.spec.ts` — current checked-in search fallback and isolation coverage |
 | US-22 / [#84](https://github.com/nirzaf/qnotes/issues/84) | Implemented in [PR #108](https://github.com/nirzaf/qnotes/pull/108) | `supabase/tests/0007_search_hardening.test.sql`; `scripts/search-query-plans.sql` — current checked-in search and plan evidence |
-| US-23 / [#85](https://github.com/nirzaf/qnotes/issues/85) | Implemented in [PR #117](https://github.com/nirzaf/qnotes/pull/117) | `scripts/evaluate-search.mjs`; `tests/search-evaluation-fixtures.json` — current checked-in evaluator; provider-backed tenant recall remains unavailable |
+| US-23 / [#85](https://github.com/nirzaf/qnotes/issues/85) | Implemented in [PR #117](https://github.com/nirzaf/qnotes/pull/117) | `scripts/evaluate-search.mjs`; `scripts/measure-tenant-vector-recall.mjs`; `tests/search-evaluation-fixtures.json` — the tenant recall probe is checked in but still needs a provider-backed local fixture |
 | US-24 / [#86](https://github.com/nirzaf/qnotes/issues/86) | Implemented in [PR #111](https://github.com/nirzaf/qnotes/pull/111) | `supabase/tests/0014_request_budgets.test.sql`; `scripts/test/measurement.test.mjs` |
 | US-25 / [#87](https://github.com/nirzaf/qnotes/issues/87) | Implemented in [PR #118](https://github.com/nirzaf/qnotes/pull/118) | `scripts/test/embedding-validation.test.mjs`; `supabase/functions/embedding-worker/adapter.test.ts` — current checked-in embedding input coverage |
 | US-26 / [#88](https://github.com/nirzaf/qnotes/issues/88) | Implemented in [PR #97](https://github.com/nirzaf/qnotes/pull/97) | `supabase/tests/0015_embedding_retry_isolation.test.sql`; `scripts/test/embedding-validation.test.mjs` |

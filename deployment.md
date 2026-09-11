@@ -102,8 +102,9 @@ explicit `share` value adds public-share creation.
 ## GitHub Actions
 
 The workflow in [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs
-core, integration, search-regression, and browser-smoke jobs for pull requests
-and pushes. A push to `master` can then pass through `release_gate` and the
+core, Windows Hermes launcher, integration, search-regression, and
+browser-smoke jobs for pull requests and pushes. A push to `master` can then
+pass through `release_gate` and the
 environment-protected `deploy` job.
 
 The deploy job is wired to the maintainer's environment-specific values. Before

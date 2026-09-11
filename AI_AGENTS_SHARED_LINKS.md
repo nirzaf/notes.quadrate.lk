@@ -57,6 +57,16 @@ The successful response has this shape:
 
 Read `data.contentMarkdown`; the resolver is not a raw text endpoint.
 
+The request body must be a JSON object of at most 1 KiB, and only `token` plus
+the optional bounded-read fields `offset`, `lineStart`, `lineEnd`, `maxBytes`,
+and `continuation` are accepted; any other field returns the same generic
+`404 PUBLIC_SHARE_NOT_FOUND`. When a bounded read is requested, the response
+adds `contentBytes`, `totalBytes`, `offset`, `nextOffset`, `truncated`,
+`contentComplete`, `sourceHash`, and an optional `continuation.cursor` bound to
+that snapshot. Page through with the cursor while `truncated` is true, and
+treat a `409 NOTE_VERSION_CONFLICT` as "read a new snapshot page" rather than
+retrying the same cursor.
+
 ## JavaScript or TypeScript
 
 ```js
@@ -89,14 +99,17 @@ The native and optional hosted MCP `read` profiles expose the same operation as
 }
 ```
 
-The tool returns `title`, `contentMarkdown`, and `updatedAt`. It does not
-require a private JWT and does not return attachments or private metadata.
+The tool returns `title`, `contentMarkdown`, and `updatedAt`, and accepts the
+same optional bounded-read fields as the HTTP resolver. It does not require a
+private JWT and does not return attachments or private metadata.
 
 The `share` MCP profile can additionally expose `create_public_share` for an
 exact note UUID. It checks the saved title and Markdown for recognizable
-credential material, creates a 24-hour link, and returns only the URL, note ID,
-and expiry. The caller must use a personal `qnt_...` token with `shares:write`;
-there is no shared owner credential. See
+credential material, requires the `expectedVersion` the caller reviewed plus
+`confirm: true`, rejects notes classified as sensitive, creates a 24-hour link
+bound to that reviewed version, and returns only the URL, note ID, and expiry.
+The caller must use a personal `qnt_...` token with `shares:write`; there is no
+shared owner credential. See
 [API_ACCESS_GUIDE.md](API_ACCESS_GUIDE.md) for the complete profile contract.
 
 ## Security rules
@@ -108,6 +121,8 @@ there is no shared owner credential. See
 - Do not cache or republish the response unless the note owner explicitly asks.
 - The resolver uses `Cache-Control: no-store`, `X-Robots-Tag: noindex`, and
   `Referrer-Policy: no-referrer`.
+- A share publishes one immutable saved snapshot; later edits to the note do not
+  change what the link returns until the owner rotates it.
 - Invalid, expired, revoked, deleted, malformed, and wrong-format tokens all
   return the same `404 PUBLIC_SHARE_NOT_FOUND` response.
 

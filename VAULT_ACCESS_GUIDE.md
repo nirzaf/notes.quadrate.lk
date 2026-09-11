@@ -47,7 +47,7 @@ The profiles are separate capabilities:
 
 | Profile | Tools | Purpose |
 | --- | --- | --- |
-| `metadata` | `vault_list_projects`, `vault_list_environments`, `vault_list_secrets` | Discover names and versions without values |
+| `metadata` | `vault_list_projects`, `vault_list_environments`, `vault_list_secrets`, `vault_get_mutation_status` | Discover names and versions without values, and recover a bounded mutation receipt |
 | `reveal` | metadata plus `vault_get_secret`, `vault_get_secrets` | Deliberately reveal one or a bounded batch |
 | `write` | metadata plus create/rotate/delete tools | Mutate encrypted values with version and replay guards; plaintext reveal tools are not exposed |
 
@@ -92,12 +92,44 @@ audit metadata.
 | `PATCH`, `DELETE` | `/vault/secrets/:secretId` | Rotate or delete with expected version |
 | `POST` | `/vault/secrets/resolve` | Resolve one exact secret reference |
 | `GET` | `/vault/mutations/:mutationId` | Read one authorized, bounded mutation receipt |
+| `POST` | `/vault/approvals` | Issue one single-use approval for a human step-up operation (JWT only) |
 | `POST` | `/vault/secrets/reveal` | Reveal one value with purpose and server-side authorization |
 | `POST` | `/vault/secrets/reveal-batch` | Reveal an explicit bounded list with server-side authorization |
 | `GET`, `POST` | `/vault/agent-tokens` | List or create qvt tokens (JWT only) |
 | `DELETE` | `/vault/agent-tokens/:tokenId` | Revoke a qvt token |
 | `PATCH` | `/vault/agent-tokens/:tokenId/grants` | Replace grants |
 | `GET` | `/vault/audit` | Read audit metadata (JWT only) |
+
+### Human step-up approvals
+
+Listing metadata and audit history uses the ordinary human session. Value-bearing
+and administrative operations are different: for a human Supabase session,
+reveal, secret create/rotate/delete, agent-token issuance or revocation, and
+grant replacement require a verified `aal2` session plus a single-use approval.
+Granted `qvt_...` agent credentials do not use the human step-up flow; they stay
+bounded by their stored grant.
+
+The approval flow is deliberately short:
+
+1. The browser completes a Supabase MFA challenge with a verified factor.
+2. QNotes verifies the JWT signature, issuer, audience, expiry, user, session,
+   assurance level, and recent MFA timestamp on the server.
+3. `POST /vault/approvals` issues an approval bound to the user session, exact
+   action, resource identifiers, expected version, and SHA-256 request digest.
+4. The browser sends that approval with the operation. The database consumes it
+   under a row lock and rejects replay, expiry, changed resources, changed
+   versions, or changed request bodies.
+
+Step-up freshness is five minutes and an approval is valid for sixty seconds.
+A missing factor, an `aal1` session, an old MFA event, or a malformed claim fails
+closed with `403 VAULT_STEP_UP_REQUIRED`, `403 VAULT_APPROVAL_REQUIRED`, or
+`403 VAULT_APPROVAL_INVALID` — never with a revealed value. New `qvt_` tokens
+must carry a future expiry no greater than the configured
+`notesdb.vault_security_policy.max_agent_token_lifetime_seconds` value (the
+checked-in staging policy is ninety days). The full operator and recovery
+details are in [docs/VAULT_STEP_UP_AND_RECOVERY.md](docs/VAULT_STEP_UP_AND_RECOVERY.md),
+and the append-only audit model is in
+[docs/VAULT_AUDIT_INTEGRITY.md](docs/VAULT_AUDIT_INTEGRITY.md).
 
 ### Exact resource resolution
 
@@ -229,8 +261,10 @@ The gate uses the repository-pinned Supabase CLI. It safely captures the
 the presence of `QNOTES_VAULT_TOKEN_PEPPER`; any `value` field is ignored and
 secret values are never logged. A linked `supabase db query` returns
 boolean-only checks for the `supabase_vault` extension, `vault`
-schema, all seven Agent Vault metadata tables, all current service-only Vault
-RPCs including exact resource resolution, mutation claim/receipt, and batch reveal, and each RPC's denied `anon` and `authenticated`
+schema, all eleven Agent Vault metadata tables (including the step-up approval,
+audit policy, and audit outbox tables), all current service-only Vault
+RPCs including exact resource resolution, mutation claim/receipt, step-up
+approval issue/consume, audit export, and batch reveal, and each RPC's denied `anon` and `authenticated`
 execute privileges plus allowed `service_role` execute privilege.
 
 The command captures CLI stdout and stderr without logging them, rejects

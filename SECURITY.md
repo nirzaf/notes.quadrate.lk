@@ -68,7 +68,17 @@ access disabled.
 Public-share `qns_...` values are bearer secrets. Keep them in URL fragments
 or POST bodies only; never put them in query strings, logs, referrers, or
 analytics payloads. Public shares expose one saved note's title and Markdown
-body and never expose attachments or workspace metadata.
+body and never expose attachments or workspace metadata. Sharing publishes one
+immutable snapshot of a reviewed note version and the server refuses
+credential-like content with `PUBLIC_SHARE_SENSITIVE`, so a later edit cannot
+silently publish new material through an existing link.
+
+Request bodies are capped before parsing (8 MiB for `/api/*`, 1 KiB for the
+public resolver, and 272 KiB for `/vault/*`), and costly operations consume a
+per-principal budget that fails closed with `429 RATE_LIMITED` or
+`503 RESOURCE_LIMIT_UNAVAILABLE`. Attachment bytes are staged, verified against
+their declared size, signature, and SHA-256 digest, and then promoted to
+immutable storage instead of being overwritten in place.
 
 Agent Vault is a separate data plane. Vault plaintext must not enter Notes
 search, embeddings, logs, browser persistence, public shares, realtime note

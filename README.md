@@ -23,8 +23,12 @@ require a QNotes-hosted account or a shared production service.
 - In-app screenshots for the visible area, the entire page, or a selected crop.
 - Private Realtime invalidation, IndexedDB drafts, reconnect recovery, version
   checks, and a three-way conflict resolver.
-- Scoped personal API tokens, revocable read-only public links, and version-two
-  workspace export/import with dry-run restore checks.
+- Scoped personal API tokens, revocable read-only public links that publish a
+  reviewed, version-bound snapshot and reject credential-like notes, and
+  version-two workspace export/import with dry-run restore checks.
+- Guarded incremental editing: a bounded note outline plus preview/apply section
+  patches that require an expected version and content hash, with replay-safe
+  mutation receipts and status recovery.
 - A native stdio MCP server with separate `read`, `share`, and `write`
   profiles.
 - An optional Agent Vault plane for grant-scoped encrypted values and a native
@@ -46,6 +50,7 @@ supabase/migrations/              database schema and RLS migrations
 supabase/tests/                   SQL contract tests
 integrations/hermes-plugin/       optional external Hermes companion
 scripts/                          local setup, generation, and verification
+docs/                             hardening and Vault records
 tests/e2e/                        Playwright browser tests
 ```
 
@@ -108,6 +113,7 @@ Use the focused checks for these areas:
 
 ```bash
 pnpm run verify:search -- --seed
+pnpm run verify:vault
 pnpm exec playwright test tests/e2e/workspace-recovery.spec.ts --project=chromium
 pnpm run test:plugin
 git diff --check
@@ -115,7 +121,9 @@ git diff --check
 
 Search regression is required when changing the Markdown parser, search or
 embedding workers, search migrations, search fixtures/baselines, or the search
-evaluation scripts. The recovery test covers dry-run imports, conflicts,
+evaluation scripts. Agent Vault changes must additionally pass the SQL suite and
+`pnpm run verify:vault` against a linked or local project. The recovery test
+covers dry-run imports, conflicts,
 private attachments, token/share exclusion, and retry identity behavior.
 
 ## API, CLI, and MCP
@@ -145,9 +153,13 @@ node packages/mcp-server/dist/index.js
 
 Set `QNOTES_MCP_PROFILE=share` for the separate public-share profile or
 `QNOTES_MCP_PROFILE=write` with `QNOTES_WRITE_TOKEN` for note mutations. Write
-operations use expected versions and replay-safe mutation IDs. The write
+operations use expected versions and replay-safe mutation IDs, including the
+guarded section preview/patch pair. The write
 profile does not expose public-share creation unless
 `QNOTES_MCP_ENABLE_PUBLIC_SHARE=true` is set and the token has `shares:write`.
+Both profiles also expose `get_capabilities`, `get_note_outline`,
+`list_note_changes`, and `get_mutation_status` so an agent can discover its
+effective operations and recover an ambiguous write.
 
 For REST routes, request and response contracts, JavaScript examples, CLI
 commands, MCP tools, and retry rules, see

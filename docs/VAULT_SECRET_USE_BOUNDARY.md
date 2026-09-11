@@ -6,7 +6,7 @@ environment exporter, or unrestricted upstream response path.
 
 Vault profiles are separate capabilities:
 
-- `metadata` lists project, environment, and secret metadata only.
+- `metadata` lists project, environment, and secret metadata only, plus a bounded mutation receipt for its own mutation IDs.
 - `write` creates, rotates, and deletes secrets without advertising plaintext
   reveal tools.
 - `reveal` is the separate high-risk profile for explicitly authorized reveal
