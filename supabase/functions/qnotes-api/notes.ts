@@ -189,6 +189,28 @@ async function applyNoteUpdate(ownerId: string, noteId: string, input: NoteUpdat
   return mapMutationResult(result);
 }
 
+interface NoteIdentityQuery {
+  select(columns: string): NoteIdentityQuery;
+  eq(column: string, value: string): NoteIdentityQuery;
+  is(column: string, value: null): NoteIdentityQuery;
+  limit(count: number): NoteIdentityQuery;
+  maybeSingle(): Promise<{ data: unknown; error: unknown }>;
+}
+
+interface NoteIdentityDatabase {
+  from(table: string): NoteIdentityQuery;
+}
+
+export async function findOwnedNoteIdentity(ownerId: string, noteRef: string, includeDeleted = false, database: NoteIdentityDatabase = appDbClient as unknown as NoteIdentityDatabase): Promise<{ id: string }> {
+  let query = database.from('notes').select('id').eq('owner_id', ownerId).limit(1);
+  if (isUUID(noteRef)) query = query.eq('id', noteRef);
+  else query = query.eq('slug', (noteRef as string).trim().toLowerCase());
+  if (!includeDeleted) query = query.is('deleted_at', null);
+  const { data, error } = await query.maybeSingle();
+  if (error || !data) throw new ApiError(404, 'NOTE_NOT_FOUND', 'The note was not found.');
+  return { id: String(record(data).id) };
+}
+
 export async function findOwnedNote(ownerId: string, noteRef: string, includeDeleted = false): Promise<ReturnType<typeof noteFromRow>> {
   let query = appDbClient.from('notes').select('*').eq('owner_id', ownerId).limit(1);
   if (isUUID(noteRef)) query = query.eq('id', noteRef);
